@@ -1,12 +1,12 @@
-// Package component provides cloud-neutral Pulumi components.
-package component
+// Package components provides cloud-neutral Pulumi components.
+package components
 
 import "github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
 // Public API -----------------------------------------------------------------
 
-// Args supplies a greeting's input.
-type Args struct{ Name pulumi.StringInput }
+// GreetingArgs supplies a greeting's input.
+type GreetingArgs struct{ Name pulumi.StringInput }
 
 // Greeting is a reusable component with an exported message.
 type Greeting struct {
@@ -15,7 +15,7 @@ type Greeting struct {
 }
 
 // NewGreeting registers a component and a parented child without cloud providers.
-func NewGreeting(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOption) (*Greeting, error) {
+func NewGreeting(ctx *pulumi.Context, name string, args GreetingArgs, opts ...pulumi.ResourceOption) (*Greeting, error) {
 	c := &Greeting{}
 	if err := ctx.RegisterComponentResource("premise:index:Greeting", name, c, opts...); err != nil {
 		return nil, err

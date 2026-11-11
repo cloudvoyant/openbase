@@ -10,7 +10,7 @@ From another Go Pulumi project, fetch a released package:
 go get github.com/cloudvoyant/openbase/libs/components@v1.2.3
 ```
 
-Import the package as `component` and call `component.NewGreeting`. See `examples/consumer` for a complete Go consumer. Mock tests do not deploy cloud resources or require cloud credentials.
+Import `github.com/cloudvoyant/openbase/libs/components` and call `components.NewGreeting`. See `examples/consumer` for a complete Go consumer. Mock tests do not deploy cloud resources or require cloud credentials.
 
 ## Develop
 
@@ -26,6 +26,4 @@ Formatting and lint tasks use the workspace's root `.golangci.yml`.
 
 ## Workspace
 
-This project is a package in the workspace's root Go module. Keep the same module path when you add projects. Applications live under `apps/`, and libraries live under `libs/`. All packages share dependencies and one repository tag.
-
-`package.public: false` skips project publication tasks. It does not remove source from the module. Use Go `internal/` directories to restrict external imports. Before release, run `GOWORK=off go test ./...` from the workspace root and remove filesystem `replace` directives.
+This project is a public library package (`package.public: true`) in the workspace's root Go module (`github.com/cloudvoyant/openbase`). Applications live under `apps/`, and libraries live under `libs/`. All packages share dependencies and one repository tag.

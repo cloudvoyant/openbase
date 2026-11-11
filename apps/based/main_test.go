@@ -38,6 +38,26 @@ func TestCommand(t *testing.T) {
 			})
 		})
 	}
+	t.Run("when running with no arguments", func(t *testing.T) {
+		// Arrange
+		command := RootCommand()
+		var output bytes.Buffer
+		command.SetOut(&output)
+		command.SetArgs([]string{})
+
+		// Act
+		err := command.Execute()
+
+		// Assert
+		t.Run("it writes the greeting", func(t *testing.T) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, want := output.String(), "Hello from based\n"; got != want {
+				t.Fatalf("output = %q, want %q", got, want)
+			}
+		})
+	})
 	t.Run("when writing the greeting fails", func(t *testing.T) {
 		// Arrange
 		command := RootCommand()

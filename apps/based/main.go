@@ -9,8 +9,6 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var version = "dev"
-
 // RootCommand builds an independent command tree.
 func RootCommand() *cobra.Command {
 	return &cobra.Command{
@@ -24,6 +22,8 @@ func RootCommand() *cobra.Command {
 }
 
 // Private helpers ------------------------------------------------------------
+
+var version = "dev"
 
 func main() {
 	if err := RootCommand().Execute(); err != nil {
