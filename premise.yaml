@@ -1,0 +1,25 @@
+workspace:
+    name: openbase
+    kind: monorepo
+    schema-version: "0.2"
+    package_managers:
+        - go
+    providers:
+        ci: github
+        tools: mise
+        tasks: mise
+        infra: pulumi
+        versioning: svu
+    projects:
+        - name: based
+          template: cloudvoyant/premise-go:premise-cobra-cli
+          path: apps/based
+          package:
+            public: false
+            main: .
+            binary: based
+        - name: components
+          template: cloudvoyant/premise-go:premise-pulumi-component-lib
+          path: libs/components
+          package:
+            public: true
