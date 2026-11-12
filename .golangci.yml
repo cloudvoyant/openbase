@@ -1,0 +1,28 @@
+version: "2"
+
+run:
+  timeout: 5m
+  relative-path-mode: cfg
+
+linters:
+  default: standard
+  enable:
+    - bodyclose
+    - cyclop
+    - unconvert
+  settings:
+    cyclop:
+      max-complexity: 10
+  exclusions:
+    generated: strict
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/cloudvoyant/openbase
+  exclusions:
+    generated: strict
