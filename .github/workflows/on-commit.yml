@@ -191,7 +191,6 @@ jobs:
         uses: cloudvoyant/premise@v0
         env:
           GH_TOKEN: ${{ github.token }}
-          CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
         with:
           command: packages
           flow: on-commit

@@ -4,6 +4,7 @@ GOWORK = "off"
 [tools]
 go = "1.25.14"
 golangci-lint = "2.15.0"
+pulumi = "3.200.0"
 
 [tasks."install"]
 run = "go mod download all"
@@ -19,6 +20,45 @@ run = "rm -rf dist"
 
 [tasks."test"]
 run = "go test ./..."
+
+[tasks."e2e"]
+description = "Run end-to-end tests"
+run = "go test ./e2e -count=1 -v"
+
+[tasks."e2e:gcp"]
+description = "Run live GCP Bucket and CloudRunService E2E suites"
+run = "go test ./e2e -run '^TestGCP' -count=1 -timeout 45m -v"
+
+[tasks."e2e:gcp".env]
+OPENBASE_TEST_GCP = "1"
+
+[tasks."e2e:neon"]
+description = "Run live Neon Database E2E suite"
+run = "go test ./e2e -run '^TestNeon' -count=1 -timeout 45m -v"
+
+[tasks."e2e:neon".env]
+OPENBASE_TEST_NEON = "1"
+
+[tasks."e2e:kinde"]
+description = "Run live Kinde Auth E2E suite"
+run = "go test ./e2e -run '^TestKinde' -count=1 -timeout 45m -v"
+
+[tasks."e2e:kinde".env]
+OPENBASE_TEST_KINDE = "1"
+
+[tasks."e2e:vercel"]
+description = "Run live Vercel BlobStore and WebApp E2E suites"
+run = "go test ./e2e -run '^TestVercel' -count=1 -timeout 45m -v"
+
+[tasks."e2e:vercel".env]
+OPENBASE_TEST_VERCEL = "1"
+
+[tasks."e2e:live"]
+description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, and Links"
+run = "go test ./e2e -count=1 -timeout 60m -v"
+
+[tasks."e2e:live".env]
+OPENBASE_TEST_LIVE = "1"
 
 [tasks."lint"]
 run = "golangci-lint run"

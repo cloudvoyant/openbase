@@ -8,23 +8,69 @@ _.path = ["{{config_root}}/bin"]
 GOWORK = "off"
 
 [monorepo]
-config_roots = ["apps/*", "libs/*"]
+config_roots = ["libs/*"]
 
 [tools]
 go = "1.25.14"
 golangci-lint = "2.15.0"
+pulumi = "3.200.0"
 
 [tasks.install]
 run = "go mod download all"
 
 [tasks.build]
 run = [
-  "mise run '//apps/...:build'",
   "mise run '//libs/...:build'",
 ]
 
 [tasks.test]
-run = "go test ./..."
+run = [
+  "mise run '//libs/...:test'",
+]
+
+[tasks.e2e]
+description = "Run component end-to-end tests"
+run = [
+  "mise run '//libs/components:e2e'",
+]
+
+[tasks."e2e:gcp"]
+description = "Run live GCP Bucket and CloudRunService E2E suites"
+run = [
+  "mise run '//libs/components:e2e:gcp'",
+]
+
+[tasks."e2e:neon"]
+description = "Run live Neon Database E2E suite"
+run = [
+  "mise run '//libs/components:e2e:neon'",
+]
+
+[tasks."e2e:kinde"]
+description = "Run live Kinde Auth E2E suite"
+run = [
+  "mise run '//libs/components:e2e:kinde'",
+]
+
+[tasks."e2e:vercel"]
+description = "Run live Vercel BlobStore and WebApp E2E suites"
+run = [
+  "mise run '//libs/components:e2e:vercel'",
+]
+
+[tasks."e2e:live"]
+description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, and Links"
+run = [
+  "mise run '//libs/components:e2e:live'",
+]
+
+[tasks.generate]
+description = "Generate bridged Pulumi Go bindings for Neon and Kinde"
+run = "sh scripts/generate-bridged.sh"
+
+[tasks."generate:check"]
+description = "Verify generated bridged Pulumi Go bindings have no uncommitted drift"
+run = "sh scripts/generate-bridged.sh --check"
 
 [tasks.format]
 run = "golangci-lint fmt"

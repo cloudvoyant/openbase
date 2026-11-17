@@ -1,0 +1,10 @@
+{
+  "resource": true,
+  "name": "terraform-provider",
+  "version": "1.4.0",
+  "parameterization": {
+    "name": "kinde",
+    "version": "0.1.1",
+    "value": "eyJyZW1vdGUiOnsidXJsIjoicmVnaXN0cnkudGVycmFmb3JtLmlvL2tpbmRlLW9zcy9raW5kZSIsInZlcnNpb24iOiIwLjEuMSJ9fQ=="
+  }
+}

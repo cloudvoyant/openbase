@@ -1,20 +1,28 @@
-# components
+# OpenBase Go Pulumi components (`libs/components`)
 
-A native Go Pulumi component library with a Go consumer and mock tests.
+Typed Go Pulumi components for provisioning services, object storage, serverless PostgreSQL, and authentication across GCP, Vercel, Neon, and Kinde from one shared infrastructure program.
 
-## Use
+## Install
 
-From another Go Pulumi project, fetch a released package:
-
-```bash
-go get github.com/cloudvoyant/openbase/libs/components@v1.2.3
+```sh
+go get github.com/cloudvoyant/openbase/libs/components@v0.1.0
 ```
 
-Import `github.com/cloudvoyant/openbase/libs/components` and call `components.NewGreeting`. See `examples/consumer` for a complete Go consumer. Mock tests do not deploy cloud resources or require cloud credentials.
+## Packages
+
+| Package | Role | Resources |
+| --- | --- | --- |
+| `libs/components/core` | Lifecycle contracts, environment validation, naming, tags, and `Links` | `StatelessResource`, `StatefulResource`, `NewStatelessResource`, `NewStatefulResource`, `ResolveLinks` |
+| `libs/components/gcp` | Google Cloud Platform compute, storage, and shared platform roots | `Shared`, `CloudRunService`, `Bucket`, `overlayfs` |
+| `libs/components/vercel` | Vercel web hosting and Blob storage | `Shared`, `WebApp`, `BlobStore` |
+| `libs/components/neon` | Branched serverless PostgreSQL | `SharedProject`, `Database` |
+| `libs/components/kinde` | Two-tenant OAuth2 / OIDC authentication | `SharedAuth`, `Auth` |
+| `libs/components/synthetic` | Deterministic offline doubles for fast unit tests | `Service`, `Storage` |
+| `libs/components/e2e` | Standalone Go consumer fixtures and live cloud E2E suites | `TestGCP*`, `TestNeon*`, `TestKinde*`, `TestVercel*`, `TestLinks` |
 
 ## Develop
 
-```bash
+```sh
 mise run install
 mise run format:check
 mise run lint
@@ -22,8 +30,4 @@ mise run test
 mise run build
 ```
 
-Formatting and lint tasks use the workspace's root `.golangci.yml`.
-
-## Workspace
-
-This project is a public library package (`package.public: true`) in the workspace's root Go module (`github.com/cloudvoyant/openbase`). Applications live under `apps/`, and libraries live under `libs/`. All packages share dependencies and one repository tag.
+Formatting and lint tasks use the workspace's root `.golangci.yml`. `libs/components` is published (`package.public: true`) through the repository's shared `vX.Y.Z` Git tag via Premise.

@@ -1,34 +1,28 @@
-// Package components provides cloud-neutral Pulumi components.
+// Package components exposes the root OpenBase Go Pulumi component library metadata.
+//
+// Import provider subpackages directly:
+//   - github.com/cloudvoyant/openbase/libs/components/core
+//   - github.com/cloudvoyant/openbase/libs/components/gcp
+//   - github.com/cloudvoyant/openbase/libs/components/vercel
+//   - github.com/cloudvoyant/openbase/libs/components/neon
+//   - github.com/cloudvoyant/openbase/libs/components/kinde
+//   - github.com/cloudvoyant/openbase/libs/components/synthetic
 package components
 
-import "github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+import "github.com/cloudvoyant/openbase/libs/components/core"
 
 // Public API -----------------------------------------------------------------
 
-// GreetingArgs supplies a greeting's input.
-type GreetingArgs struct{ Name pulumi.StringInput }
+// LibraryName identifies the OpenBase Go Pulumi component package.
+const LibraryName = "openbase-components"
 
-// Greeting is a reusable component with an exported message.
-type Greeting struct {
-	pulumi.ResourceState
-	Message pulumi.StringOutput
+// SupportedEnvironments returns the fixed environment tiers plus the preview prefix.
+func SupportedEnvironments() []string {
+	return []string{
+		core.EnvShared.String(),
+		core.EnvDev.String(),
+		core.EnvStage.String(),
+		core.EnvProd.String(),
+		core.PreviewPrefix + "<slug>",
+	}
 }
-
-// NewGreeting registers a component and a parented child without cloud providers.
-func NewGreeting(ctx *pulumi.Context, name string, args GreetingArgs, opts ...pulumi.ResourceOption) (*Greeting, error) {
-	c := &Greeting{}
-	if err := ctx.RegisterComponentResource("premise:index:Greeting", name, c, opts...); err != nil {
-		return nil, err
-	}
-	child := &pulumi.ResourceState{}
-	if err := ctx.RegisterComponentResource("premise:index:Message", name+"-message", child, pulumi.Parent(c)); err != nil {
-		return nil, err
-	}
-	c.Message = args.Name.ToStringOutput().ApplyT(func(n string) string { return "Hello, " + n + "!" }).(pulumi.StringOutput)
-	if err := ctx.RegisterResourceOutputs(c, pulumi.Map{"message": c.Message}); err != nil {
-		return nil, err
-	}
-	return c, nil
-}
-
-// Private helpers ------------------------------------------------------------
