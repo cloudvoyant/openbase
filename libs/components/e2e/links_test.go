@@ -26,8 +26,8 @@ func TestLinks(t *testing.T) {
 	teamID, teamSlug := detectVercelTeam(t)
 	runID := fmt.Sprintf("%d", time.Now().Unix()%100000)
 	appProject := "oblnk" + runID
-	devKindeID, devKindeName := findAndPrepareKindeSandboxAppForLinks(t, "dev", appProject, teamSlug)
-	prodKindeID, _ := findAndPrepareKindeSandboxAppForLinks(t, "prod", appProject, teamSlug)
+	devKindeID, devKindeName := prepareKindeSandboxApp(t, "dev", "openbase-e2e-"+appProject, appProject, teamSlug)
+	prodKindeID, _ := prepareKindeSandboxApp(t, "prod", "openbase-e2e-"+appProject, appProject, teamSlug)
 
 	h := NewLiveHarness(
 		t,
@@ -199,40 +199,4 @@ func waitForFullstackLinksProbe(t *testing.T, url, bypassSecret string) fullstac
 	}
 	t.Fatalf("GET %s timed out waiting for OIDC links probe: %s", url, last)
 	return fullstackProbePayload{}
-}
-
-func findAndPrepareKindeSandboxAppForLinks(t *testing.T, tenant, appProject, teamSlug string) (string, string) {
-	t.Helper()
-	issuer, tok := kindeMgmtToken(t, tenant)
-	apps := listOpenBaseKindeApps(t, issuer, tok)
-	if len(apps) == 0 {
-		return "", "openbase-e2e-" + appProject
-	}
-	id, name := apps[0].ID, apps[0].Name
-	vProj := "openbase-e2e-" + appProject
-	var redirects, logouts []string
-	if tenant == "dev" {
-		redirects = []string{
-			"http://localhost:3000/api/auth/kinde_callback",
-			"http://localhost:5173/api/auth/kinde_callback",
-			fmt.Sprintf("https://%s-*-%s.vercel.app/api/auth/kinde_callback", vProj, teamSlug),
-		}
-		logouts = []string{
-			"http://localhost:3000/",
-			"http://localhost:5173/",
-			fmt.Sprintf("https://%s-*-%s.vercel.app/", vProj, teamSlug),
-		}
-	} else {
-		redirects = []string{
-			fmt.Sprintf("https://%s-%s.vercel.app/api/auth/kinde_callback", vProj, teamSlug),
-			fmt.Sprintf("https://%s-stage-%s.vercel.app/api/auth/kinde_callback", vProj, teamSlug),
-		}
-		logouts = []string{
-			fmt.Sprintf("https://%s-%s.vercel.app/", vProj, teamSlug),
-			fmt.Sprintf("https://%s-stage-%s.vercel.app/", vProj, teamSlug),
-		}
-	}
-	putKindeURLs(t, issuer, tok, id, "auth_redirect_urls", redirects)
-	putKindeURLs(t, issuer, tok, id, "auth_logout_urls", logouts)
-	return id, name
 }

@@ -21,8 +21,8 @@ func TestKindeAuth(t *testing.T) {
 	baseBackend := RequireLiveKinde(t)
 	runID := fmt.Sprintf("%d", time.Now().Unix()%100000)
 	appProject := "obkd" + runID
-	devSandboxID, devSandboxName := findAndPrepareKindeSandboxApp(t, "dev", appProject, "cloudvoyant")
-	prodSandboxID, _ := findAndPrepareKindeSandboxApp(t, "prod", appProject, "cloudvoyant")
+	devSandboxID, devSandboxName := prepareKindeSandboxApp(t, "dev", "openbase-"+appProject, appProject, "cloudvoyant")
+	prodSandboxID, _ := prepareKindeSandboxApp(t, "prod", "openbase-"+appProject, appProject, "cloudvoyant")
 
 	h := NewLiveHarness(
 		t,
@@ -122,7 +122,7 @@ func TestKindeAuth(t *testing.T) {
 
 // Private helpers ------------------------------------------------------------
 
-func findAndPrepareKindeSandboxApp(t *testing.T, tenant, appProject, teamSlug string) (string, string) {
+func prepareKindeSandboxApp(t *testing.T, tenant, vProj, appProject, teamSlug string) (string, string) {
 	t.Helper()
 	issuer, tok := kindeMgmtToken(t, tenant)
 	apps := listOpenBaseKindeApps(t, issuer, tok)
@@ -130,14 +130,13 @@ func findAndPrepareKindeSandboxApp(t *testing.T, tenant, appProject, teamSlug st
 		return "", "openbase-e2e-" + appProject
 	}
 	id, name := apps[0].ID, apps[0].Name
-	redirects, logouts := expectedInitialKindeURLs(tenant, appProject, teamSlug)
+	redirects, logouts := expectedInitialKindeURLs(tenant, vProj, teamSlug)
 	putKindeURLs(t, issuer, tok, id, "auth_redirect_urls", redirects)
 	putKindeURLs(t, issuer, tok, id, "auth_logout_urls", logouts)
 	return id, name
 }
 
-func expectedInitialKindeURLs(tenant, appProject, teamSlug string) ([]string, []string) {
-	vProj := "openbase-" + appProject
+func expectedInitialKindeURLs(tenant, vProj, teamSlug string) ([]string, []string) {
 	if tenant == "dev" {
 		return []string{
 			"http://localhost:3000/api/auth/kinde_callback",

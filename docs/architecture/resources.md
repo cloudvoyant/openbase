@@ -117,10 +117,23 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
+		env, err := core.ResolveEnvironment(ctx, "")
+		if err != nil {
+			return err
+		}
+		branchFrom := ""
+		if env.IsPreview() {
+			branchFrom = "dev"
+		}
+		dbBranch := branchFrom
+		if env == core.EnvStage {
+			dbBranch = "prod"
+		}
+
 		uploads, err := gcp.NewBucket(ctx, "uploads", gcp.BucketArgs{
 			StatefulResourceArgs: core.StatefulResourceArgs{
 				Project:    "storefront",
-				BranchFrom: "dev",
+				BranchFrom: branchFrom,
 			},
 		})
 		if err != nil {
@@ -130,7 +143,7 @@ func main() {
 		db, err := neon.NewDatabase(ctx, "db", neon.DatabaseArgs{
 			StatefulResourceArgs: core.StatefulResourceArgs{
 				Project:    "storefront",
-				BranchFrom: "dev",
+				BranchFrom: dbBranch,
 			},
 			SharedStackRef: "org/storefront/shared",
 		})

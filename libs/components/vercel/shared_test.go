@@ -73,6 +73,13 @@ func (m *vercelMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.P
 		acc := outs["accountId"].StringValue()
 		outs["email"] = resource.NewStringProperty(acc + "@proj.iam.gserviceaccount.com")
 		outs["name"] = resource.NewStringProperty("projects/proj/serviceAccounts/" + acc)
+	case "pulumi:pulumi:StackReference":
+		outs["outputs"] = resource.NewObjectProperty(resource.PropertyMap{
+			"projectId":                resource.NewStringProperty("prj_from_ref"),
+			"vercelProjectName":        resource.NewStringProperty("openbase-storefront"),
+			"teamSlug":                 resource.NewStringProperty("cloudvoyant"),
+			"stageCustomEnvironmentId": resource.NewStringProperty("env_stage_ref"),
+		})
 	}
 	return id, outs, nil
 }

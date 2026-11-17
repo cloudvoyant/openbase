@@ -133,13 +133,23 @@ func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta,
 	if err != nil {
 		return webAppRefs{}, err
 	}
+	applySharedStackRefWebRefs(&refs, sr, args)
+	return refs, nil
+}
+
+func applySharedStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, args WebAppArgs) {
 	if !isOutSet(refs.projectID) {
 		refs.projectID = sr.GetStringOutput(pulumi.String("projectId"))
 	}
 	if !isOutSet(refs.stageEnvID) {
 		refs.stageEnvID = sr.GetStringOutput(pulumi.String("stageCustomEnvironmentId"))
 	}
-	return refs, nil
+	if args.Shared == nil && args.VercelProjectName == "" {
+		refs.projectName = sr.GetStringOutput(pulumi.String("vercelProjectName"))
+	}
+	if args.Shared == nil && args.TeamSlug == "" {
+		refs.teamSlug = sr.GetStringOutput(pulumi.String("teamSlug"))
+	}
 }
 
 func initExplicitWebRefs(meta core.ResourceMeta, args WebAppArgs) webAppRefs {

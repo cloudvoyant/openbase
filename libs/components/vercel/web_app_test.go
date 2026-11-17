@@ -67,3 +67,27 @@ func TestWebAppMissingProjectError(t *testing.T) {
 		}
 	})
 }
+
+func TestWebAppSharedStackRefAliasResolution(t *testing.T) {
+	t.Run("when resolving projectName and teamSlug from SharedStackRef", func(t *testing.T) {
+		// Arrange.
+		urlCh := make(chan string, 1)
+
+		// Act.
+		err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+			app, err := vercel.NewWebApp(ctx, "web", vercel.WebAppArgs{
+				StatelessResourceArgs: core.StatelessResourceArgs{Project: "storefront", Environment: "stage"},
+				SharedStackRef:        "org/storefront/shared",
+			})
+			if err != nil {
+				return err
+			}
+			app.URL.ApplyT(func(v string) string { urlCh <- v; return v })
+			return nil
+		}, pulumi.WithMocks("storefront", "stage", newVercelMocks()))
+
+		// Assert.
+		requireVercelNoErr(t, err)
+		assertVercelEq(t, "stage alias URL from StackReference", <-urlCh, "https://openbase-storefront-stage-cloudvoyant.vercel.app")
+	})
+}

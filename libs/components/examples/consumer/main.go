@@ -9,10 +9,18 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
+		env, err := core.ResolveEnvironment(ctx, "")
+		if err != nil {
+			return err
+		}
+		branchFrom := ""
+		if env.IsPreview() {
+			branchFrom = "dev"
+		}
 		uploads, err := synthetic.NewStorage(ctx, "uploads", synthetic.StorageArgs{
 			StatefulResourceArgs: core.StatefulResourceArgs{
 				Project:    "storefront",
-				BranchFrom: "dev",
+				BranchFrom: branchFrom,
 			},
 		})
 		if err != nil {
