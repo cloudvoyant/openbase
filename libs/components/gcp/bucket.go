@@ -12,7 +12,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatefulResource = (*Bucket)(nil)
+var _ core.StatefulResource = (*BucketResource)(nil)
 
 // BucketCORSRule configures direct browser uploads or reads on a GCS bucket.
 type BucketCORSRule struct {
@@ -22,9 +22,18 @@ type BucketCORSRule struct {
 	MaxAgeSeconds   int
 }
 
-// BucketArgs configures a Google Cloud Storage Bucket component.
-type BucketArgs struct {
-	core.StatefulResourceArgs
+// Bucket declares a Google Cloud Storage Bucket component spec.
+type Bucket struct {
+	Name               string
+	Project            string
+	Repo               string
+	Environment        string
+	Kind               string
+	BranchFrom         string
+	Backup             *bool
+	Links              []core.Resource
+	Env                map[string]pulumi.StringInput
+	Secrets            map[string]pulumi.StringInput
 	GCPProject         pulumi.StringPtrInput
 	BucketNamespace    string
 	Location           string
@@ -37,8 +46,8 @@ type BucketArgs struct {
 	ForceDestroy       *bool
 }
 
-// Bucket provisions a GCS bucket with tier-aware backups, protection, and BranchFrom overlays.
-type Bucket struct {
+// BucketResource is the provisioned GCS bucket handle with tier-aware backups, protection, and BranchFrom overlays.
+type BucketResource struct {
 	pulumi.ResourceState
 	core.StatefulMeta
 
@@ -48,22 +57,33 @@ type Bucket struct {
 	FallbackBucketName pulumi.StringOutput
 }
 
-// NewBucket creates a Google Cloud Storage Bucket satisfying core.StatefulResource.
-func NewBucket(ctx *pulumi.Context, name string, args BucketArgs, opts ...pulumi.ResourceOption) (*Bucket, error) {
-	res := &Bucket{}
-	meta, err := core.InitStateful(ctx, "openbase:gcp:Bucket", name, "gcp-bucket", res, &res.StatefulMeta, args.StatefulResourceArgs, opts...)
+// Register provisions a Google Cloud Storage Bucket satisfying core.StatefulResource.
+func (b Bucket) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*BucketResource, error) {
+	res := &BucketResource{}
+	meta, err := core.InitStateful(ctx, "openbase:gcp:Bucket", "gcp-bucket", res, &res.StatefulMeta, core.StatefulSpec{
+		Name:        b.Name,
+		Project:     b.Project,
+		Repo:        b.Repo,
+		Environment: b.Environment,
+		Kind:        b.Kind,
+		BranchFrom:  b.BranchFrom,
+		Backup:      b.Backup,
+		Links:       b.Links,
+		Env:         b.Env,
+		Secrets:     b.Secrets,
+	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	bucketName, err := core.BucketName(meta.Project, meta.Environment, name, args.BucketNamespace)
+	bucketName, err := core.BucketName(meta.Project, meta.Environment, b.Name, b.BucketNamespace)
 	if err != nil {
 		return nil, err
 	}
-	bkt, err := createGCSBucket(ctx, name, bucketName, meta, args, res)
+	bkt, err := createGCSBucket(ctx, b.Name, bucketName, meta, b, res)
 	if err != nil {
 		return nil, err
 	}
-	fallback, err := resolveFallbackBucket(ctx, name, meta, args)
+	fallback, err := resolveFallbackBucket(ctx, b.Name, meta, b)
 	if err != nil {
 		return nil, err
 	}
@@ -71,7 +91,7 @@ func NewBucket(ctx *pulumi.Context, name string, args BucketArgs, opts ...pulumi
 	res.BucketName = bkt.Name
 	res.BucketURL = bkt.Url
 	res.FallbackBucketName = fallback
-	res.SetLink(buildBucketLink(name, meta, args, res))
+	res.SetLink(buildBucketLink(b.Name, meta, b, res))
 	if err := registerBucketOutputs(ctx, meta, res); err != nil {
 		return nil, err
 	}
@@ -86,29 +106,29 @@ func createGCSBucket(
 	ctx *pulumi.Context,
 	name, bucketName string,
 	meta core.ResourceMeta,
-	args BucketArgs,
+	spec Bucket,
 	parent pulumi.Resource,
 ) (*storage.Bucket, error) {
 	forceDestroy := !meta.Protected
-	if args.ForceDestroy != nil {
-		forceDestroy = *args.ForceDestroy
+	if spec.ForceDestroy != nil {
+		forceDestroy = *spec.ForceDestroy
 	}
 	retention := 0
 	if meta.Backup {
 		retention = sevenDaysSeconds
 	}
 	bktArgs := &storage.BucketArgs{
-		Project:                  args.GCPProject,
+		Project:                  spec.GCPProject,
 		Name:                     pulumi.String(bucketName),
-		Location:                 pulumi.String(defaultStr(args.Location, "US")),
-		StorageClass:             pulumi.String(defaultStr(args.StorageClass, "STANDARD")),
+		Location:                 pulumi.String(defaultStr(spec.Location, "US")),
+		StorageClass:             pulumi.String(defaultStr(spec.StorageClass, "STANDARD")),
 		UniformBucketLevelAccess: pulumi.Bool(true),
 		PublicAccessPrevention:   pulumi.String("enforced"),
 		ForceDestroy:             pulumi.Bool(forceDestroy),
 		Versioning:               &storage.BucketVersioningArgs{Enabled: pulumi.Bool(meta.Backup)},
 		SoftDeletePolicy:         &storage.BucketSoftDeletePolicyArgs{RetentionDurationSeconds: pulumi.Int(retention)},
-		Cors:                     buildBucketCORS(args.CORS),
-		Labels:                   core.GCPLabels(meta, args.ExtraLabels),
+		Cors:                     buildBucketCORS(spec.CORS),
+		Labels:                   core.GCPLabels(meta, spec.ExtraLabels),
 	}
 	return storage.NewBucket(ctx, name+"-bkt", bktArgs, core.ChildOptions(parent, meta)...)
 }
@@ -133,42 +153,42 @@ func buildBucketCORS(rules []BucketCORSRule) storage.BucketCorArray {
 	return out
 }
 
-func resolveFallbackBucket(ctx *pulumi.Context, name string, meta core.ResourceMeta, args BucketArgs) (pulumi.StringOutput, error) {
+func resolveFallbackBucket(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Bucket) (pulumi.StringOutput, error) {
 	if meta.BranchFrom == "" {
 		return pulumi.String("").ToStringOutput(), nil
 	}
-	if args.FallbackBucketName != nil {
-		return args.FallbackBucketName.ToStringOutput(), nil
+	if spec.FallbackBucketName != nil {
+		return spec.FallbackBucketName.ToStringOutput(), nil
 	}
-	if args.BranchStackRef != "" {
+	if spec.BranchStackRef != "" {
 		ref, err := pulumi.NewStackReference(ctx, name+"-branch-ref", &pulumi.StackReferenceArgs{
-			Name: pulumi.String(args.BranchStackRef),
+			Name: pulumi.String(spec.BranchStackRef),
 		})
 		if err != nil {
 			return pulumi.StringOutput{}, err
 		}
 		return ref.GetStringOutput(pulumi.String("bucketName")), nil
 	}
-	derived, err := core.BucketName(meta.Project, meta.BranchFrom, name, args.BucketNamespace)
+	derived, err := core.BucketName(meta.Project, meta.BranchFrom, name, spec.BucketNamespace)
 	if err != nil {
 		return pulumi.StringOutput{}, err
 	}
 	return pulumi.String(derived).ToStringOutput(), nil
 }
 
-func buildBucketLink(name string, meta core.ResourceMeta, args BucketArgs, res *Bucket) core.LinkDescriptor {
-	prefix := envKeyPrefix(defaultStr(args.EnvPrefix, "STORAGE"))
+func buildBucketLink(name string, meta core.ResourceMeta, spec Bucket, res *BucketResource) core.LinkDescriptor {
+	prefix := envKeyPrefix(defaultStr(spec.EnvPrefix, "STORAGE"))
 	envMap := map[string]pulumi.StringOutput{
 		prefix + "_BUCKET": res.BucketName,
 	}
 	if meta.BranchFrom != "" {
 		envMap[prefix+"_FALLBACK_BUCKET"] = res.FallbackBucketName
 	}
-	for k, v := range args.Env {
+	for k, v := range spec.Env {
 		envMap[k] = v.ToStringOutput()
 	}
 	secrets := map[string]pulumi.StringOutput{}
-	for k, v := range args.Secrets {
+	for k, v := range spec.Secrets {
 		secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
 	}
 	return core.LinkDescriptor{
@@ -182,7 +202,7 @@ func buildBucketLink(name string, meta core.ResourceMeta, args BucketArgs, res *
 	}
 }
 
-func grantBucketAccess(name string, meta core.ResourceMeta, res *Bucket, g core.LinkGrantContext) error {
+func grantBucketAccess(name string, meta core.ResourceMeta, res *BucketResource, g core.LinkGrantContext) error {
 	consumerSlug := core.BoundedName(g.ConsumerName, 24)
 	if isOutputSet(g.GCPServiceAccountEmail) {
 		member := pulumi.Sprintf("serviceAccount:%s", g.GCPServiceAccountEmail)
@@ -203,7 +223,7 @@ func bindBucketMember(
 	ctx *pulumi.Context,
 	prefix string,
 	meta core.ResourceMeta,
-	res *Bucket,
+	res *BucketResource,
 	member pulumi.StringInput,
 ) error {
 	_, err := storage.NewBucketIAMMember(ctx, prefix+"-admin", &storage.BucketIAMMemberArgs{
@@ -225,7 +245,7 @@ func bindBucketMember(
 	return err
 }
 
-func registerBucketOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *Bucket) error {
+func registerBucketOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *BucketResource) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName":      pulumi.String(meta.CanonicalName),
 		"bucketName":         res.BucketName,

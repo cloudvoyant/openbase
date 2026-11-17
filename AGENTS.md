@@ -2,7 +2,7 @@
 
 ## Hard Rules
 
-- Prefer the repository's existing Mise tasks in [mise.toml](./mise.toml) and [libs/components/mise.toml](./libs/components/mise.toml).
+- Prefer the repository's existing Mise tasks in [mise.toml](./mise.toml), [libs/components/mise.toml](./libs/components/mise.toml), and [e2e/components/mise.toml](./e2e/components/mise.toml).
 - Manage monorepo projects and Go Git-tag releases through [premise.yaml](./premise.yaml).
 - Keep `libs/components` as a pure Go library inside the single root [go.mod](./go.mod) with `GOWORK=off`, no nested `go.mod` files, and no committed local `replace` directives.
 - Refresh Terraform-bridged Go bindings via `mise run generate` and verify zero drift with `mise run generate:check` ([scripts/generate-bridged.sh](./scripts/generate-bridged.sh)).
@@ -13,7 +13,7 @@
 ### Repository layout
 
 - Place shared lifecycle contracts in `libs/components/core` and provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`. See [docs/architecture/index.md](./docs/architecture/index.md).
-- Nest component end-to-end tests and consumer fixtures under [libs/components/e2e](./libs/components/e2e/README.md).
+- Keep top-level `e2e/` organized by target suite, with component end-to-end suites and consumer fixtures under [e2e/components](./e2e/README.md).
 
 ### File layout
 
@@ -23,16 +23,16 @@
 
 ### Go
 
-- Name component types after concrete cloud products (`gcp.CloudRunService`, `gcp.Bucket`, `vercel.WebApp`, `vercel.BlobStore`, `neon.Database`, `kinde.Auth`) with standard Go `New<Type>` constructors.
+- Expose declarative struct-literal specs named after concrete cloud products (`gcp.CloudRunService`, `gcp.Bucket`, `vercel.WebApp`, `vercel.BlobStore`, `neon.Database`, `kinde.OidcApp`) with flat lifecycle fields (`Name`, `Project`, `Environment`, `BranchFrom`, `Links`) and `.Register(ctx, opts...)` returning `*<Type>Resource`.
 - [Proposed] Keep every handwritten function at or below cyclomatic complexity `10` as enforced by [.golangci.yml](./.golangci.yml).
 
 ### Pulumi
 
-- Embed `pulumi.ResourceState` directly on concrete component structs alongside `core.StatelessMeta` or `core.StatefulMeta`.
+- Embed `pulumi.ResourceState` directly on concrete `*Resource` structs alongside `core.StatelessMeta` or `core.StatefulMeta`.
 - [Proposed] Gate `BranchFrom` on preview or child stacks so persistent root stacks do not reference themselves as a branch parent.
 
 ## Testing
 
-- Co-locate fast offline `pulumi.WithMocks` unit tests (`*_test.go`) beside each component package and keep standalone consumer E2E suites in `libs/components/e2e`.
-- Verify every component module live with `mise run e2e:live` (`//libs/components:e2e:live`) before release; skipped live suites never count as passing validation.
-- [Proposed] Structure tests with nested `when ...` and `it ...` subtests and explicit `// Arrange.`, `// Act.`, and `// Assert.` comments.
+- Co-locate fast offline `pulumi.WithMocks` integration/unit tests (`*_test.go`) beside each component package and keep standalone consumer E2E suites in `e2e/components`.
+- Verify every component module live with `mise run e2e:live` (`//e2e/components:e2e:live`) before release; skipped live suites never count as passing validation.
+- [Proposed] Follow `difflab-bdd` across all Go test suites: mirror behavior flowcharts with `given <context>` -> `when <action>` -> `then <outcome>` subtests (collapsing single-outcome branches to `when <action>, then <outcome>`), hoist shared setup to enclosing `given` converged-state scopes, keep `// Arrange.`, `// Act.`, and `// Assert.` explicit, never test fixtures/harnesses themselves, and emit secret-redacted transcripts and JSON snapshots under `e2e/outputs/components/`.

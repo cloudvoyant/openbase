@@ -8,7 +8,7 @@ _.path = ["{{config_root}}/bin"]
 GOWORK = "off"
 
 [monorepo]
-config_roots = ["libs/*"]
+config_roots = ["libs/*", "e2e/components"]
 
 [tools]
 go = "1.25.14"
@@ -26,42 +26,49 @@ run = [
 [tasks.test]
 run = [
   "mise run '//libs/...:test'",
+  "go test -c -o /dev/null ./e2e/components",
 ]
 
 [tasks.e2e]
-description = "Run component end-to-end tests"
+description = "Run end-to-end suites"
 run = [
-  "mise run '//libs/components:e2e'",
+  "mise run '//e2e/components:e2e'",
+]
+
+[tasks."e2e:components"]
+description = "Run components E2E suite"
+run = [
+  "mise run '//e2e/components:e2e'",
 ]
 
 [tasks."e2e:gcp"]
 description = "Run live GCP Bucket and CloudRunService E2E suites"
 run = [
-  "mise run '//libs/components:e2e:gcp'",
+  "mise run '//e2e/components:e2e:gcp'",
 ]
 
 [tasks."e2e:neon"]
 description = "Run live Neon Database E2E suite"
 run = [
-  "mise run '//libs/components:e2e:neon'",
+  "mise run '//e2e/components:e2e:neon'",
 ]
 
 [tasks."e2e:kinde"]
-description = "Run live Kinde Auth E2E suite"
+description = "Run live Kinde OidcApp E2E suite"
 run = [
-  "mise run '//libs/components:e2e:kinde'",
+  "mise run '//e2e/components:e2e:kinde'",
 ]
 
 [tasks."e2e:vercel"]
 description = "Run live Vercel BlobStore and WebApp E2E suites"
 run = [
-  "mise run '//libs/components:e2e:vercel'",
+  "mise run '//e2e/components:e2e:vercel'",
 ]
 
 [tasks."e2e:live"]
 description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, and Links"
 run = [
-  "mise run '//libs/components:e2e:live'",
+  "mise run '//e2e/components:e2e:live'",
 ]
 
 [tasks.generate]

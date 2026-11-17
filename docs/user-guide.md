@@ -1,12 +1,12 @@
 # OpenBase user guide
 
-Write one shared Go Pulumi program (`infra/main.go`) and run it across separate Pulumi stacks for `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` using your ambient GCP, Vercel, Neon, and Kinde credentials.
+Write one shared Go Pulumi program (`infra/main.go`) using declarative OpenBase component specs (`<pkg>.<Product>{...}.Register(ctx)`) and run it across separate Pulumi stacks for `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` using your ambient GCP, Vercel, Neon, and Kinde credentials.
 
 ## Stack topology
 
 ```mermaid
 flowchart TD
-    Program["One Shared Go Program (infra/main.go)"] --> Shared["Stack: shared (gcp.Shared, vercel.Shared, neon.SharedProject, kinde.SharedAuth)"]
+    Program["One Shared Go Program (infra/main.go)"] --> Shared["Stack: shared (gcp.Shared, vercel.Shared, neon.SharedProject, kinde.SharedOidcApp)"]
     Program --> Dev["Stack: dev"]
     Program --> Stage["Stack: stage (BranchFrom: prod)"]
     Program --> Prod["Stack: prod"]
@@ -55,32 +55,36 @@ func main() {
 }
 
 func deployShared(ctx *pulumi.Context) error {
-	gcpShared, err := gcp.NewShared(ctx, "gcp", gcp.SharedArgs{
+	gcpShared, err := gcp.Shared{
+		Name:           "gcp",
 		Project:        "storefront",
 		GCPProject:     pulumi.String(os.Getenv("GCP_PROJECT")),
 		GitHubOrg:      "acme",
 		VercelTeamSlug: "acme",
-	})
+	}.Register(ctx)
 	if err != nil {
 		return err
 	}
-	vercelShared, err := vercel.NewShared(ctx, "vercel", vercel.SharedArgs{
+	vercelShared, err := vercel.Shared{
+		Name:            "vercel",
 		Project:         "storefront",
 		TeamID:          os.Getenv("VERCEL_TEAM_ID"),
 		TeamSlug:        "acme",
 		EnableBlobStore: true,
-	})
+	}.Register(ctx)
 	if err != nil {
 		return err
 	}
-	neonShared, err := neon.NewSharedProject(ctx, "neon", neon.SharedProjectArgs{
+	neonShared, err := neon.SharedProject{
+		Name:     "neon",
 		Project:  "storefront",
 		RegionID: "aws-us-east-1",
-	})
+	}.Register(ctx)
 	if err != nil {
 		return err
 	}
-	kindeShared, err := kinde.NewSharedAuth(ctx, "kinde", kinde.SharedAuthArgs{
+	kindeShared, err := kinde.SharedOidcApp{
+		Name:           "kinde",
 		Project:        "storefront",
 		VercelTeamSlug: "acme",
 		Dev: kinde.TenantCredentials{
@@ -93,7 +97,7 @@ func deployShared(ctx *pulumi.Context) error {
 			ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
 			ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
 		},
-	})
+	}.Register(ctx)
 	if err != nil {
 		return err
 	}
@@ -118,13 +122,12 @@ func deployEnvironment(ctx *pulumi.Context, env core.Environment) error {
 	if env.IsPreview() {
 		branchFrom = "dev"
 	}
-	uploads, err := gcp.NewBucket(ctx, "uploads", gcp.BucketArgs{
-		StatefulResourceArgs: core.StatefulResourceArgs{
-			Project:    "storefront",
-			BranchFrom: branchFrom,
-		},
+	uploads, err := gcp.Bucket{
+		Name:            "uploads",
+		Project:         "storefront",
+		BranchFrom:      branchFrom,
 		BucketNamespace: os.Getenv("GCP_PROJECT"),
-	})
+	}.Register(ctx)
 	if err != nil {
 		return err
 	}
@@ -132,44 +135,42 @@ func deployEnvironment(ctx *pulumi.Context, env core.Environment) error {
 	if env == core.EnvStage {
 		dbBranch = "prod"
 	}
-	db, err := neon.NewDatabase(ctx, "db", neon.DatabaseArgs{
-		StatefulResourceArgs: core.StatefulResourceArgs{
-			Project:    "storefront",
-			BranchFrom: dbBranch,
-		},
+	db, err := neon.Database{
+		Name:           "db",
+		Project:        "storefront",
+		BranchFrom:     dbBranch,
 		SharedStackRef: "organization/storefront/shared",
-	})
+	}.Register(ctx)
 	if err != nil {
 		return err
 	}
-	auth, err := kinde.NewAuth(ctx, "auth", kinde.AuthArgs{
-		StatelessResourceArgs: core.StatelessResourceArgs{Project: "storefront"},
-		SharedStackRef:        "organization/storefront/shared",
-		VercelTeamSlug:        "acme",
-	})
+	oidc, err := kinde.OidcApp{
+		Name:           "auth",
+		Project:        "storefront",
+		SharedStackRef: "organization/storefront/shared",
+		VercelTeamSlug: "acme",
+	}.Register(ctx)
 	if err != nil {
 		return err
 	}
-	api, err := gcp.NewCloudRunService(ctx, "orders", gcp.CloudRunServiceArgs{
-		StatelessResourceArgs: core.StatelessResourceArgs{
-			Project: "storefront",
-			Links:   []core.Resource{uploads, db, auth},
-		},
+	api, err := gcp.CloudRunService{
+		Name:       "orders",
+		Project:    "storefront",
+		Links:      []core.Resource{uploads, db, oidc},
 		Visibility: gcp.VisibilityInternal,
 		Image:      pulumi.String("us-central1-docker.pkg.dev/my-proj/storefront/orders:latest"),
-	})
+	}.Register(ctx)
 	if err != nil {
 		return err
 	}
-	_, err = vercel.NewWebApp(ctx, "web", vercel.WebAppArgs{
-		StatelessResourceArgs: core.StatelessResourceArgs{
-			Project: "storefront",
-			Links:   []core.Resource{api, uploads, db, auth},
-		},
+	_, err = vercel.WebApp{
+		Name:           "web",
+		Project:        "storefront",
+		Links:          []core.Resource{api, uploads, db, oidc},
 		SharedStackRef: "organization/storefront/shared",
 		TeamSlug:       "acme",
 		SourceDir:      "../apps/web",
-	})
+	}.Register(ctx)
 	return err
 }
 ```

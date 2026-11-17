@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `libs/components/neon` package implements OpenBase's serverless PostgreSQL components over the bridged `kislerdm/neon` Terraform provider (`internal/providers/neon`). It provides `neon.SharedProject` for provisioning the root Neon project once in `shared`, and `neon.Database` (`core.StatefulResource`) for per-environment branches, compute endpoints, roles, databases, and secret connection strings.
+The `libs/components/neon` package implements OpenBase's declarative serverless PostgreSQL components over the bridged `kislerdm/neon` Terraform provider (`internal/providers/neon`). It provides `neon.SharedProject` for provisioning the root Neon project once in `shared`, and `neon.Database` (`*neon.DatabaseResource`, `core.StatefulResource`) for per-environment branches, compute endpoints, roles, databases, and secret connection strings.
 
 ## Requirements
 
@@ -33,7 +33,7 @@ flowchart TD
 ```
 
 - **`neon.SharedProject`**: Creates `neon.Project` (`StorePassword: "yes"`), exporting `projectId`, `defaultBranchId`, and `regionId`.
-- **`neon.Database` (`core.StatefulResource`)**:
+- **`neon.Database` (`*neon.DatabaseResource`)**:
   - Root branches (`BranchFrom == ""`, such as `dev` and `prod`) branch from `defaultBranchId` and create `neon.Endpoint`, `neon.Role` (`openbase_app`), and `neon.Database` (`openbase`).
   - Child branches (`BranchFrom != ""`, such as `stage <- prod` and `preview-* <- dev`) branch from the parent stack's `branchId`, create an isolated `neon.Endpoint`, and read the inherited role password via `GetBranchRolePasswordOutput`.
 
@@ -41,24 +41,24 @@ flowchart TD
 
 ```go
 // Package neon (github.com/cloudvoyant/openbase/libs/components/neon)
-sharedDB, err := neon.NewSharedProject(ctx, "shared-db", neon.SharedProjectArgs{
+sharedDB, err := neon.SharedProject{
+	Name:     "shared-db",
 	Project:  "storefront",
 	RegionID: "aws-us-east-1",
-})
+}.Register(ctx)
 
-db, err := neon.NewDatabase(ctx, "db", neon.DatabaseArgs{
-	StatefulResourceArgs: core.StatefulResourceArgs{
-		Project:    "storefront",
-		BranchFrom: "dev", // on preview-* stacks ("prod" on stage)
-	},
+db, err := neon.Database{
+	Name:           "db",
+	Project:        "storefront",
+	BranchFrom:     "dev", // on preview-* stacks ("prod" on stage)
 	SharedStackRef: "org/storefront/shared",
 	BranchStackRef: "org/storefront/dev",
-})
+}.Register(ctx)
 ```
 
 ### Synthesized Neon Resources
 
-| OpenBase Component | Environment | Synthesized Bridged `kislerdm/neon` Resources |
+| OpenBase Spec | Environment | Synthesized Bridged `kislerdm/neon` Resources |
 | :--- | :--- | :--- |
 | `neon.SharedProject` | `shared` | `neon.Project` |
 | `neon.Database` (root) | `dev`, `prod` | `neon.Branch` (`Protect` on `prod`), `neon.Endpoint`, `neon.Role`, `neon.Database` |

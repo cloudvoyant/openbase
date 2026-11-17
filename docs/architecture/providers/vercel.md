@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `libs/components/vercel` package implements OpenBase's Vercel components over `github.com/pulumiverse/pulumi-vercel/sdk/v5`. It provides `vercel.Shared` for project-level settings, custom `staging` environments, domains, and deployment-protection bypass tokens; `vercel.BlobStore` (`core.StatefulResource`) for prefix-isolated Blob storage with custom-environment token propagation; and `vercel.WebApp` (`core.StatelessResource`) for deployments, squat-proof team aliases, scoped environment variables, and keyless GCP OIDC federation.
+The `libs/components/vercel` package implements OpenBase's declarative Vercel components over `github.com/pulumiverse/pulumi-vercel/sdk/v5`. It provides `vercel.Shared` for project-level settings, custom `staging` environments, domains, and deployment-protection bypass tokens; `vercel.BlobStore` (`*vercel.BlobStoreResource`, `core.StatefulResource`) for prefix-isolated Blob storage with custom-environment token propagation; and `vercel.WebApp` (`*vercel.WebAppResource`, `core.StatelessResource`) for deployments, squat-proof team aliases, scoped environment variables, and keyless GCP OIDC federation.
 
 ## Requirements
 
@@ -42,37 +42,36 @@ flowchart TD
 
 ```go
 // Package vercel (github.com/cloudvoyant/openbase/libs/components/vercel)
-sharedVercel, err := vercel.NewShared(ctx, "shared-vercel", vercel.SharedArgs{
+sharedVercel, err := vercel.Shared{
+	Name:            "shared-vercel",
 	Project:         "storefront",
 	TeamID:          "team_...",
 	TeamSlug:        "cloudvoyant",
 	EnableBlobStore: true,
-})
+}.Register(ctx)
 
-blobs, err := vercel.NewBlobStore(ctx, "blobs", vercel.BlobStoreArgs{
-	StatefulResourceArgs: core.StatefulResourceArgs{
-		Project:    "storefront",
-		BranchFrom: "dev",
-	},
+blobs, err := vercel.BlobStore{
+	Name:           "blobs",
+	Project:        "storefront",
+	BranchFrom:     "dev",
 	SharedStackRef: "org/storefront/shared",
-})
+}.Register(ctx)
 
-web, err := vercel.NewWebApp(ctx, "web", vercel.WebAppArgs{
-	StatelessResourceArgs: core.StatelessResourceArgs{
-		Project: "storefront",
-		Links:   []core.Resource{api, blobs, db, auth},
-	},
+web, err := vercel.WebApp{
+	Name:                    "web",
+	Project:                 "storefront",
+	Links:                   []core.Resource{api, blobs, db, oidc},
 	SharedStackRef:          "org/storefront/shared",
 	SourceDir:               "apps/web",
 	GCPProject:              pulumi.String("my-gcp-project"),
 	GCPWorkloadIdentityPool: gcpPoolName,
 	GCPVercelOIDCProvider:   gcpVercelProviderName,
-})
+}.Register(ctx)
 ```
 
 ### Synthesized Vercel Resources
 
-| OpenBase Component | Environment | Synthesized `pulumiverse/pulumi-vercel` v5 Resources |
+| OpenBase Spec | Environment | Synthesized `pulumiverse/pulumi-vercel` v5 Resources |
 | :--- | :--- | :--- |
 | `vercel.Shared` | `shared` | `Project`, `CustomEnvironment`, `ProjectDomain`, `ProjectProtectionBypass`, optional `BlobStore` + `BlobProjectConnection` |
 | `vercel.BlobStore` | `dev`, `stage`, `prod`, `preview-*` | `BlobStore` + `BlobProjectConnection` (or shared store ref), `stage` `ProjectEnvironmentVariable` (`BLOB_BASE_URL`, `BLOB_READ_WRITE_TOKEN`) |

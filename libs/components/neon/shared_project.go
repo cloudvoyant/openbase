@@ -13,8 +13,11 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// SharedProjectArgs configures a cross-environment Neon Project root in the "shared" stack.
-type SharedProjectArgs struct {
+var _ core.StatelessResource = (*SharedProjectResource)(nil)
+
+// SharedProject declares a cross-environment Neon Project root in the "shared" stack.
+type SharedProject struct {
+	Name                    string
 	Project                 string
 	Repo                    string
 	Environment             string
@@ -24,8 +27,8 @@ type SharedProjectArgs struct {
 	HistoryRetentionSeconds int
 }
 
-// SharedProject provisions the shared Neon Project cluster consumed by per-environment branches.
-type SharedProject struct {
+// SharedProjectResource is the provisioned shared Neon Project cluster handle consumed by per-environment branches.
+type SharedProjectResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -35,22 +38,21 @@ type SharedProject struct {
 	RegionID        pulumi.StringOutput
 }
 
-// NewSharedProject creates a shared Neon Project root and exports projectId and defaultBranchId.
-func NewSharedProject(ctx *pulumi.Context, name string, args SharedProjectArgs, opts ...pulumi.ResourceOption) (*SharedProject, error) {
-	res := &SharedProject{}
-	env := args.Environment
-	if env == "" {
-		env = string(core.EnvShared)
-	}
-	meta, err := core.InitStateless(ctx, "openbase:neon:SharedProject", name, "neon-shared", res, &res.StatelessMeta, core.StatelessResourceArgs{
-		Project:     args.Project,
-		Repo:        args.Repo,
+// Register provisions a shared Neon Project root and exports projectId and defaultBranchId.
+func (s SharedProject) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*SharedProjectResource, error) {
+	s.Name = defaultIdentifier(s.Name, "shared")
+	env := defaultIdentifier(s.Environment, string(core.EnvShared))
+	res := &SharedProjectResource{}
+	meta, err := core.InitStateless(ctx, "openbase:neon:SharedProject", "neon-shared", res, &res.StatelessMeta, core.StatelessSpec{
+		Name:        s.Name,
+		Project:     s.Project,
+		Repo:        s.Repo,
 		Environment: env,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	proj, err := createNeonProject(ctx, name, meta, args, res)
+	proj, err := createNeonProject(ctx, s.Name, meta, s, res)
 	if err != nil {
 		return nil, err
 	}
@@ -81,25 +83,19 @@ func createNeonProject(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	args SharedProjectArgs,
+	spec SharedProject,
 	parent pulumi.Resource,
 ) (*neonprov.Project, error) {
-	region := args.RegionID
-	if region == "" {
-		region = "aws-us-east-1"
-	}
-	pgVer := args.PostgresVersion
+	region := defaultIdentifier(spec.RegionID, "aws-us-east-1")
+	pgVer := spec.PostgresVersion
 	if pgVer == 0 {
 		pgVer = 17
 	}
-	retention := args.HistoryRetentionSeconds
+	retention := spec.HistoryRetentionSeconds
 	if retention == 0 {
 		retention = 86400
 	}
-	orgID := args.OrgID
-	if orgID == "" {
-		orgID = os.Getenv("NEON_ORG_ID")
-	}
+	orgID := defaultIdentifier(spec.OrgID, os.Getenv("NEON_ORG_ID"))
 	projArgs := &neonprov.ProjectArgs{
 		Name:                    pulumi.String(meta.CanonicalName),
 		RegionId:                pulumi.String(region),

@@ -17,21 +17,19 @@ func main() {
 		if env.IsPreview() {
 			branchFrom = "dev"
 		}
-		uploads, err := synthetic.NewStorage(ctx, "uploads", synthetic.StorageArgs{
-			StatefulResourceArgs: core.StatefulResourceArgs{
-				Project:    "storefront",
-				BranchFrom: branchFrom,
-			},
-		})
+		uploads, err := synthetic.Storage{
+			Name:       "uploads",
+			Project:    "storefront",
+			BranchFrom: branchFrom,
+		}.Register(ctx)
 		if err != nil {
 			return err
 		}
-		api, err := synthetic.NewService(ctx, "api", synthetic.ServiceArgs{
-			StatelessResourceArgs: core.StatelessResourceArgs{
-				Project: "storefront",
-				Links:   []core.Resource{uploads},
-			},
-		})
+		api, err := synthetic.Service{
+			Name:    "api",
+			Project: "storefront",
+			Links:   []core.Resource{uploads},
+		}.Register(ctx)
 		if err != nil {
 			return err
 		}

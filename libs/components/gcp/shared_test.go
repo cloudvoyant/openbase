@@ -13,60 +13,60 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestSharedWithProvidersAndKeyRing(t *testing.T) {
-	t.Run("when creating gcp.Shared with GitHub and Vercel OIDC providers", func(t *testing.T) {
-		// Arrange.
-		mocks := newGCPMocks()
+	t.Run("given gcp.Shared specs in the shared stack", func(t *testing.T) {
+		t.Run("when GitHub and Vercel OIDC providers are configured, then it registers APIs, Artifact Registry, WIF providers, and KeyRing", func(t *testing.T) {
+			// Arrange.
+			mocks := newGCPMocks()
 
-		// Act.
-		err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-			shared, err := gcp.NewShared(ctx, "shared", gcp.SharedArgs{
-				Project:        "storefront",
-				Repo:           "cloudvoyant/storefront",
-				GCPProject:     pulumi.String("cloudvoyant-openbase"),
-				GitHubOrg:      "cloudvoyant",
-				GitHubRepo:     "cloudvoyant/storefront",
-				VercelTeamSlug: "cloudvoyant",
-			})
-			if err != nil {
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				shared, err := gcp.Shared{
+					Project:        "storefront",
+					Repo:           "cloudvoyant/storefront",
+					GCPProject:     pulumi.String("cloudvoyant-openbase"),
+					GitHubOrg:      "cloudvoyant",
+					GitHubRepo:     "cloudvoyant/storefront",
+					VercelTeamSlug: "cloudvoyant",
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				assertSharedNotNil(t, shared)
+				return nil
+			}, pulumi.WithMocks("storefront", "shared", mocks))
+
+			// Assert.
+			requireGCPNoErr(t, err)
+			mocks.assertCount(t, "gcp:projects/service:Service", 8)
+			mocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 1)
+			mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
+			mocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 2)
+			mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 1)
+		})
+
+		t.Run("when SkipKeyRing is set and VercelIssuerMode is global, then it omits KeyRing and binds only the Vercel OIDC provider", func(t *testing.T) {
+			// Arrange.
+			mocks := newGCPMocks()
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := gcp.Shared{
+					Project:          "storefront",
+					GCPProject:       pulumi.String("cloudvoyant-openbase"),
+					VercelTeamSlug:   "cloudvoyant",
+					VercelIssuerMode: "global",
+					SkipKeyRing:      true,
+					Services:         []string{"run.googleapis.com", "storage.googleapis.com"},
+				}.Register(ctx)
 				return err
-			}
-			assertSharedNotNil(t, shared)
-			return nil
-		}, pulumi.WithMocks("storefront", "shared", mocks))
+			}, pulumi.WithMocks("storefront", "shared", mocks))
 
-		// Assert.
-		requireGCPNoErr(t, err)
-		mocks.assertCount(t, "gcp:projects/service:Service", 8)
-		mocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 1)
-		mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
-		mocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 2)
-		mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 1)
-	})
-}
-
-func TestSharedSkipKeyRingAndGlobalOIDC(t *testing.T) {
-	t.Run("when SkipKeyRing is set and VercelIssuerMode is global", func(t *testing.T) {
-		// Arrange.
-		mocks := newGCPMocks()
-
-		// Act.
-		err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-			_, err := gcp.NewShared(ctx, "shared", gcp.SharedArgs{
-				Project:          "storefront",
-				GCPProject:       pulumi.String("cloudvoyant-openbase"),
-				VercelTeamSlug:   "cloudvoyant",
-				VercelIssuerMode: "global",
-				SkipKeyRing:      true,
-				Services:         []string{"run.googleapis.com", "storage.googleapis.com"},
-			})
-			return err
-		}, pulumi.WithMocks("storefront", "shared", mocks))
-
-		// Assert.
-		requireGCPNoErr(t, err)
-		mocks.assertCount(t, "gcp:projects/service:Service", 2)
-		mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 0)
-		mocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 1)
+			// Assert.
+			requireGCPNoErr(t, err)
+			mocks.assertCount(t, "gcp:projects/service:Service", 2)
+			mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 0)
+			mocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 1)
+		})
 	})
 }
 
@@ -143,7 +143,7 @@ func (m *gcpMocks) findFirst(typeToken string) (gcpMockRecord, bool) {
 	return gcpMockRecord{}, false
 }
 
-func assertSharedNotNil(t *testing.T, s *gcp.Shared) {
+func assertSharedNotNil(t *testing.T, s *gcp.SharedResource) {
 	t.Helper()
 	if s.Repository == nil || s.WorkloadIdentityPool == nil || s.GitHubOIDCProvider == nil || s.VercelOIDCProvider == nil || s.KeyRing == nil {
 		t.Fatal("expected Repository, WorkloadIdentityPool, GitHubOIDCProvider, VercelOIDCProvider, and KeyRing to be non-nil")

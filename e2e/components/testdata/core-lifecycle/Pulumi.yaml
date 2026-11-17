@@ -1,0 +1,3 @@
+name: openbase-core-lifecycle-fixture
+runtime: go
+description: Standalone Go consumer program exercising core.Stateful and core.Stateless contracts

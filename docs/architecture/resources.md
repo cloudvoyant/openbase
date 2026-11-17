@@ -2,17 +2,17 @@
 
 ## Overview
 
-OpenBase separates shared lifecycle contracts (`libs/components/core`) from provider-specific Go packages (`libs/components/gcp`, `libs/components/vercel`, `libs/components/neon`, `libs/components/kinde`, and `libs/components/synthetic`). Provider packages name resources after concrete cloud products (`gcp.CloudRunService`, `gcp.Bucket`, `vercel.WebApp`, `vercel.BlobStore`, `neon.Database`, and `kinde.Auth`) while explicitly implementing `core.StatelessResource` or `core.StatefulResource`. All implementations validate environment tiers (`shared`, `dev`, `stage`, `prod`, and `preview-<slug>`), apply canonical `openbase.io/*` tags and sanitized cloud labels, wire dependencies through typed `Links`, and support custom escape-hatch wrappers.
+OpenBase separates shared lifecycle contracts (`libs/components/core`) from provider-specific Go packages (`libs/components/gcp`, `libs/components/vercel`, `libs/components/neon`, `libs/components/kinde`, and `libs/components/synthetic`). Provider packages expose declarative struct-literal specs named after concrete cloud products (`gcp.CloudRunService`, `gcp.Bucket`, `vercel.WebApp`, `vercel.BlobStore`, `neon.Database`, and `kinde.OidcApp`), whose `.Register(ctx, opts...)` methods return `*<Product>Resource` handles implementing `core.StatelessResource` or `core.StatefulResource`. All implementations validate environment tiers (`shared`, `dev`, `stage`, `prod`, and `preview-<slug>`), apply canonical `openbase.io/*` tags and sanitized cloud labels, wire dependencies through typed `Links`, and support custom escape-hatch specs.
 
 ## Requirement
 
 ### Functional
 
-- Provider packages expose product-specific Go components (`gcp.CloudRunService`, `gcp.Bucket`, `vercel.WebApp`, `vercel.BlobStore`, `neon.Database`, and `kinde.Auth`) that satisfy `core.StatelessResource` or `core.StatefulResource`.
+- Provider packages expose declarative product-specific Go specs (`gcp.CloudRunService`, `gcp.Bucket`, `vercel.WebApp`, `vercel.BlobStore`, `neon.Database`, and `kinde.OidcApp`) whose `.Register(ctx, opts...)` handles satisfy `core.StatelessResource` or `core.StatefulResource`.
 - Stateful storage (`gcp.Bucket` and `vercel.BlobStore`) enforces `Protect` and retention backups in `prod` and `stage`, `ForceDestroy` in `dev` and `preview-*`, and zero-copy `BranchFrom` overlay reads from persistent environments.
 - Stateful databases (`neon.Database`) provision instant copy-on-write branches (`dev` and `prod` off `main`, `stage` off `prod`, and `preview-*` off `dev`).
-- Shared two-tenant authentication (`kinde.SharedAuth` and `kinde.Auth`) routes `dev` and `preview-*` stacks to the `dev` Kinde tenant and `stage` and `prod` stacks to the `prod` Kinde tenant.
-- Teams can wrap any raw Pulumi resource using `core.NewStatelessResource` or `core.NewStatefulResource` to inherit environment validation, lifecycle protection, and `Links`.
+- Shared two-tenant OIDC authentication (`kinde.SharedOidcApp` and `kinde.OidcApp`) routes `dev` and `preview-*` stacks to the `dev` Kinde tenant and `stage` and `prod` stacks to the `prod` Kinde tenant.
+- Teams can wrap any raw Pulumi resource using `core.Stateless` or `core.Stateful` to inherit environment validation, lifecycle protection, and `Links`.
 - Workloads on `Vercel` authenticate to private `GCP Cloud Run` services and `GCP Cloud Storage` buckets through keyless OIDC federation.
 
 ### Non-Functional
@@ -29,17 +29,17 @@ flowchart TD
   Core["libs/components/core (StatelessResource & StatefulResource)"] --> GCP["libs/components/gcp (Shared, CloudRunService, Bucket)"]
   Core --> Vercel["libs/components/vercel (Shared, WebApp, BlobStore)"]
   Core --> Neon["libs/components/neon (SharedProject, Database)"]
-  Core --> Kinde["libs/components/kinde (SharedAuth, Auth)"]
+  Core --> Kinde["libs/components/kinde (SharedOidcApp, OidcApp)"]
   Core --> Syn["libs/components/synthetic (Service, Storage)"]
-  Core --> Custom["Escape Hatch (core.NewStatelessResource / NewStatefulResource)"]
+  Core --> Custom["Escape Hatch (core.Stateless / core.Stateful)"]
 ```
 
 - `libs/components/core` defines `Resource`, `StatelessResource`, and `StatefulResource`, validates `shared | dev | stage | prod | preview-<slug>`, generates deterministic `<project>-<env>-<name>` and `6–30` char service-account names, builds `openbase.io/*` tags and GCP-safe labels, and resolves `Links`.
 - `libs/components/gcp` implements `gcp.Shared`, `gcp.CloudRunService` (`StatelessResource`), and `gcp.Bucket` (`StatefulResource` with zero-copy `BranchFrom` overlay and `gcp/overlayfs`).
 - `libs/components/vercel` implements `vercel.Shared`, `vercel.WebApp` (`StatelessResource`), and `vercel.BlobStore` (`StatefulResource` with custom-env token propagation and prefix overlay).
 - `libs/components/neon` implements `neon.SharedProject` and `neon.Database` (`StatefulResource` over bridged `kislerdm/neon`).
-- `libs/components/kinde` implements `kinde.SharedAuth` and `kinde.Auth` (`StatelessResource` over bridged `kinde-oss/kinde`).
-- `libs/components/synthetic` provides deterministic offline doubles (`synthetic.Service` and `synthetic.Storage`).
+- `libs/components/kinde` implements `kinde.SharedOidcApp` and `kinde.OidcApp` (`StatelessResource` over bridged `kinde-oss/kinde`).
+- `libs/components/synthetic` provides deterministic offline specs (`synthetic.Service` and `synthetic.Storage`).
 
 ### How Branching, Backups, and Migrations Are Implemented
 
@@ -54,7 +54,7 @@ flowchart TD
 
 ```mermaid
 flowchart TD
-  NewEnv["New Stateful Resource (e.g. preview-pr-42)"] --> CheckBranch{"BranchFrom set?"}
+  NewEnv["New Stateful Spec (e.g. preview-pr-42)"] --> CheckBranch{"BranchFrom set?"}
   CheckBranch -->|"no"| CreateIsolated["Create isolated store or persistent branch"]
   CheckBranch -->|"yes (dev | stage | prod)"| Branch["Create CoW Neon branch or empty bucket + fallback overlay in Link"]
   CreateIsolated --> Lifecycle["Apply tier lifecycle (Protect in prod/stage; ForceDestroy in dev/preview)"]
@@ -79,7 +79,8 @@ type StatefulResource interface {
 	BranchSource() string
 }
 
-type StatelessResourceArgs struct {
+type StatelessSpec struct {
+	Name        string
 	Project     string
 	Repo        string
 	Environment string // Defaults from premise:stack / ctx.Stack()
@@ -89,7 +90,8 @@ type StatelessResourceArgs struct {
 	Secrets     map[string]pulumi.StringInput
 }
 
-type StatefulResourceArgs struct {
+type StatefulSpec struct {
+	Name        string
 	Project     string
 	Repo        string
 	Environment string
@@ -130,56 +132,53 @@ func main() {
 			dbBranch = "prod"
 		}
 
-		uploads, err := gcp.NewBucket(ctx, "uploads", gcp.BucketArgs{
-			StatefulResourceArgs: core.StatefulResourceArgs{
-				Project:    "storefront",
-				BranchFrom: branchFrom,
-			},
-		})
+		uploads, err := gcp.Bucket{
+			Name:       "uploads",
+			Project:    "storefront",
+			BranchFrom: branchFrom,
+		}.Register(ctx)
 		if err != nil {
 			return err
 		}
 
-		db, err := neon.NewDatabase(ctx, "db", neon.DatabaseArgs{
-			StatefulResourceArgs: core.StatefulResourceArgs{
-				Project:    "storefront",
-				BranchFrom: dbBranch,
-			},
+		db, err := neon.Database{
+			Name:           "db",
+			Project:        "storefront",
+			BranchFrom:     dbBranch,
 			SharedStackRef: "org/storefront/shared",
-		})
+		}.Register(ctx)
 		if err != nil {
 			return err
 		}
 
-		auth, err := kinde.NewAuth(ctx, "auth", kinde.AuthArgs{
-			StatelessResourceArgs: core.StatelessResourceArgs{Project: "storefront"},
-			SharedStackRef:        "org/storefront/shared",
-		})
+		oidc, err := kinde.OidcApp{
+			Name:           "auth",
+			Project:        "storefront",
+			SharedStackRef: "org/storefront/shared",
+		}.Register(ctx)
 		if err != nil {
 			return err
 		}
 
-		api, err := gcp.NewCloudRunService(ctx, "orders-api", gcp.CloudRunServiceArgs{
-			StatelessResourceArgs: core.StatelessResourceArgs{
-				Project: "storefront",
-				Links:   []core.Resource{uploads, db, auth},
-			},
-			Visibility: "internal",
+		api, err := gcp.CloudRunService{
+			Name:       "orders-api",
+			Project:    "storefront",
+			Links:      []core.Resource{uploads, db, oidc},
+			Visibility: gcp.VisibilityInternal,
 			Image:      pulumi.String("us-docker.pkg.dev/acme/storefront/orders-api:latest"),
-		})
+		}.Register(ctx)
 		if err != nil {
 			return err
 		}
 
-		_, err = vercel.NewWebApp(ctx, "web", vercel.WebAppArgs{
-			StatelessResourceArgs: core.StatelessResourceArgs{
-				Project: "storefront",
-				Links:   []core.Resource{api, auth},
-			},
+		_, err = vercel.WebApp{
+			Name:           "web",
+			Project:        "storefront",
+			Links:          []core.Resource{api, oidc},
 			SharedStackRef: "org/storefront/shared",
 			RootDirectory:  "apps/web",
 			Framework:      "sveltekit",
-		})
+		}.Register(ctx)
 		return err
 	})
 }

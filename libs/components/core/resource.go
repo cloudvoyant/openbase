@@ -20,26 +20,27 @@ type ResourceMeta struct {
 	Tags          map[string]string
 }
 
-// Resource is satisfied by every OpenBase component.
+// Resource is satisfied by every OpenBase component handle.
 type Resource interface {
 	pulumi.Resource
 	OpenBaseMeta() ResourceMeta
 	Link() LinkDescriptor
 }
 
-// StatelessResource marks ephemeral/replaceable compute or routing components.
+// StatelessResource marks ephemeral/replaceable compute or routing component handles.
 type StatelessResource interface {
 	Resource
 }
 
-// StatefulResource marks components that hold persistent data and support BranchFrom.
+// StatefulResource marks component handles that hold persistent data and support BranchFrom.
 type StatefulResource interface {
 	Resource
 	BranchSource() string
 }
 
-// StatelessResourceArgs configures shared metadata and Links for a StatelessResource.
-type StatelessResourceArgs struct {
+// StatelessSpec holds shared lifecycle inputs for registering a StatelessResource.
+type StatelessSpec struct {
+	Name        string
 	Project     string
 	Repo        string
 	Environment string
@@ -49,8 +50,9 @@ type StatelessResourceArgs struct {
 	Secrets     map[string]pulumi.StringInput
 }
 
-// StatefulResourceArgs configures shared metadata, protection, and BranchFrom for a StatefulResource.
-type StatefulResourceArgs struct {
+// StatefulSpec holds shared lifecycle, protection, and BranchFrom inputs for registering a StatefulResource.
+type StatefulSpec struct {
+	Name        string
 	Project     string
 	Repo        string
 	Environment string
@@ -95,25 +97,25 @@ func (b *StatefulMeta) SetLink(desc LinkDescriptor) { b.link = desc }
 // BranchSource returns the persistent source environment when branching, or "".
 func (b *StatefulMeta) BranchSource() string { return b.meta.BranchFrom.String() }
 
-// BuildStatelessMeta validates StatelessResourceArgs and produces deterministic metadata.
-func BuildStatelessMeta(ctx *pulumi.Context, name string, args StatelessResourceArgs, defaultKind string) (ResourceMeta, error) {
-	env, err := ResolveEnvironment(ctx, args.Environment)
+// BuildStatelessMeta validates StatelessSpec and produces deterministic metadata.
+func BuildStatelessMeta(ctx *pulumi.Context, spec StatelessSpec, defaultKind string) (ResourceMeta, error) {
+	env, err := ResolveEnvironment(ctx, spec.Environment)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
-	canonical, err := CanonicalName(args.Project, env, name)
+	canonical, err := CanonicalName(spec.Project, env, spec.Name)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
-	kind := args.Kind
+	kind := spec.Kind
 	if kind == "" {
 		kind = defaultKind
 	}
 	meta := ResourceMeta{
-		Name:          name,
+		Name:          spec.Name,
 		CanonicalName: canonical,
-		Project:       args.Project,
-		Repo:          args.Repo,
+		Project:       spec.Project,
+		Repo:          spec.Repo,
 		Kind:          kind,
 		Environment:   env,
 		Stateful:      false,
@@ -124,34 +126,34 @@ func BuildStatelessMeta(ctx *pulumi.Context, name string, args StatelessResource
 	return meta, nil
 }
 
-// BuildStatefulMeta validates StatefulResourceArgs (including BranchFrom) and produces deterministic metadata.
-func BuildStatefulMeta(ctx *pulumi.Context, name string, args StatefulResourceArgs, defaultKind string) (ResourceMeta, error) {
-	env, err := ResolveEnvironment(ctx, args.Environment)
+// BuildStatefulMeta validates StatefulSpec (including BranchFrom) and produces deterministic metadata.
+func BuildStatefulMeta(ctx *pulumi.Context, spec StatefulSpec, defaultKind string) (ResourceMeta, error) {
+	env, err := ResolveEnvironment(ctx, spec.Environment)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
-	branchSrc, err := ValidateBranchSource(env, args.BranchFrom)
+	branchSrc, err := ValidateBranchSource(env, spec.BranchFrom)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
-	canonical, err := CanonicalName(args.Project, env, name)
+	canonical, err := CanonicalName(spec.Project, env, spec.Name)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
-	kind := args.Kind
+	kind := spec.Kind
 	if kind == "" {
 		kind = defaultKind
 	}
 	protected := env.IsProtected()
 	backup := protected
-	if args.Backup != nil {
-		backup = *args.Backup
+	if spec.Backup != nil {
+		backup = *spec.Backup
 	}
 	meta := ResourceMeta{
-		Name:          name,
+		Name:          spec.Name,
 		CanonicalName: canonical,
-		Project:       args.Project,
-		Repo:          args.Repo,
+		Project:       spec.Project,
+		Repo:          spec.Repo,
 		Kind:          kind,
 		Environment:   env,
 		Stateful:      true,
@@ -164,41 +166,41 @@ func BuildStatefulMeta(ctx *pulumi.Context, name string, args StatefulResourceAr
 	return meta, nil
 }
 
-// InitStateless validates args and registers a provider StatelessResource component.
+// InitStateless validates spec and registers a provider StatelessResource component.
 func InitStateless(
 	ctx *pulumi.Context,
-	typeToken, name, defaultKind string,
+	typeToken, defaultKind string,
 	self pulumi.ComponentResource,
 	holder *StatelessMeta,
-	args StatelessResourceArgs,
+	spec StatelessSpec,
 	opts ...pulumi.ResourceOption,
 ) (ResourceMeta, error) {
-	meta, err := BuildStatelessMeta(ctx, name, args, defaultKind)
+	meta, err := BuildStatelessMeta(ctx, spec, defaultKind)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
 	holder.meta = meta
-	if err := ctx.RegisterComponentResource(typeToken, name, self, opts...); err != nil {
+	if err := ctx.RegisterComponentResource(typeToken, spec.Name, self, opts...); err != nil {
 		return ResourceMeta{}, err
 	}
 	return meta, nil
 }
 
-// InitStateful validates args and registers a provider StatefulResource component.
+// InitStateful validates spec and registers a provider StatefulResource component.
 func InitStateful(
 	ctx *pulumi.Context,
-	typeToken, name, defaultKind string,
+	typeToken, defaultKind string,
 	self pulumi.ComponentResource,
 	holder *StatefulMeta,
-	args StatefulResourceArgs,
+	spec StatefulSpec,
 	opts ...pulumi.ResourceOption,
 ) (ResourceMeta, error) {
-	meta, err := BuildStatefulMeta(ctx, name, args, defaultKind)
+	meta, err := BuildStatefulMeta(ctx, spec, defaultKind)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
 	holder.meta = meta
-	if err := ctx.RegisterComponentResource(typeToken, name, self, opts...); err != nil {
+	if err := ctx.RegisterComponentResource(typeToken, spec.Name, self, opts...); err != nil {
 		return ResourceMeta{}, err
 	}
 	return meta, nil
@@ -213,20 +215,33 @@ func ChildOptions(parent pulumi.Resource, meta ResourceMeta, extra ...pulumi.Res
 	return append(opts, extra...)
 }
 
-// CustomStateless wraps an arbitrary Pulumi resource as a core.StatelessResource escape hatch.
-type CustomStateless struct {
+// Stateless declares an escape-hatch stateless component wrapping custom Pulumi resources.
+type Stateless struct {
+	Name        string
+	Project     string
+	Repo        string
+	Environment string
+	Kind        string
+	Links       []Resource
+	Env         map[string]pulumi.StringInput
+	Secrets     map[string]pulumi.StringInput
+}
+
+// CustomStatelessResource is the provisioned handle returned by Stateless.Register.
+type CustomStatelessResource struct {
 	pulumi.ResourceState
 	StatelessMeta
 }
 
-// NewStatelessResource registers an escape-hatch StatelessResource with validated tags and Links.
-func NewStatelessResource(ctx *pulumi.Context, name string, args StatelessResourceArgs, opts ...pulumi.ResourceOption) (*CustomStateless, error) {
-	res := &CustomStateless{}
-	meta, err := InitStateless(ctx, "openbase:core:StatelessResource", name, "custom-stateless", res, &res.StatelessMeta, args, opts...)
+// Register validates and provisions an escape-hatch StatelessResource with canonical tags and Links.
+func (s Stateless) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*CustomStatelessResource, error) {
+	res := &CustomStatelessResource{}
+	spec := StatelessSpec(s)
+	meta, err := InitStateless(ctx, "openbase:core:StatelessResource", "custom-stateless", res, &res.StatelessMeta, spec, opts...)
 	if err != nil {
 		return nil, err
 	}
-	desc, err := buildEscapeHatchLink(ctx, meta, args.Links, args.Env, args.Secrets)
+	desc, err := buildEscapeHatchLink(ctx, meta, s.Links, s.Env, s.Secrets)
 	if err != nil {
 		return nil, err
 	}
@@ -237,20 +252,35 @@ func NewStatelessResource(ctx *pulumi.Context, name string, args StatelessResour
 	return res, nil
 }
 
-// CustomStateful wraps an arbitrary Pulumi resource as a core.StatefulResource escape hatch.
-type CustomStateful struct {
+// Stateful declares an escape-hatch stateful component wrapping custom Pulumi resources.
+type Stateful struct {
+	Name        string
+	Project     string
+	Repo        string
+	Environment string
+	Kind        string
+	BranchFrom  string
+	Backup      *bool
+	Links       []Resource
+	Env         map[string]pulumi.StringInput
+	Secrets     map[string]pulumi.StringInput
+}
+
+// CustomStatefulResource is the provisioned handle returned by Stateful.Register.
+type CustomStatefulResource struct {
 	pulumi.ResourceState
 	StatefulMeta
 }
 
-// NewStatefulResource registers an escape-hatch StatefulResource with validated BranchFrom, tags, and Links.
-func NewStatefulResource(ctx *pulumi.Context, name string, args StatefulResourceArgs, opts ...pulumi.ResourceOption) (*CustomStateful, error) {
-	res := &CustomStateful{}
-	meta, err := InitStateful(ctx, "openbase:core:StatefulResource", name, "custom-stateful", res, &res.StatefulMeta, args, opts...)
+// Register validates and provisions an escape-hatch StatefulResource with BranchFrom, tags, and Links.
+func (s Stateful) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*CustomStatefulResource, error) {
+	res := &CustomStatefulResource{}
+	spec := StatefulSpec(s)
+	meta, err := InitStateful(ctx, "openbase:core:StatefulResource", "custom-stateful", res, &res.StatefulMeta, spec, opts...)
 	if err != nil {
 		return nil, err
 	}
-	desc, err := buildEscapeHatchLink(ctx, meta, args.Links, args.Env, args.Secrets)
+	desc, err := buildEscapeHatchLink(ctx, meta, s.Links, s.Env, s.Secrets)
 	if err != nil {
 		return nil, err
 	}

@@ -1,4 +1,4 @@
-// Package synthetic provides deterministic offline StatelessResource and StatefulResource doubles for tests.
+// Package synthetic provides deterministic offline StatelessResource and StatefulResource specs for tests.
 package synthetic
 
 import (
@@ -12,14 +12,23 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// ServiceArgs configures an offline synthetic StatelessResource.
-type ServiceArgs struct {
-	core.StatelessResourceArgs
-	Endpoint string
+var _ core.StatelessResource = (*ServiceResource)(nil)
+
+// Service declares an offline synthetic StatelessResource spec.
+type Service struct {
+	Name        string
+	Project     string
+	Repo        string
+	Environment string
+	Kind        string
+	Links       []core.Resource
+	Env         map[string]pulumi.StringInput
+	Secrets     map[string]pulumi.StringInput
+	Endpoint    string
 }
 
-// Service is a deterministic offline StatelessResource double.
-type Service struct {
+// ServiceResource is the deterministic offline StatelessResource handle returned by Service.Register.
+type ServiceResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 	URL          pulumi.StringOutput
@@ -28,12 +37,19 @@ type Service struct {
 	Granted      []string
 }
 
-var _ core.StatelessResource = (*Service)(nil)
-
-// NewService constructs a synthetic StatelessResource without cloud provider dependencies.
-func NewService(ctx *pulumi.Context, name string, args ServiceArgs, opts ...pulumi.ResourceOption) (*Service, error) {
-	svc := &Service{}
-	meta, err := core.InitStateless(ctx, "openbase:synthetic:Service", name, "synthetic-service", svc, &svc.StatelessMeta, args.StatelessResourceArgs, opts...)
+// Register validates and provisions a synthetic StatelessResource without cloud provider dependencies.
+func (s Service) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ServiceResource, error) {
+	svc := &ServiceResource{}
+	meta, err := core.InitStateless(ctx, "openbase:synthetic:Service", "synthetic-service", svc, &svc.StatelessMeta, core.StatelessSpec{
+		Name:        s.Name,
+		Project:     s.Project,
+		Repo:        s.Repo,
+		Environment: s.Environment,
+		Kind:        s.Kind,
+		Links:       s.Links,
+		Env:         s.Env,
+		Secrets:     s.Secrets,
+	}, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -42,26 +58,26 @@ func NewService(ctx *pulumi.Context, name string, args ServiceArgs, opts ...pulu
 		ConsumerName:           meta.CanonicalName,
 		Environment:            meta.Environment,
 		GCPServiceAccountEmail: pulumi.String(meta.CanonicalName + "@synthetic.local").ToStringOutput(),
-	}, args.Links)
+	}, s.Links)
 	if err != nil {
 		return nil, err
 	}
-	for k, v := range args.Env {
+	for k, v := range s.Env {
 		resolved.Env[k] = v.ToStringOutput()
 	}
-	for k, v := range args.Secrets {
+	for k, v := range s.Secrets {
 		resolved.Secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
 	}
-	endpoint := args.Endpoint
+	endpoint := s.Endpoint
 	if endpoint == "" {
 		endpoint = fmt.Sprintf("https://%s.synthetic.local", meta.CanonicalName)
 	}
 	svc.URL = pulumi.String(endpoint).ToStringOutput()
 	svc.ResolvedEnv = resolved.Env
 	svc.ResolvedSecs = resolved.Secrets
-	envKey := strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_URL"
+	envKey := strings.ToUpper(strings.ReplaceAll(s.Name, "-", "_")) + "_URL"
 	svc.SetLink(core.LinkDescriptor{
-		Name: name,
+		Name: s.Name,
 		Kind: meta.Kind,
 		Env:  map[string]pulumi.StringOutput{envKey: svc.URL},
 		GrantAccess: func(g core.LinkGrantContext) error {

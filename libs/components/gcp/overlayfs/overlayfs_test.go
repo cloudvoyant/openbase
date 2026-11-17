@@ -12,61 +12,61 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestOverlayStoreFallbackAndWriteIsolation(t *testing.T) {
-	t.Run("when reading seeded fallback objects and writing delta objects to primary", func(t *testing.T) {
-		// Arrange.
-		ctx := context.Background()
-		mem := newMemoryBackend()
-		_ = mem.WriteObject(ctx, "dev-bkt", "seed.txt", []byte("from-dev"), "text/plain")
-		store, err := overlayfs.NewStoreWithBackend(mem, "preview-bkt", "dev-bkt")
-		requireOverlayNoErr(t, err)
+func TestOverlayStore(t *testing.T) {
+	t.Run("given an overlayfs.Store backed by primary preview-bkt and fallback dev-bkt", func(t *testing.T) {
+		t.Run("when reading seeded fallback objects and writing overrides, then fallback stays untouched while primary serves overrides", func(t *testing.T) {
+			// Arrange.
+			ctx := context.Background()
+			mem := newMemoryBackend()
+			_ = mem.WriteObject(ctx, "dev-bkt", "seed.txt", []byte("from-dev"), "text/plain")
+			store, err := overlayfs.NewStoreWithBackend(mem, "preview-bkt", "dev-bkt")
+			requireOverlayNoErr(t, err)
 
-		// Act.
-		seedBytes, seedSource, errSeed := store.Read(ctx, "seed.txt")
-		errWrite := store.Write(ctx, "seed.txt", []byte("from-preview"), "text/plain")
-		overrideBytes, overrideSource, errOverride := store.Read(ctx, "seed.txt")
-		devAfterBytes, errDevAfter := mem.ReadObject(ctx, "dev-bkt", "seed.txt")
+			// Act.
+			seedBytes, seedSource, errSeed := store.Read(ctx, "seed.txt")
+			errWrite := store.Write(ctx, "seed.txt", []byte("from-preview"), "text/plain")
+			overrideBytes, overrideSource, errOverride := store.Read(ctx, "seed.txt")
+			devAfterBytes, errDevAfter := mem.ReadObject(ctx, "dev-bkt", "seed.txt")
 
-		// Assert.
-		requireOverlayNoErr(t, errSeed)
-		requireOverlayNoErr(t, errWrite)
-		requireOverlayNoErr(t, errOverride)
-		requireOverlayNoErr(t, errDevAfter)
-		assertOverlayStr(t, "fallback source", seedSource, "dev-bkt")
-		assertOverlayStr(t, "fallback payload", string(seedBytes), "from-dev")
-		assertOverlayStr(t, "override source", overrideSource, "preview-bkt")
-		assertOverlayStr(t, "override payload", string(overrideBytes), "from-preview")
-		assertOverlayStr(t, "dev untouched", string(devAfterBytes), "from-dev")
-	})
-}
+			// Assert.
+			requireOverlayNoErr(t, errSeed)
+			requireOverlayNoErr(t, errWrite)
+			requireOverlayNoErr(t, errOverride)
+			requireOverlayNoErr(t, errDevAfter)
+			assertOverlayStr(t, "fallback source", seedSource, "dev-bkt")
+			assertOverlayStr(t, "fallback payload", string(seedBytes), "from-dev")
+			assertOverlayStr(t, "override source", overrideSource, "preview-bkt")
+			assertOverlayStr(t, "override payload", string(overrideBytes), "from-preview")
+			assertOverlayStr(t, "dev untouched", string(devAfterBytes), "from-dev")
+		})
 
-func TestOverlayStoreDeleteAndMissingErrors(t *testing.T) {
-	t.Run("when deleting primary object or reading nonexistent object", func(t *testing.T) {
-		// Arrange.
-		ctx := context.Background()
-		mem := newMemoryBackend()
-		_ = mem.WriteObject(ctx, "dev-bkt", "keep.txt", []byte("dev-keep"), "text/plain")
-		_ = mem.WriteObject(ctx, "preview-bkt", "keep.txt", []byte("preview-temp"), "text/plain")
-		store, err := overlayfs.NewStoreWithBackend(mem, "preview-bkt", "dev-bkt")
-		requireOverlayNoErr(t, err)
+		t.Run("when deleting a primary override or reading a missing key, then fallback resurfaces and missing keys return ErrObjectNotExist", func(t *testing.T) {
+			// Arrange.
+			ctx := context.Background()
+			mem := newMemoryBackend()
+			_ = mem.WriteObject(ctx, "dev-bkt", "keep.txt", []byte("dev-keep"), "text/plain")
+			_ = mem.WriteObject(ctx, "preview-bkt", "keep.txt", []byte("preview-temp"), "text/plain")
+			store, err := overlayfs.NewStoreWithBackend(mem, "preview-bkt", "dev-bkt")
+			requireOverlayNoErr(t, err)
 
-		// Act.
-		errDel := store.Delete(ctx, "keep.txt")
-		restored, source, errRead := store.Read(ctx, "keep.txt")
-		_, _, errMissing := store.Read(ctx, "does-not-exist.txt")
-		_, errEmptyPrimary := overlayfs.NewStoreWithBackend(mem, "", "dev-bkt")
+			// Act.
+			errDel := store.Delete(ctx, "keep.txt")
+			restored, source, errRead := store.Read(ctx, "keep.txt")
+			_, _, errMissing := store.Read(ctx, "does-not-exist.txt")
+			_, errEmptyPrimary := overlayfs.NewStoreWithBackend(mem, "", "dev-bkt")
 
-		// Assert.
-		requireOverlayNoErr(t, errDel)
-		requireOverlayNoErr(t, errRead)
-		assertOverlayStr(t, "restored source", source, "dev-bkt")
-		assertOverlayStr(t, "restored payload", string(restored), "dev-keep")
-		if !errors.Is(errMissing, storage.ErrObjectNotExist) {
-			t.Fatalf("expected storage.ErrObjectNotExist, got %v", errMissing)
-		}
-		if !errors.Is(errEmptyPrimary, overlayfs.ErrPrimaryBucketRequired) {
-			t.Fatalf("expected ErrPrimaryBucketRequired, got %v", errEmptyPrimary)
-		}
+			// Assert.
+			requireOverlayNoErr(t, errDel)
+			requireOverlayNoErr(t, errRead)
+			assertOverlayStr(t, "restored source", source, "dev-bkt")
+			assertOverlayStr(t, "restored payload", string(restored), "dev-keep")
+			if !errors.Is(errMissing, storage.ErrObjectNotExist) {
+				t.Fatalf("expected storage.ErrObjectNotExist, got %v", errMissing)
+			}
+			if !errors.Is(errEmptyPrimary, overlayfs.ErrPrimaryBucketRequired) {
+				t.Fatalf("expected ErrPrimaryBucketRequired, got %v", errEmptyPrimary)
+			}
+		})
 	})
 }
 

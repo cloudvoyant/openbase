@@ -2,7 +2,7 @@
 
 ## Overview
 
-The `libs/components/gcp` package implements OpenBase's Google Cloud Platform components over `github.com/pulumi/pulumi-gcp/sdk/v9`. It provides `gcp.Shared` for cross-environment project prerequisites, `gcp.CloudRunService` (`core.StatelessResource`) for public, internal, and worker containers, and `gcp.Bucket` (`core.StatefulResource`) with `libs/components/gcp/overlayfs` for zero-copy preview storage overlays.
+The `libs/components/gcp` package implements OpenBase's declarative Google Cloud Platform components over `github.com/pulumi/pulumi-gcp/sdk/v9`. It provides `gcp.Shared` for cross-environment project prerequisites, `gcp.CloudRunService` (`*gcp.CloudRunServiceResource`, `core.StatelessResource`) for public, internal, and worker containers, and `gcp.Bucket` (`*gcp.BucketResource`, `core.StatefulResource`) with `libs/components/gcp/overlayfs` for zero-copy preview storage overlays.
 
 ## Requirements
 
@@ -35,13 +35,13 @@ flowchart TD
 ```
 
 - **`gcp.Shared`**: Enables `run`, `artifactregistry`, `iam`, `iamcredentials`, `sts`, `storage`, `secretmanager`, and `cloudkms` APIs (`DisableOnDestroy: false`), creates a Docker Artifact Registry repository, creates a `4–32` char Workload Identity Pool (`ob-<project>-pool`) with optional GitHub Actions (`https://token.actions.githubusercontent.com`) and Vercel (`https://oidc.vercel.com/<team>`) OIDC providers, and creates a KMS KeyRing.
-- **`gcp.CloudRunService` (`core.StatelessResource`)**:
+- **`gcp.CloudRunService` (`*gcp.CloudRunServiceResource`)**:
   - Creates a `gcp.serviceaccount.Account` bounded to `6–30` characters via `core.ServiceAccountID`.
   - Grants `roles/iam.serviceAccountTokenCreator` to the service account on itself so running containers sign GCS v4 URLs under Application Default Credentials without JSON keys.
   - Grants `roles/artifactregistry.reader` to both the service account and `service-<projectNumber>@serverless-robot-prod.iam.gserviceaccount.com` when an Artifact Registry repository is configured.
   - Stores resolved link and workload secrets in `gcp.secretmanager.Secret` + `SecretVersion`, grants `roles/secretmanager.secretAccessor` to the service account, and mounts them via `ValueSource.SecretKeyRef`.
   - Configures `allUsers` `roles/run.invoker` for `public`, caller-scoped IAM for `internal`, internal-only ingress for `worker`, and optional `gcp.cloudrun.DomainMapping` on persistent environments.
-- **`gcp.Bucket` (`core.StatefulResource`) & `gcp/overlayfs`**:
+- **`gcp.Bucket` (`*gcp.BucketResource`) & `gcp/overlayfs`**:
   - Enforces `UniformBucketLevelAccess: true`, `PublicAccessPrevention: "enforced"`, and sanitized `openbase-*` GCP labels.
   - Applies `pulumi.Protect(true)`, object versioning, and 7-day `SoftDeletePolicy` in `prod` and `stage`, and `ForceDestroy: true` with zero soft-delete retention in `dev` and `preview-*`.
   - When `BranchFrom` is set, exports `<PREFIX>_BUCKET` and `<PREFIX>_FALLBACK_BUCKET` and binds `roles/storage.objectAdmin` on primary plus `roles/storage.objectViewer` on fallback. `overlayfs.Store` reads from primary first, falls back to the parent bucket on `storage.ErrObjectNotExist`, and writes or deletes exclusively in primary.
@@ -50,35 +50,33 @@ flowchart TD
 
 ```go
 // Package gcp (github.com/cloudvoyant/openbase/libs/components/gcp)
-shared, err := gcp.NewShared(ctx, "shared", gcp.SharedArgs{
+shared, err := gcp.Shared{
 	Project:        "storefront",
 	GCPProject:     pulumi.String("my-gcp-project"),
 	GitHubOrg:      "cloudvoyant",
 	VercelTeamSlug: "cloudvoyant",
-})
+}.Register(ctx)
 
-uploads, err := gcp.NewBucket(ctx, "uploads", gcp.BucketArgs{
-	StatefulResourceArgs: core.StatefulResourceArgs{
-		Project:    "storefront",
-		BranchFrom: "dev", // on preview-* stacks
-	},
+uploads, err := gcp.Bucket{
+	Name:            "uploads",
+	Project:         "storefront",
+	BranchFrom:      "dev", // on preview-* stacks
 	BucketNamespace: "my-gcp-project",
-})
+}.Register(ctx)
 
-api, err := gcp.NewCloudRunService(ctx, "orders-api", gcp.CloudRunServiceArgs{
-	StatelessResourceArgs: core.StatelessResourceArgs{
-		Project: "storefront",
-		Links:   []core.Resource{uploads},
-	},
+api, err := gcp.CloudRunService{
+	Name:           "orders-api",
+	Project:        "storefront",
+	Links:          []core.Resource{uploads},
 	SharedStackRef: "org/storefront/shared",
 	Visibility:     gcp.VisibilityInternal,
 	Image:          pulumi.String("us-central1-docker.pkg.dev/my-gcp-project/storefront/orders:latest"),
-})
+}.Register(ctx)
 ```
 
 ### Synthesized GCP Resources
 
-| OpenBase Component | Environment | Synthesized `pulumi-gcp` v9 Resources |
+| OpenBase Spec | Environment | Synthesized `pulumi-gcp` v9 Resources |
 | :--- | :--- | :--- |
 | `gcp.Shared` | `shared` | `projects.Service`, `artifactregistry.Repository`, `iam.WorkloadIdentityPool`, `iam.WorkloadIdentityPoolProvider`, `kms.KeyRing` |
 | `gcp.CloudRunService` | `dev`, `stage`, `prod`, `preview-*` | `serviceaccount.Account`, `serviceaccount.IAMMember` (`serviceAccountTokenCreator`), `artifactregistry.RepositoryIamMember`, `secretmanager.Secret` + `SecretVersion` + `SecretIamMember`, `cloudrunv2.Service`, `cloudrunv2.ServiceIamMember`, `cloudrun.DomainMapping` |

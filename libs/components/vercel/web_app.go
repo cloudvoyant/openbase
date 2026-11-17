@@ -15,15 +15,22 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*WebApp)(nil)
+var _ core.StatelessResource = (*WebAppResource)(nil)
 
-// ErrProjectSourceRequired reports a missing Vercel project reference on WebAppArgs.
+// ErrProjectSourceRequired reports a missing Vercel project reference on WebApp.
 var ErrProjectSourceRequired = errors.New("vercel: shared, sharedStackRef, or vercelProjectId is required")
 
-// WebAppArgs configures a per-environment Vercel WebApp deployment, alias, env vars, and GCP OIDC federation.
-type WebAppArgs struct {
-	core.StatelessResourceArgs
-	Shared                   *Shared
+// WebApp declares a per-environment Vercel WebApp deployment, alias, env vars, and GCP OIDC federation.
+type WebApp struct {
+	Name                     string
+	Project                  string
+	Repo                     string
+	Environment              string
+	Kind                     string
+	Links                    []core.Resource
+	Env                      map[string]pulumi.StringInput
+	Secrets                  map[string]pulumi.StringInput
+	Shared                   *SharedResource
 	SharedStackRef           string
 	VercelProjectID          pulumi.StringInput
 	VercelProjectName        string
@@ -42,8 +49,8 @@ type WebAppArgs struct {
 	GCPVercelOIDCProvider    pulumi.StringInput
 }
 
-// WebApp provisions scoped Vercel environment variables, optional GCP WIF identity, Deployment, and Alias.
-type WebApp struct {
+// WebAppResource is the provisioned Vercel WebApp handle with scoped env vars, GCP WIF identity, Deployment, and Alias.
+type WebAppResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -57,17 +64,26 @@ type WebApp struct {
 	FederatedSAEmail    pulumi.StringOutput
 }
 
-// NewWebApp registers a Vercel WebApp component satisfying core.StatelessResource.
-func NewWebApp(ctx *pulumi.Context, name string, args WebAppArgs, opts ...pulumi.ResourceOption) (*WebApp, error) {
-	if args.Shared == nil && args.SharedStackRef == "" && args.VercelProjectID == nil {
+// Register provisions a Vercel WebApp component satisfying core.StatelessResource.
+func (w WebApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*WebAppResource, error) {
+	if w.Shared == nil && w.SharedStackRef == "" && w.VercelProjectID == nil {
 		return nil, ErrProjectSourceRequired
 	}
-	res := &WebApp{}
-	meta, err := core.InitStateless(ctx, "openbase:vercel:WebApp", name, "vercel-webapp", res, &res.StatelessMeta, args.StatelessResourceArgs, opts...)
+	res := &WebAppResource{}
+	meta, err := core.InitStateless(ctx, "openbase:vercel:WebApp", "vercel-webapp", res, &res.StatelessMeta, core.StatelessSpec{
+		Name:        w.Name,
+		Project:     w.Project,
+		Repo:        w.Repo,
+		Environment: w.Environment,
+		Kind:        w.Kind,
+		Links:       w.Links,
+		Env:         w.Env,
+		Secrets:     w.Secrets,
+	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionWebApp(ctx, name, meta, args, res); err != nil {
+	if err := provisionWebApp(ctx, w.Name, meta, w, res); err != nil {
 		return nil, err
 	}
 	urlKey := strings.ToUpper(strings.ReplaceAll(meta.Name, "-", "_")) + "_URL"
@@ -97,82 +113,82 @@ func provisionWebApp(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	args WebAppArgs,
-	res *WebApp,
+	spec WebApp,
+	res *WebAppResource,
 ) error {
-	refs, err := resolveWebAppRefs(ctx, name, meta, args)
+	refs, err := resolveWebAppRefs(ctx, name, meta, spec)
 	if err != nil {
 		return err
 	}
-	saEmail, err := configureOptionalGCPFederation(ctx, name, meta, args, refs, res)
+	saEmail, err := configureOptionalGCPFederation(ctx, name, meta, spec, refs, res)
 	if err != nil {
 		return err
 	}
 	res.FederatedSAEmail = saEmail
 
-	resolved, err := resolveWebAppLinks(ctx, meta, args, refs, saEmail)
+	resolved, err := resolveWebAppLinks(ctx, meta, spec, refs, saEmail)
 	if err != nil {
 		return err
 	}
-	if err := createScopedProjectEnvVars(ctx, name, meta, args, refs, resolved, res); err != nil {
+	if err := createScopedProjectEnvVars(ctx, name, meta, spec, refs, resolved, res); err != nil {
 		return err
 	}
-	aliasHost := computeAliasHost(meta, args, refs)
+	aliasHost := computeAliasHost(meta, spec, refs)
 	res.AliasHost = aliasHost
 	res.URL = pulumi.Sprintf("https://%s", aliasHost)
-	return createOptionalDeploymentAndAlias(ctx, name, meta, args, refs, resolved, aliasHost, res)
+	return createOptionalDeploymentAndAlias(ctx, name, meta, spec, refs, resolved, aliasHost, res)
 }
 
-func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, args WebAppArgs) (webAppRefs, error) {
-	refs := initExplicitWebRefs(meta, args)
-	applySharedStructWebRefs(&refs, args.Shared)
-	if args.SharedStackRef == "" {
+func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec WebApp) (webAppRefs, error) {
+	refs := initExplicitWebRefs(meta, spec)
+	applySharedStructWebRefs(&refs, spec.Shared)
+	if spec.SharedStackRef == "" {
 		return refs, nil
 	}
-	sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(args.SharedStackRef)})
+	sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.SharedStackRef)})
 	if err != nil {
 		return webAppRefs{}, err
 	}
-	applySharedStackRefWebRefs(&refs, sr, args)
+	applySharedStackRefWebRefs(&refs, sr, spec)
 	return refs, nil
 }
 
-func applySharedStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, args WebAppArgs) {
+func applySharedStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
 	if !isOutSet(refs.projectID) {
 		refs.projectID = sr.GetStringOutput(pulumi.String("projectId"))
 	}
 	if !isOutSet(refs.stageEnvID) {
 		refs.stageEnvID = sr.GetStringOutput(pulumi.String("stageCustomEnvironmentId"))
 	}
-	if args.Shared == nil && args.VercelProjectName == "" {
+	if spec.Shared == nil && spec.VercelProjectName == "" {
 		refs.projectName = sr.GetStringOutput(pulumi.String("vercelProjectName"))
 	}
-	if args.Shared == nil && args.TeamSlug == "" {
+	if spec.Shared == nil && spec.TeamSlug == "" {
 		refs.teamSlug = sr.GetStringOutput(pulumi.String("teamSlug"))
 	}
 }
 
-func initExplicitWebRefs(meta core.ResourceMeta, args WebAppArgs) webAppRefs {
+func initExplicitWebRefs(meta core.ResourceMeta, spec WebApp) webAppRefs {
 	var refs webAppRefs
-	if args.VercelProjectID != nil {
-		refs.projectID = args.VercelProjectID.ToStringOutput()
+	if spec.VercelProjectID != nil {
+		refs.projectID = spec.VercelProjectID.ToStringOutput()
 	}
-	vName := defaultVercelStr(args.VercelProjectName, "openbase-"+meta.Project)
+	vName := defaultVercelStr(spec.VercelProjectName, "openbase-"+meta.Project)
 	refs.projectName = pulumi.String(vName).ToStringOutput()
-	refs.teamSlug = pulumi.String(args.TeamSlug).ToStringOutput()
-	if args.StageCustomEnvironmentID != nil {
-		refs.stageEnvID = args.StageCustomEnvironmentID.ToStringOutput()
+	refs.teamSlug = pulumi.String(spec.TeamSlug).ToStringOutput()
+	if spec.StageCustomEnvironmentID != nil {
+		refs.stageEnvID = spec.StageCustomEnvironmentID.ToStringOutput()
 	}
-	if args.GCPWorkloadIdentityPool != nil {
-		refs.wifPool = args.GCPWorkloadIdentityPool.ToStringOutput()
+	if spec.GCPWorkloadIdentityPool != nil {
+		refs.wifPool = spec.GCPWorkloadIdentityPool.ToStringOutput()
 	}
-	if args.GCPVercelOIDCProvider != nil {
-		refs.wifProvider = args.GCPVercelOIDCProvider.ToStringOutput()
+	if spec.GCPVercelOIDCProvider != nil {
+		refs.wifProvider = spec.GCPVercelOIDCProvider.ToStringOutput()
 	}
 	return refs
 }
 
-func applySharedStructWebRefs(refs *webAppRefs, shared *Shared) {
+func applySharedStructWebRefs(refs *webAppRefs, shared *SharedResource) {
 	if shared == nil {
 		return
 	}
@@ -190,11 +206,11 @@ func configureOptionalGCPFederation(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	args WebAppArgs,
+	spec WebApp,
 	refs webAppRefs,
-	res *WebApp,
+	res *WebAppResource,
 ) (pulumi.StringOutput, error) {
-	if args.GCPProject == nil || !isOutSet(refs.wifPool) {
+	if spec.GCPProject == nil || !isOutSet(refs.wifPool) {
 		return pulumi.StringOutput{}, nil
 	}
 	saID, err := core.ServiceAccountID(meta.Project, meta.Environment, name+"-v")
@@ -202,7 +218,7 @@ func configureOptionalGCPFederation(
 		return pulumi.StringOutput{}, err
 	}
 	sa, err := serviceaccount.NewAccount(ctx, name+"-gcp-wif-sa", &serviceaccount.AccountArgs{
-		Project:     args.GCPProject,
+		Project:     spec.GCPProject,
 		AccountId:   pulumi.String(saID),
 		DisplayName: pulumi.String(core.BoundedName(meta.CanonicalName+"-vercel", 63)),
 	}, pulumi.Parent(res))
@@ -225,7 +241,7 @@ func configureOptionalGCPFederation(
 func resolveWebAppLinks(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	args WebAppArgs,
+	spec WebApp,
 	refs webAppRefs,
 	saEmail pulumi.StringOutput,
 ) (core.ResolvedLinks, error) {
@@ -233,12 +249,12 @@ func resolveWebAppLinks(
 		Ctx:                         ctx,
 		ConsumerName:                meta.CanonicalName,
 		Environment:                 meta.Environment,
-		GCPProject:                  args.GCPProject,
+		GCPProject:                  spec.GCPProject,
 		GCPServiceAccountEmail:      saEmail,
 		GCPWorkloadIdentityPoolName: refs.wifPool,
 		VercelProjectID:             refs.projectID,
 		VercelTeamSlug:              refs.teamSlug,
-	}, args.Links)
+	}, spec.Links)
 	if err != nil {
 		return core.ResolvedLinks{}, err
 	}
@@ -248,10 +264,10 @@ func resolveWebAppLinks(
 	if isOutSet(refs.wifProvider) {
 		resolved.Env["GCP_WORKLOAD_IDENTITY_PROVIDER"] = pulumi.Sprintf("//iam.googleapis.com/%s", refs.wifProvider)
 	}
-	for k, v := range args.Env {
+	for k, v := range spec.Env {
 		resolved.Env[k] = v.ToStringOutput()
 	}
-	for k, v := range args.Secrets {
+	for k, v := range spec.Secrets {
 		resolved.Secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
 	}
 	return resolved, nil
@@ -261,21 +277,21 @@ func createScopedProjectEnvVars(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	args WebAppArgs,
+	spec WebApp,
 	refs webAppRefs,
 	resolved core.ResolvedLinks,
-	res *WebApp,
+	res *WebAppResource,
 ) error {
 	if meta.Environment.IsPreview() {
 		return nil
 	}
 	for _, k := range sortedMapKeys(resolved.Env) {
-		if err := createSingleProjectEnvVar(ctx, name, k, resolved.Env[k], false, meta, args, refs, res); err != nil {
+		if err := createSingleProjectEnvVar(ctx, name, k, resolved.Env[k], false, meta, spec, refs, res); err != nil {
 			return err
 		}
 	}
 	for _, k := range sortedMapKeys(resolved.Secrets) {
-		if err := createSingleProjectEnvVar(ctx, name, k, resolved.Secrets[k], true, meta, args, refs, res); err != nil {
+		if err := createSingleProjectEnvVar(ctx, name, k, resolved.Secrets[k], true, meta, spec, refs, res); err != nil {
 			return err
 		}
 	}
@@ -288,9 +304,9 @@ func createSingleProjectEnvVar(
 	val pulumi.StringOutput,
 	isSecret bool,
 	meta core.ResourceMeta,
-	args WebAppArgs,
+	spec WebApp,
 	refs webAppRefs,
-	res *WebApp,
+	res *WebAppResource,
 ) error {
 	sensitive := isSecret
 	if meta.Environment == core.EnvDev {
@@ -298,7 +314,7 @@ func createSingleProjectEnvVar(
 	}
 	evArgs := &vercelprov.ProjectEnvironmentVariableArgs{
 		ProjectId: refs.projectID,
-		TeamId:    optionalVercelStr(args.TeamID),
+		TeamId:    optionalVercelStr(spec.TeamID),
 		Key:       pulumi.String(key),
 		Value:     val,
 		Sensitive: pulumi.Bool(sensitive),
@@ -328,8 +344,8 @@ func applyEnvTarget(evArgs *vercelprov.ProjectEnvironmentVariableArgs, env core.
 	}
 }
 
-func computeAliasHost(meta core.ResourceMeta, args WebAppArgs, refs webAppRefs) pulumi.StringOutput {
-	if explicit := explicitAliasOverride(meta.Environment, args); explicit != "" {
+func computeAliasHost(meta core.ResourceMeta, spec WebApp, refs webAppRefs) pulumi.StringOutput {
+	if explicit := explicitAliasOverride(meta.Environment, spec); explicit != "" {
 		return pulumi.String(stripScheme(explicit)).ToStringOutput()
 	}
 	return pulumi.All(refs.projectName, refs.teamSlug).ApplyT(func(vs []any) string {
@@ -337,14 +353,14 @@ func computeAliasHost(meta core.ResourceMeta, args WebAppArgs, refs webAppRefs) 
 	}).(pulumi.StringOutput)
 }
 
-func explicitAliasOverride(env core.Environment, args WebAppArgs) string {
+func explicitAliasOverride(env core.Environment, spec WebApp) string {
 	switch {
 	case env.IsPreview():
-		return args.PreviewAlias
+		return spec.PreviewAlias
 	case env == core.EnvStage:
-		return args.StageDomain
+		return spec.StageDomain
 	case env == core.EnvProd:
-		return args.ProdDomain
+		return spec.ProdDomain
 	default:
 		return ""
 	}
@@ -367,21 +383,21 @@ func createOptionalDeploymentAndAlias(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	args WebAppArgs,
+	spec WebApp,
 	refs webAppRefs,
 	resolved core.ResolvedLinks,
 	aliasHost pulumi.StringOutput,
-	res *WebApp,
+	res *WebAppResource,
 ) error {
-	if args.SourceDir == "" {
+	if spec.SourceDir == "" {
 		res.DeploymentID = pulumi.String("").ToStringOutput()
 		return nil
 	}
-	dirInfo, err := vercelprov.GetProjectDirectory(ctx, &vercelprov.GetProjectDirectoryArgs{Path: args.SourceDir})
+	dirInfo, err := vercelprov.GetProjectDirectory(ctx, &vercelprov.GetProjectDirectoryArgs{Path: spec.SourceDir})
 	if err != nil {
 		return err
 	}
-	depArgs := buildDeploymentArgs(meta, args, refs, resolved, dirInfo.Files)
+	depArgs := buildDeploymentArgs(meta, spec, refs, resolved, dirInfo.Files)
 	dep, err := vercelprov.NewDeployment(ctx, name+"-deploy", depArgs, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -391,7 +407,7 @@ func createOptionalDeploymentAndAlias(
 	alias, err := vercelprov.NewAlias(ctx, name+"-alias", &vercelprov.AliasArgs{
 		DeploymentId: dep.ID(),
 		Alias:        aliasHost,
-		TeamId:       optionalVercelStr(args.TeamID),
+		TeamId:       optionalVercelStr(spec.TeamID),
 	}, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -402,7 +418,7 @@ func createOptionalDeploymentAndAlias(
 
 func buildDeploymentArgs(
 	meta core.ResourceMeta,
-	args WebAppArgs,
+	spec WebApp,
 	refs webAppRefs,
 	resolved core.ResolvedLinks,
 	files map[string]string,
@@ -418,9 +434,9 @@ func buildDeploymentArgs(
 	}
 	depArgs := &vercelprov.DeploymentArgs{
 		ProjectId:       refs.projectID,
-		TeamId:          optionalVercelStr(args.TeamID),
+		TeamId:          optionalVercelStr(spec.TeamID),
 		Files:           pulumi.ToStringMap(files),
-		PathPrefix:      optionalVercelStr(args.PathPrefix),
+		PathPrefix:      optionalVercelStr(spec.PathPrefix),
 		Production:      pulumi.Bool(meta.Environment == core.EnvProd),
 		DeleteOnDestroy: pulumi.Bool(!meta.Environment.IsProtected()),
 		Environment:     mergedEnv,
@@ -431,7 +447,7 @@ func buildDeploymentArgs(
 	return depArgs
 }
 
-func registerWebAppOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *WebApp) error {
+func registerWebAppOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *WebAppResource) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName":    pulumi.String(meta.CanonicalName),
 		"url":              res.URL,

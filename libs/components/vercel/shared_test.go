@@ -12,36 +12,38 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestSharedWithStageDomainBypassAndBlob(t *testing.T) {
-	t.Run("when creating vercel.Shared with staging CustomEnvironment, ProtectionBypass, and BlobStore", func(t *testing.T) {
-		// Arrange.
-		mocks := newVercelMocks()
-		baseURLCh := make(chan string, 1)
+func TestVercelShared(t *testing.T) {
+	t.Run("given a vercel.Shared spec with EnableBlobStore", func(t *testing.T) {
+		t.Run("when registered in the shared stack, then it creates Project, CustomEnvironment, ProjectDomains, Bypass, and BlobStore", func(t *testing.T) {
+			// Arrange.
+			mocks := newVercelMocks()
+			baseURLCh := make(chan string, 1)
 
-		// Act.
-		err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-			shared, err := vercel.NewShared(ctx, "shared", vercel.SharedArgs{
-				Project:         "storefront",
-				TeamID:          "team_123",
-				TeamSlug:        "cloudvoyant",
-				EnableBlobStore: true,
-			})
-			if err != nil {
-				return err
-			}
-			shared.BlobBaseURL.ApplyT(func(v string) string { baseURLCh <- v; return v })
-			return nil
-		}, pulumi.WithMocks("storefront", "shared", mocks))
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				shared, err := vercel.Shared{
+					Project:         "storefront",
+					TeamID:          "team_123",
+					TeamSlug:        "cloudvoyant",
+					EnableBlobStore: true,
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				shared.BlobBaseURL.ApplyT(func(v string) string { baseURLCh <- v; return v })
+				return nil
+			}, pulumi.WithMocks("storefront", "shared", mocks))
 
-		// Assert.
-		requireVercelNoErr(t, err)
-		mocks.assertCount(t, "vercel:index/project:Project", 1)
-		mocks.assertCount(t, "vercel:index/customEnvironment:CustomEnvironment", 1)
-		mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
-		mocks.assertCount(t, "vercel:index/projectProtectionBypass:ProjectProtectionBypass", 1)
-		mocks.assertCount(t, "vercel:index/blobStore:BlobStore", 1)
-		mocks.assertCount(t, "vercel:index/blobProjectConnection:BlobProjectConnection", 1)
-		assertVercelEq(t, "derived BLOB_BASE_URL", <-baseURLCh, "https://abcxyz.public.blob.vercel-storage.com")
+			// Assert.
+			requireVercelNoErr(t, err)
+			mocks.assertCount(t, "vercel:index/project:Project", 1)
+			mocks.assertCount(t, "vercel:index/customEnvironment:CustomEnvironment", 1)
+			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
+			mocks.assertCount(t, "vercel:index/projectProtectionBypass:ProjectProtectionBypass", 1)
+			mocks.assertCount(t, "vercel:index/blobStore:BlobStore", 1)
+			mocks.assertCount(t, "vercel:index/blobProjectConnection:BlobProjectConnection", 1)
+			assertVercelEq(t, "derived BLOB_BASE_URL", <-baseURLCh, "https://abcxyz.public.blob.vercel-storage.com")
+		})
 	})
 }
 

@@ -11,12 +11,21 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatefulResource = (*BlobStore)(nil)
+var _ core.StatefulResource = (*BlobStoreResource)(nil)
 
-// BlobStoreArgs configures a Vercel BlobStore component with custom-env token propagation and prefix overlays.
-type BlobStoreArgs struct {
-	core.StatefulResourceArgs
-	Shared                   *Shared
+// BlobStore declares a Vercel BlobStore component with custom-env token propagation and prefix overlays.
+type BlobStore struct {
+	Name                     string
+	Project                  string
+	Repo                     string
+	Environment              string
+	Kind                     string
+	BranchFrom               string
+	Backup                   *bool
+	Links                    []core.Resource
+	Env                      map[string]pulumi.StringInput
+	Secrets                  map[string]pulumi.StringInput
+	Shared                   *SharedResource
 	SharedStackRef           string
 	StoreID                  pulumi.StringInput
 	VercelProjectID          pulumi.StringInput
@@ -27,8 +36,8 @@ type BlobStoreArgs struct {
 	BlobReadWriteToken       pulumi.StringInput
 }
 
-// BlobStore provisions or attaches a Vercel Blob store with tier-scoped BLOB_PREFIX and BLOB_FALLBACK_PREFIX.
-type BlobStore struct {
+// BlobStoreResource is the provisioned Vercel Blob store handle with tier-scoped BLOB_PREFIX and BLOB_FALLBACK_PREFIX.
+type BlobStoreResource struct {
 	pulumi.ResourceState
 	core.StatefulMeta
 
@@ -42,17 +51,28 @@ type BlobStore struct {
 	BlobFallbackPrefix string
 }
 
-// NewBlobStore registers a Vercel BlobStore satisfying core.StatefulResource.
-func NewBlobStore(ctx *pulumi.Context, name string, args BlobStoreArgs, opts ...pulumi.ResourceOption) (*BlobStore, error) {
-	res := &BlobStore{}
-	meta, err := core.InitStateful(ctx, "openbase:vercel:BlobStore", name, "vercel-blob", res, &res.StatefulMeta, args.StatefulResourceArgs, opts...)
+// Register provisions or attaches a Vercel BlobStore satisfying core.StatefulResource.
+func (b BlobStore) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*BlobStoreResource, error) {
+	res := &BlobStoreResource{}
+	meta, err := core.InitStateful(ctx, "openbase:vercel:BlobStore", "vercel-blob", res, &res.StatefulMeta, core.StatefulSpec{
+		Name:        b.Name,
+		Project:     b.Project,
+		Repo:        b.Repo,
+		Environment: b.Environment,
+		Kind:        b.Kind,
+		BranchFrom:  b.BranchFrom,
+		Backup:      b.Backup,
+		Links:       b.Links,
+		Env:         b.Env,
+		Secrets:     b.Secrets,
+	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionBlobStore(ctx, name, meta, args, res); err != nil {
+	if err := provisionBlobStore(ctx, b.Name, meta, b, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildBlobStoreLink(meta, args, res))
+	res.SetLink(buildBlobStoreLink(meta, b, res))
 	if err := registerBlobOutputs(ctx, meta, res); err != nil {
 		return nil, err
 	}
@@ -71,10 +91,10 @@ func provisionBlobStore(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	args BlobStoreArgs,
-	res *BlobStore,
+	spec BlobStore,
+	res *BlobStoreResource,
 ) error {
-	refs, err := resolveBlobRefs(ctx, name, args)
+	refs, err := resolveBlobRefs(ctx, name, spec)
 	if err != nil {
 		return err
 	}
@@ -82,33 +102,33 @@ func provisionBlobStore(
 	if meta.BranchFrom != "" {
 		res.BlobFallbackPrefix = meta.BranchFrom.String() + "/"
 	}
-	if err := ensureUnderlyingBlobStore(ctx, name, meta, args, &refs, res); err != nil {
+	if err := ensureUnderlyingBlobStore(ctx, name, meta, spec, &refs, res); err != nil {
 		return err
 	}
 	res.StoreID = refs.storeID
 	res.BlobBaseURL = DeriveBlobBaseURL(refs.storeID)
-	return propagateStageBlobEnv(ctx, name, meta, args, refs, res)
+	return propagateStageBlobEnv(ctx, name, meta, spec, refs, res)
 }
 
-func resolveBlobRefs(ctx *pulumi.Context, name string, args BlobStoreArgs) (resolvedBlobRefs, error) {
+func resolveBlobRefs(ctx *pulumi.Context, name string, spec BlobStore) (resolvedBlobRefs, error) {
 	var refs resolvedBlobRefs
-	if args.StoreID != nil {
-		refs.storeID = args.StoreID.ToStringOutput()
+	if spec.StoreID != nil {
+		refs.storeID = spec.StoreID.ToStringOutput()
 	}
-	if args.VercelProjectID != nil {
-		refs.projectID = args.VercelProjectID.ToStringOutput()
+	if spec.VercelProjectID != nil {
+		refs.projectID = spec.VercelProjectID.ToStringOutput()
 	}
-	if args.StageCustomEnvironmentID != nil {
-		refs.stageEnvID = args.StageCustomEnvironmentID.ToStringOutput()
+	if spec.StageCustomEnvironmentID != nil {
+		refs.stageEnvID = spec.StageCustomEnvironmentID.ToStringOutput()
 	}
-	applySharedBlobStruct(&refs, args.Shared)
-	if args.SharedStackRef == "" {
+	applySharedBlobStruct(&refs, spec.Shared)
+	if spec.SharedStackRef == "" {
 		return refs, nil
 	}
-	return loadSharedBlobStackRef(ctx, name, args.SharedStackRef, refs)
+	return loadSharedBlobStackRef(ctx, name, spec.SharedStackRef, refs)
 }
 
-func applySharedBlobStruct(refs *resolvedBlobRefs, shared *Shared) {
+func applySharedBlobStruct(refs *resolvedBlobRefs, shared *SharedResource) {
 	if shared == nil {
 		return
 	}
@@ -148,18 +168,18 @@ func ensureUnderlyingBlobStore(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	args BlobStoreArgs,
+	spec BlobStore,
 	refs *resolvedBlobRefs,
-	res *BlobStore,
+	res *BlobStoreResource,
 ) error {
 	if isOutSet(refs.storeID) {
 		return nil
 	}
 	store, err := vercelprov.NewBlobStore(ctx, name+"-store", &vercelprov.BlobStoreArgs{
 		Name:   pulumi.String(core.BoundedName(meta.CanonicalName, 52)),
-		Access: pulumi.String(defaultVercelStr(args.Access, "public")),
-		Region: pulumi.String(defaultVercelStr(args.Region, "iad1")),
-		TeamId: optionalVercelStr(args.TeamID),
+		Access: pulumi.String(defaultVercelStr(spec.Access, "public")),
+		Region: pulumi.String(defaultVercelStr(spec.Region, "iad1")),
+		TeamId: optionalVercelStr(spec.TeamID),
 	}, core.ChildOptions(res, meta)...)
 	if err != nil {
 		return err
@@ -172,7 +192,7 @@ func ensureUnderlyingBlobStore(
 	conn, err := vercelprov.NewBlobProjectConnection(ctx, name+"-conn", &vercelprov.BlobProjectConnectionArgs{
 		BlobStoreId:  store.ID(),
 		ProjectId:    refs.projectID,
-		TeamId:       optionalVercelStr(args.TeamID),
+		TeamId:       optionalVercelStr(spec.TeamID),
 		Environments: pulumi.ToStringArray([]string{"development", "preview", "production"}),
 	}, pulumi.Parent(res))
 	if err != nil {
@@ -186,16 +206,16 @@ func propagateStageBlobEnv(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	args BlobStoreArgs,
+	spec BlobStore,
 	refs resolvedBlobRefs,
-	res *BlobStore,
+	res *BlobStoreResource,
 ) error {
 	if meta.Environment != core.EnvStage || !isOutSet(refs.projectID) || !isOutSet(refs.stageEnvID) {
 		return nil
 	}
 	baseVar, err := vercelprov.NewProjectEnvironmentVariable(ctx, name+"-stage-base-url", &vercelprov.ProjectEnvironmentVariableArgs{
 		ProjectId:            refs.projectID,
-		TeamId:               optionalVercelStr(args.TeamID),
+		TeamId:               optionalVercelStr(spec.TeamID),
 		CustomEnvironmentIds: pulumi.StringArray{refs.stageEnvID},
 		Key:                  pulumi.String("BLOB_BASE_URL"),
 		Value:                res.BlobBaseURL,
@@ -205,15 +225,15 @@ func propagateStageBlobEnv(
 		return err
 	}
 	res.StageBaseURLEnvVar = baseVar
-	if args.BlobReadWriteToken == nil {
+	if spec.BlobReadWriteToken == nil {
 		return nil
 	}
 	tokVar, err := vercelprov.NewProjectEnvironmentVariable(ctx, name+"-stage-rw-token", &vercelprov.ProjectEnvironmentVariableArgs{
 		ProjectId:            refs.projectID,
-		TeamId:               optionalVercelStr(args.TeamID),
+		TeamId:               optionalVercelStr(spec.TeamID),
 		CustomEnvironmentIds: pulumi.StringArray{refs.stageEnvID},
 		Key:                  pulumi.String("BLOB_READ_WRITE_TOKEN"),
-		Value:                pulumi.ToSecret(args.BlobReadWriteToken.ToStringOutput()).(pulumi.StringOutput),
+		Value:                pulumi.ToSecret(spec.BlobReadWriteToken.ToStringOutput()).(pulumi.StringOutput),
 		Sensitive:            pulumi.Bool(true),
 	}, pulumi.Parent(res))
 	if err != nil {
@@ -223,7 +243,7 @@ func propagateStageBlobEnv(
 	return nil
 }
 
-func buildBlobStoreLink(meta core.ResourceMeta, args BlobStoreArgs, res *BlobStore) core.LinkDescriptor {
+func buildBlobStoreLink(meta core.ResourceMeta, spec BlobStore, res *BlobStoreResource) core.LinkDescriptor {
 	envMap := map[string]pulumi.StringOutput{
 		"BLOB_STORE_ID": res.StoreID,
 		"BLOB_BASE_URL": res.BlobBaseURL,
@@ -232,14 +252,14 @@ func buildBlobStoreLink(meta core.ResourceMeta, args BlobStoreArgs, res *BlobSto
 	if res.BlobFallbackPrefix != "" {
 		envMap["BLOB_FALLBACK_PREFIX"] = pulumi.String(res.BlobFallbackPrefix).ToStringOutput()
 	}
-	for k, v := range args.Env {
+	for k, v := range spec.Env {
 		envMap[k] = v.ToStringOutput()
 	}
 	secrets := map[string]pulumi.StringOutput{}
-	if args.BlobReadWriteToken != nil {
-		secrets["BLOB_READ_WRITE_TOKEN"] = pulumi.ToSecret(args.BlobReadWriteToken.ToStringOutput()).(pulumi.StringOutput)
+	if spec.BlobReadWriteToken != nil {
+		secrets["BLOB_READ_WRITE_TOKEN"] = pulumi.ToSecret(spec.BlobReadWriteToken.ToStringOutput()).(pulumi.StringOutput)
 	}
-	for k, v := range args.Secrets {
+	for k, v := range spec.Secrets {
 		secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
 	}
 	return core.LinkDescriptor{
@@ -250,7 +270,7 @@ func buildBlobStoreLink(meta core.ResourceMeta, args BlobStoreArgs, res *BlobSto
 	}
 }
 
-func registerBlobOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *BlobStore) error {
+func registerBlobOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *BlobStoreResource) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName":      pulumi.String(meta.CanonicalName),
 		"storeId":            res.StoreID,

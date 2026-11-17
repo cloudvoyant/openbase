@@ -2,14 +2,14 @@
 
 ## Overview
 
-OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi component library for deploying stateless and stateful cloud resources across **GCP**, **Vercel**, **Neon**, and **Kinde** using ambient cloud credentials and upstream Pulumi or Terraform-bridged providers. Application teams write one shared Go Pulumi program (`infra/main.go`) and deploy it across `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` stacks against a `gs://` or `file://` backend.
+OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a declarative Go Pulumi component library for deploying stateless and stateful cloud resources across **GCP**, **Vercel**, **Neon**, and **Kinde** using ambient cloud credentials and upstream Pulumi or Terraform-bridged providers. Application teams write one shared Go Pulumi program (`infra/main.go`) and deploy it across `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` stacks against a `gs://` or `file://` backend.
 
 ## Requirements
 
 ### Functional
 
 - Application teams maintain one shared Go Pulumi program and select the target tier via stack name (`shared`, `dev`, `stage`, `prod`, or `preview-<slug>`).
-- Concrete product components implement `core.StatelessResource` (`gcp.CloudRunService`, `vercel.WebApp`, `kinde.Auth`) or `core.StatefulResource` (`gcp.Bucket`, `vercel.BlobStore`, `neon.Database`).
+- Concrete product specs (`gcp.CloudRunService`, `vercel.WebApp`, `kinde.OidcApp`, `gcp.Bucket`, `vercel.BlobStore`, `neon.Database`) expose `.Register(ctx, opts...)` returning `*<Product>Resource` handles that implement `core.StatelessResource` or `core.StatefulResource`.
 - Stateful components enforce `pulumi.Protect(true)` and retention backups in `prod` and `stage`, clean up automatically in `dev` and `preview-*`, and branch from persistent tiers (`BranchFrom`).
 - Every component validates its environment during `pulumi preview`, generates deterministic `<project>-<env>-<name>` identifiers, applies `openbase.io/*` tags (and sanitized GCP labels), and binds environment variables, secrets, and IAM/OIDC permissions through `Links`.
 
@@ -30,13 +30,13 @@ flowchart TD
     Core --> GCP["libs/components/gcp (Shared, CloudRunService, Bucket)"]
     Core --> Vercel["libs/components/vercel (Shared, WebApp, BlobStore)"]
     Core --> Neon["libs/components/neon (SharedProject, Database)"]
-    Core --> Kinde["libs/components/kinde (SharedAuth, Auth)"]
+    Core --> Kinde["libs/components/kinde (SharedOidcApp, OidcApp)"]
     Core --> Syn["libs/components/synthetic (Offline Doubles)"]
     Pulumi --> State[("Pulumi Backend (gs://<bucket>/<project> or file://)")]
 ```
 
 - **Two-Layer Stack Topology**:
-  - **`shared` stack**: Provisions cross-environment roots once (`gcp.Shared`, `vercel.Shared`, `neon.SharedProject`, and `kinde.SharedAuth`).
+  - **`shared` stack**: Provisions cross-environment roots once (`gcp.Shared`, `vercel.Shared`, `neon.SharedProject`, and `kinde.SharedOidcApp`).
   - **`dev`, `stage`, `prod`, and `preview-<slug>` stacks**: Consume `shared` outputs via `pulumi.StackReference`, isolate stateful data per tier, and wire workloads via `Links`.
 - **Upstream & Bridged Providers**:
   - `gcp` and `vercel` build directly on `github.com/pulumi/pulumi-gcp/sdk/v9` and `github.com/pulumiverse/pulumi-vercel/sdk/v5`.
@@ -68,13 +68,13 @@ sequenceDiagram
 
 ## Implementation
 
-- `libs/components/core`: `Environment`, naming (`CanonicalName`, `ServiceAccountID`, `BucketName`), `StandardTags`/`GCPLabels`, `Links`, and escape hatches.
+- `libs/components/core`: `Environment`, naming (`CanonicalName`, `ServiceAccountID`, `BucketName`), `StandardTags`/`GCPLabels`, `Links`, and declarative `Stateless`/`Stateful` escape hatches.
 - `libs/components/gcp` & `libs/components/gcp/overlayfs`: `Shared`, `CloudRunService`, `Bucket`, and `overlayfs.Store`.
 - `libs/components/vercel`: `Shared`, `WebApp`, `BlobStore`, and `BlobOverlayClient`.
 - `libs/components/neon`: `SharedProject` and `Database`.
-- `libs/components/kinde`: `SharedAuth` and `Auth`.
+- `libs/components/kinde`: `SharedOidcApp` and `OidcApp`.
 - `libs/components/synthetic`: `Service` and `Storage`.
-- `libs/components/e2e`: Premise-style standalone Go consumer fixtures and live cloud E2E suites.
+- `e2e/components`: Standalone Go consumer fixtures and live cloud E2E suites.
 
 ## References
 
