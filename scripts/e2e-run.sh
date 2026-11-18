@@ -143,6 +143,12 @@ if [ "$NEEDS_LIVE" = "1" ]; then
     set +a
   fi
   unset PROD_DOMAIN STAGE_DOMAIN VERCEL_PROJECT_ID NEON_PROJECT_ID
+  AUTH_ENV_FILE="${OPENBASE_AUTH_ENV_FILE:-$HOME/Projects/readership/apps/web/.env.e2e.local}"
+  if [ -z "${AGENTMAIL_API_KEY:-}" ] && [ -f "$AUTH_ENV_FILE" ]; then
+    AGENTMAIL_API_KEY="$(grep '^AGENTMAIL_API_KEY=' "$AUTH_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    E2E_P1_EMAIL="${E2E_P1_EMAIL:-$(grep '^E2E_P1_EMAIL=' "$AUTH_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")}"
+    export AGENTMAIL_API_KEY E2E_P1_EMAIL
+  fi
   export OPENBASE_TEST_GCP_PROJECT="${OPENBASE_TEST_GCP_PROJECT:-cloudvoyant-openbase}"
   export OPENBASE_TEST_LIVE="1"
 fi

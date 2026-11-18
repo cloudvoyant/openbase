@@ -12,8 +12,8 @@ Top-level `e2e/` organizes OpenBase end-to-end suites by target, with `e2e/compo
 | `vercel_blob_store_test.go` | `vercel_blob_store` | `Shared` + `BlobStore`, `stage` CustomEnvironment token propagation, `preview<-dev` `BlobOverlayClient` prefix isolation, and cleanup |
 | `vercel_web_app_test.go` | `vercel_web_app` | Squat-proof `<project>-<team>.vercel.app` domains/aliases, target-scoped env vars, `x-vercel-protection-bypass` (`401`/`403`/`302` vs `200`), in-place revision updates, and `404` `Alias`/`Deployment` cleanup |
 | `links_test.go` | `links` | Cross-cloud `vercel.WebApp` -> keyless GCP WIF OIDC -> internal `gcp.CloudRunService` + `gcp.Bucket` overlay + `neon.Database` CoW + `kinde.OidcApp` secrets, plus multi-cloud `404` preview teardown |
-| `vercel_neon_kinde_app_test.go` | `vercel_neon_kinde_app` | Composite Neokit-style Vercel app (`testdata/vercel-neon-kinde-app`) wired via `StackReference`s across `Shared` + `BlobStore` + `Database` + `OidcApp` + `WebApp`, testing HTML `/`, `/api/health`, `/api/notes`, `/api/storage`, `/api/auth/login` -> Kinde `302`, and `404` preview cleanup |
-| `gcp_neon_kinde_app_test.go` | `gcp_neon_kinde_app` | Composite Cloud Run app (`testdata/gcp-neon-kinde-app`) wired via `StackReference`s across `gcp.Shared` + `Bucket` + `Database` + `OidcApp` + `CloudRunService`, testing HTML `/`, `/api/health`, `/api/notes`, `/api/storage`, `/api/auth/login` -> Kinde `302`, and `404` preview cleanup |
+| `vercel_neon_kinde_app_test.go` | `vercel_neon_kinde_app` | `composite.VercelNeonApp` (`testdata/vercel-neon-kinde-app`) across `shared`, `dev`, and `preview-pr-11`, testing HTML `/`, `/api/health`, `/api/notes`, `/api/storage`, headless Chrome Kinde Email + OTP login/callback/session/logout (plus default `<project>.vercel.app`), and `404` preview cleanup |
+| `gcp_neon_kinde_app_test.go` | `gcp_neon_kinde_app` | `composite.GcpCloudRunNeonApp` (`testdata/gcp-neon-kinde-app`) across `shared`, `dev`, and `preview-pr-12`, testing HTML `/`, `/api/health`, `/api/notes`, `/api/storage`, headless Chrome Kinde Email + OTP login/callback/session/logout (plus Cloud Run `svc.Uri`), and `404` preview cleanup |
 
 ## Running suites & retaining live apps for manual testing
 
@@ -53,4 +53,5 @@ Live suites store Pulumi filestate in `e2e/outputs/components/<Test>/state` by d
 | `NEON_API_KEY` | Neon, Links, composite apps | Neon API key (creates & deletes isolated per-run Neon project) |
 | `KINDE_DEV_TENANT_DOMAIN`, `KINDE_DEV_M2M_CLIENT_ID`, `KINDE_DEV_M2M_CLIENT_SECRET`, `KINDE_PROD_TENANT_DOMAIN`, `KINDE_PROD_M2M_CLIENT_ID`, `KINDE_PROD_M2M_CLIENT_SECRET` | Kinde, Links, composite apps | Dev and prod Kinde M2M credentials |
 | `VERCEL_TOKEN` | Vercel, Links, `vercel_neon_kinde_app` | Vercel API token (creates & deletes isolated per-run Vercel project) |
+| `AGENTMAIL_API_KEY`, `E2E_P1_EMAIL` | `vercel_neon_kinde_app`, `gcp_neon_kinde_app` | AgentMail test inbox for end-to-end Kinde 6-digit OTP sign-in & sign-out |
 | `OPENBASE_E2E_KEEP` | All live suites | Set `1` (or pass `--no-cleanup` / `--keep`) to retain stacks until `mise run e2e:cleanup` |

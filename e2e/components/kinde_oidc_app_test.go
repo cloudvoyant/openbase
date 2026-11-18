@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -171,23 +172,37 @@ func prepareKindeSandboxWithURLs(t *testing.T, tenant, appProject string, redire
 
 func expectedInitialKindeURLs(tenant, vProj, teamSlug string) ([]string, []string) {
 	if tenant == "dev" {
-		return []string{
+		redirects := []string{
 			"http://localhost:3000/api/auth/kinde_callback",
 			"http://localhost:5173/api/auth/kinde_callback",
+			fmt.Sprintf("https://%s.vercel.app/api/auth/kinde_callback", vProj),
+			fmt.Sprintf("https://%s-%s.vercel.app/api/auth/kinde_callback", vProj, teamSlug),
 			fmt.Sprintf("https://%s-*-%s.vercel.app/api/auth/kinde_callback", vProj, teamSlug),
-		}, []string{
+		}
+		logouts := []string{
 			"http://localhost:3000/",
 			"http://localhost:5173/",
+			fmt.Sprintf("https://%s.vercel.app/", vProj),
+			fmt.Sprintf("https://%s-%s.vercel.app/", vProj, teamSlug),
 			fmt.Sprintf("https://%s-*-%s.vercel.app/", vProj, teamSlug),
 		}
+		slices.Sort(redirects)
+		slices.Sort(logouts)
+		return redirects, logouts
 	}
-	return []string{
+	redirects := []string{
+		fmt.Sprintf("https://%s.vercel.app/api/auth/kinde_callback", vProj),
 		fmt.Sprintf("https://%s-%s.vercel.app/api/auth/kinde_callback", vProj, teamSlug),
 		fmt.Sprintf("https://%s-stage-%s.vercel.app/api/auth/kinde_callback", vProj, teamSlug),
-	}, []string{
+	}
+	logouts := []string{
+		fmt.Sprintf("https://%s.vercel.app/", vProj),
 		fmt.Sprintf("https://%s-%s.vercel.app/", vProj, teamSlug),
 		fmt.Sprintf("https://%s-stage-%s.vercel.app/", vProj, teamSlug),
 	}
+	slices.Sort(redirects)
+	slices.Sort(logouts)
+	return redirects, logouts
 }
 
 func putKindeURLs(t *testing.T, issuer, tok, appID, endpoint string, urls []string) {

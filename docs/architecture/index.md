@@ -73,6 +73,7 @@ sequenceDiagram
 - `libs/components/vercel`: `Shared`, `WebApp`, `BlobStore`, and `BlobOverlayClient`.
 - `libs/components/neon`: `SharedProject` and `Database`.
 - `libs/components/kinde`: `SharedOidcApp` and `OidcApp`.
+- `libs/components/composite`: `VercelNeonApp`, `GcpCloudRunNeonApp`, and `KindeConfig`.
 - `libs/components/synthetic`: `Service` and `Storage`.
 - `e2e/components`: Standalone Go consumer fixtures and live cloud E2E suites.
 

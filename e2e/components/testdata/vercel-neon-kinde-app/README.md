@@ -1,6 +1,6 @@
 # Neokit-Style Vercel + Neon + Kinde App (`vercel-neon-kinde-app`)
 
-Composite consumer fixture composing `vercel.Shared`, `vercel.BlobStore`, `vercel.WebApp`, `neon.SharedProject`, `neon.Database`, `kinde.SharedOidcApp`, and `kinde.OidcApp` via native Pulumi `StackReference`s.
+Consumer fixture declaring `composite.VercelNeonApp` across `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` stacks.
 
 ## Run E2E & Keep Live for Manual Testing
 

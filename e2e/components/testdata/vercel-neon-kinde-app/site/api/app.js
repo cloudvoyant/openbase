@@ -79,7 +79,7 @@ async function handleLogin(req, res) {
   authUrl.searchParams.set("response_type", "code");
   authUrl.searchParams.set("scope", "openid profile email");
   authUrl.searchParams.set("redirect_uri", redirectUri);
-  authUrl.searchParams.set("state", "openbase_vercel_state");
+  authUrl.searchParams.set("state", crypto.randomBytes(12).toString("hex"));
   res.statusCode = 302;
   res.setHeader("Location", authUrl.toString());
   res.end();
@@ -95,7 +95,10 @@ async function handleCallback(req, res, urlObj) {
   const origin = resolveOrigin(req);
   const tokenResp = await fetch(`${process.env.KINDE_ISSUER_URL}/oauth2/token`, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      Accept: "application/json",
+    },
     body: new URLSearchParams({
       grant_type: "authorization_code",
       client_id: process.env.KINDE_CLIENT_ID || "",
@@ -111,7 +114,10 @@ async function handleCallback(req, res, urlObj) {
     return;
   }
   const profileResp = await fetch(`${process.env.KINDE_ISSUER_URL}/oauth2/v2/user_profile`, {
-    headers: { Authorization: `Bearer ${tokenData.access_token}` },
+    headers: {
+      Authorization: `Bearer ${tokenData.access_token}`,
+      Accept: "application/json",
+    },
   });
   const profile = profileResp.ok ? await profileResp.json() : {};
   const cookieVal = signSession({

@@ -2,6 +2,7 @@ package kinde_test
 
 import (
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 
@@ -115,6 +116,30 @@ func TestKindeOidcApp(t *testing.T) {
 			assertKindeEq(t, "SharedStackRef secret", <-secCh, "ref_dev_secret")
 			assertKindeEq(t, "SharedStackRef redirect", <-redirCh, "https://openbase-storefront-pr-8-cloudvoyant.vercel.app/api/auth/kinde_callback")
 		})
+
+		t.Run("when registering SharedOidcApp for Vercel, then dev includes default <project>.vercel.app, team, and wildcard callbacks", func(t *testing.T) {
+			// Arrange.
+			mocks := newKindeMocks()
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, e := sampleSharedSpec().Register(ctx)
+				return e
+			}, pulumi.WithMocks("storefront", "shared", mocks))
+
+			// Assert.
+			requireKindeNoErr(t, err)
+			got := mocks.appRedirects["shared-oidc-dev-app"]
+			for _, want := range []string{
+				"https://storefront.vercel.app/api/auth/kinde_callback",
+				"https://storefront-cloudvoyant.vercel.app/api/auth/kinde_callback",
+				"https://storefront-*-cloudvoyant.vercel.app/api/auth/kinde_callback",
+			} {
+				if !slices.Contains(got, want) {
+					t.Fatalf("expected dev redirects %v to include %q", got, want)
+				}
+			}
+		})
 	})
 }
 
@@ -139,12 +164,13 @@ func sampleSharedSpec() kinde.SharedOidcApp {
 }
 
 type kindeMocks struct {
-	mu     sync.Mutex
-	counts map[string]int
+	mu           sync.Mutex
+	counts       map[string]int
+	appRedirects map[string][]string
 }
 
 func newKindeMocks() *kindeMocks {
-	return &kindeMocks{counts: map[string]int{}}
+	return &kindeMocks{counts: map[string]int{}, appRedirects: map[string][]string{}}
 }
 
 func (m *kindeMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.PropertyMap, error) {
@@ -155,6 +181,11 @@ func (m *kindeMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Pr
 	if a.TypeToken == "kinde:index/application:Application" {
 		outs["clientId"] = resource.NewStringProperty(a.Name + "_cid")
 		outs["clientSecret"] = resource.NewStringProperty(a.Name + "_csec")
+		if arr, ok := a.Inputs["redirectUris"]; ok && arr.IsArray() {
+			for _, item := range arr.ArrayValue() {
+				m.appRedirects[a.Name] = append(m.appRedirects[a.Name], item.StringValue())
+			}
+		}
 	}
 	if a.TypeToken == "pulumi:pulumi:StackReference" {
 		outs["outputs"] = resource.NewObjectProperty(resource.PropertyMap{

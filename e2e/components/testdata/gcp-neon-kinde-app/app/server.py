@@ -6,6 +6,7 @@ import http.cookies
 import http.server
 import json
 import os
+import secrets
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -178,7 +179,7 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 "response_type": "code",
                 "scope": "openid profile email",
                 "redirect_uri": f"{origin}/api/auth/kinde_callback",
-                "state": "openbase_gcp_state",
+                "state": secrets.token_hex(12),
             }
         )
         issuer = (os.environ.get("KINDE_ISSUER_URL") or "").rstrip("/")
@@ -202,14 +203,26 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
         tok_req = urllib.request.Request(
             f"{issuer}/oauth2/token",
             data=form,
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "Accept": "application/json",
+                "User-Agent": "openbase-gcp-neon-kinde-app/1.0",
+            },
             method="POST",
         )
-        with urllib.request.urlopen(tok_req, timeout=15) as resp:
-            tok_data = json.loads(resp.read().decode("utf-8"))
+        try:
+            with urllib.request.urlopen(tok_req, timeout=15) as resp:
+                tok_data = json.loads(resp.read().decode("utf-8"))
+        except urllib.error.HTTPError as err:
+            detail = err.read().decode("utf-8", errors="replace")
+            return self.send_json(401, {"ok": False, "error": f"Token exchange failed ({err.code}): {detail}"})
         prof_req = urllib.request.Request(
             f"{issuer}/oauth2/v2/user_profile",
-            headers={"Authorization": f"Bearer {tok_data['access_token']}"},
+            headers={
+                "Authorization": f"Bearer {tok_data['access_token']}",
+                "Accept": "application/json",
+                "User-Agent": "openbase-gcp-neon-kinde-app/1.0",
+            },
         )
         with urllib.request.urlopen(prof_req, timeout=15) as resp:
             prof = json.loads(resp.read().decode("utf-8"))

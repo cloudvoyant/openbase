@@ -23,7 +23,50 @@ flowchart TD
 go get github.com/cloudvoyant/openbase/libs/components@latest
 ```
 
-## 2. Write one shared `infra/main.go`
+## 2. Quickstart with `libs/components/composite`
+
+For standard full-stack apps (`Vercel + Blob + Neon + Kinde` or `Cloud Run + GCS + Neon + Kinde`), `composite.VercelNeonApp` and `composite.GcpCloudRunNeonApp` handle both `shared` and per-environment stacks (`dev`, `stage`, `prod`, `preview-<slug>`) from a single `.Register(ctx)` call:
+
+```go
+package main
+
+import (
+	"os"
+
+	"github.com/cloudvoyant/openbase/libs/components/composite"
+	"github.com/cloudvoyant/openbase/libs/components/kinde"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+)
+
+func main() {
+	pulumi.Run(func(ctx *pulumi.Context) error {
+		_, err := composite.VercelNeonApp{
+			Name:      "web",
+			Project:   "storefront",
+			TeamID:    os.Getenv("VERCEL_TEAM_ID"),
+			TeamSlug:  "acme",
+			SourceDir: "apps/web",
+			Auth: &composite.KindeConfig{
+				Dev: kinde.TenantCredentials{
+					Domain:       os.Getenv("KINDE_DEV_TENANT_DOMAIN"),
+					ClientID:     pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_ID")),
+					ClientSecret: pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_SECRET")),
+				},
+				Prod: kinde.TenantCredentials{
+					Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
+					ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
+					ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
+				},
+			},
+		}.Register(ctx)
+		return err
+	})
+}
+```
+
+Swap `composite.VercelNeonApp` for `composite.GcpCloudRunNeonApp` to target Cloud Run + GCS + Neon + Kinde with the same stack lifecycle.
+
+## 3. Custom composition in `infra/main.go`
 
 Branch on `core.ResolveEnvironment(ctx, "")`: provision shared project prerequisites when `env == core.EnvShared`, and provision per-environment stateful and stateless resources on `dev`, `stage`, `prod`, and `preview-<slug>`.
 
@@ -175,7 +218,7 @@ func deployEnvironment(ctx *pulumi.Context, env core.Environment) error {
 }
 ```
 
-## 3. Deploy stacks against a GCS state backend
+## 4. Deploy stacks against a GCS state backend
 
 ```sh
 pulumi login gs://my-org-pulumi-state/storefront
@@ -190,7 +233,7 @@ pulumi stack init preview-pr-42 && pulumi up --stack preview-pr-42
 pulumi destroy --stack preview-pr-42 --yes && pulumi stack rm preview-pr-42 --yes
 ```
 
-## 4. Zero-copy storage reads in Go
+## 5. Zero-copy storage reads in Go
 
 - **Google Cloud Storage (`libs/components/gcp/overlayfs`)**: Call `overlayfs.NewStoreFromEnv(storageClient, "STORAGE")` so `preview-*` reads fall back to `dev` on `storage.ErrObjectNotExist` while writes stay isolated in the preview bucket.
 - **Vercel Blob (`libs/components/vercel`)**: Call `vercel.NewBlobOverlayClient(baseURL, token, os.Getenv("BLOB_PREFIX"), os.Getenv("BLOB_FALLBACK_PREFIX"))` for prefix-isolated writes and fallback reads.

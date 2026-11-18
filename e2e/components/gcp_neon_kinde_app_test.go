@@ -15,6 +15,7 @@ func TestGCPNeonKindeApp(t *testing.T) {
 	gcpProject, baseBackend := RequireLiveGCP(t)
 	_ = RequireLiveNeon(t)
 	_ = RequireLiveKinde(t)
+	_, _ = RequireLiveKindeUser(t)
 
 	projectNumber := strings.TrimSpace(runCommand(t, repositoryRoot(t), "gcloud", "projects", "describe", gcpProject, "--format=value(projectNumber)"))
 	neonOrgID := detectNeonOrgID(t)
@@ -83,6 +84,7 @@ func TestGCPNeonKindeApp(t *testing.T) {
 
 			h.Pulumi(t, nil, "up", "--stack", "preview-pr-12", "--yes", "--non-interactive", "--skip-preview")
 			previewURL := h.Output(t, "preview-pr-12", "regionalUrl")
+			previewHashURL := h.Output(t, "preview-pr-12", "url")
 			previewSvc = h.Output(t, "preview-pr-12", "serviceName")
 			previewSA = h.Output(t, "preview-pr-12", "serviceAccountEmail")
 			previewBucket = h.Output(t, "preview-pr-12", "bucketName")
@@ -134,23 +136,22 @@ func TestGCPNeonKindeApp(t *testing.T) {
 				}
 			})
 
-			t.Run("when initiating /api/auth/login on preview-pr-12, then it redirects to Kinde OIDC and Kinde accepts the Cloud Run callback URL", func(t *testing.T) {
-				// Arrange / Act.
-				loginStatus, authLoc := callAppNoRedirect(t, previewURL+"/api/auth/login", "")
-				kindeStatus, kindeLoc := followAuthorizeRedirect(t, authLoc)
+			t.Run("when logging in and out via Kinde OIDC in headless Chrome, then both Cloud Run URLs complete end-to-end authentication", func(t *testing.T) {
+				// Arrange.
+				h.RecordLiveURL("preview-pr-12-uri", previewHashURL)
+
+				// Act.
+				hashLoginStatus, hashAuthLoc := callAppNoRedirect(t, previewHashURL+"/api/auth/login", "")
+				hashKindeStatus, hashKindeLoc := followAuthorizeRedirect(t, hashAuthLoc)
+				browserReport := verifyKindeBrowserLogin(t, h, previewURL, "")
 				h.WriteJSONArtifact(t, "auth-login-flow.json", map[string]any{
-					"appLoginStatus":  loginStatus,
-					"authorizeUrl":    authLoc,
-					"kindeAuthStatus": kindeStatus,
-					"kindeLoginLoc":   kindeLoc,
+					"hashUriLoginStatus": hashLoginStatus,
+					"hashUriKindeStatus": hashKindeStatus,
+					"browserLogin":       browserReport,
 				})
 
 				// Assert.
-				if loginStatus != http.StatusFound {
-					t.Fatalf("expected 302 from /api/auth/login, got %d", loginStatus)
-				}
-				assertContains(t, authLoc, devIssuer+"/oauth2/auth")
-				assertLoginRedirect(t, authLoc, kindeStatus, kindeLoc)
+				assertAppLoginAndBrowserFlow(t, previewHashURL, devIssuer, hashLoginStatus, hashAuthLoc, hashKindeStatus, hashKindeLoc, browserReport)
 			})
 
 			t.Run("when destroying preview-pr-12 twice, then the preview Cloud Run service, GCS bucket, and Neon branch return 404 while dev stays healthy", func(t *testing.T) {

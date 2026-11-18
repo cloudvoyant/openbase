@@ -288,42 +288,58 @@ func buildDevCallbacks(spec SharedOidcApp) ([]string, []string) {
 	redirects := []string{"http://localhost:5173" + cb, "http://localhost:3000" + cb}
 	logouts := []string{"http://localhost:5173/", "http://localhost:3000/"}
 	vProj := defaultKindeStr(spec.VercelProjectName, spec.Project)
-	if vProj != "" && spec.VercelTeamSlug != "" {
-		wildcardHost := "https://" + vProj + "-*-" + spec.VercelTeamSlug + ".vercel.app"
-		redirects = append(redirects, wildcardHost+cb)
-		logouts = append(logouts, wildcardHost+"/")
+	for _, host := range devVercelHosts(vProj, spec.VercelTeamSlug) {
+		redirects = append(redirects, host+cb)
+		logouts = append(logouts, host+"/")
 	}
 	redirects = append(redirects, spec.ExtraDevRedirectURIs...)
 	logouts = append(logouts, spec.ExtraDevLogoutURIs...)
-	slices.Sort(redirects)
-	slices.Sort(logouts)
-	return redirects, logouts
+	return sortAndCompact(redirects), sortAndCompact(logouts)
+}
+
+func devVercelHosts(vProj, teamSlug string) []string {
+	if vProj == "" || teamSlug == "" {
+		return nil
+	}
+	return []string{
+		"https://" + vProj + ".vercel.app",
+		"https://" + vProj + "-" + teamSlug + ".vercel.app",
+		"https://" + vProj + "-*-" + teamSlug + ".vercel.app",
+	}
 }
 
 func buildProdCallbacks(project string, spec SharedOidcApp) ([]string, []string) {
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	vProj := defaultKindeStr(spec.VercelProjectName, project)
-	prodHost := spec.ProdDomain
-	if prodHost == "" && spec.VercelTeamSlug != "" {
-		prodHost = vProj + "-" + spec.VercelTeamSlug + ".vercel.app"
-	}
-	stageHost := spec.StageDomain
-	if stageHost == "" && spec.VercelTeamSlug != "" {
-		stageHost = vProj + "-stage-" + spec.VercelTeamSlug + ".vercel.app"
-	}
 	var redirects, logouts []string
-	for _, host := range []string{prodHost, stageHost} {
-		if host != "" {
-			origin := NormalizeIssuerURL(host)
-			redirects = append(redirects, origin+cb)
-			logouts = append(logouts, origin+"/")
-		}
+	for _, host := range prodVercelAndCustomHosts(vProj, spec) {
+		origin := NormalizeIssuerURL(host)
+		redirects = append(redirects, origin+cb)
+		logouts = append(logouts, origin+"/")
 	}
 	redirects = append(redirects, spec.ExtraProdRedirectURIs...)
 	logouts = append(logouts, spec.ExtraProdLogoutURIs...)
-	slices.Sort(redirects)
-	slices.Sort(logouts)
-	return redirects, logouts
+	return sortAndCompact(redirects), sortAndCompact(logouts)
+}
+
+func prodVercelAndCustomHosts(vProj string, spec SharedOidcApp) []string {
+	var hosts []string
+	if spec.ProdDomain != "" {
+		hosts = append(hosts, spec.ProdDomain)
+	} else if spec.VercelTeamSlug != "" {
+		hosts = append(hosts, vProj+".vercel.app", vProj+"-"+spec.VercelTeamSlug+".vercel.app")
+	}
+	if spec.StageDomain != "" {
+		hosts = append(hosts, spec.StageDomain)
+	} else if spec.VercelTeamSlug != "" {
+		hosts = append(hosts, vProj+"-stage-"+spec.VercelTeamSlug+".vercel.app")
+	}
+	return hosts
+}
+
+func sortAndCompact(items []string) []string {
+	slices.Sort(items)
+	return slices.Compact(items)
 }
 
 func registerSharedOidcOutputs(ctx *pulumi.Context, res *SharedOidcAppResource) error {

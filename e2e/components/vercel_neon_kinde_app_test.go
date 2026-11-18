@@ -22,6 +22,7 @@ func TestVercelNeonKindeApp(t *testing.T) {
 	_ = RequireLiveVercel(t)
 	_ = RequireLiveNeon(t)
 	baseBackend := RequireLiveKinde(t)
+	_, _ = RequireLiveKindeUser(t)
 
 	teamID, teamSlug := detectVercelTeam(t)
 	neonOrgID := detectNeonOrgID(t)
@@ -147,23 +148,23 @@ func TestVercelNeonKindeApp(t *testing.T) {
 				}
 			})
 
-			t.Run("when initiating /api/auth/login on preview-pr-11, then it redirects to Kinde OIDC and Kinde accepts the wildcard callback URL", func(t *testing.T) {
-				// Arrange / Act.
-				loginStatus, authLoc := callAppNoRedirect(t, previewURL+"/api/auth/login", bypassSecret)
-				kindeStatus, kindeLoc := followAuthorizeRedirect(t, authLoc)
+			t.Run("when logging in and out via Kinde OIDC in headless Chrome, then both preview and default <project>.vercel.app domains succeed end-to-end", func(t *testing.T) {
+				// Arrange.
+				defaultProjectURL := "https://" + vProjName + ".vercel.app"
+				h.RecordLiveURL("default", defaultProjectURL)
+
+				// Act.
+				defLoginStatus, defAuthLoc := callAppNoRedirect(t, defaultProjectURL+"/api/auth/login", bypassSecret)
+				defKindeStatus, defKindeLoc := followAuthorizeRedirect(t, defAuthLoc)
+				browserReport := verifyKindeBrowserLogin(t, h, previewURL, bypassSecret)
 				h.WriteJSONArtifact(t, "auth-login-flow.json", map[string]any{
-					"appLoginStatus":  loginStatus,
-					"authorizeUrl":    authLoc,
-					"kindeAuthStatus": kindeStatus,
-					"kindeLoginLoc":   kindeLoc,
+					"defaultDomainStatus": defLoginStatus,
+					"defaultKindeStatus":  defKindeStatus,
+					"browserLogin":        browserReport,
 				})
 
 				// Assert.
-				if loginStatus != http.StatusFound {
-					t.Fatalf("expected 302 from /api/auth/login, got %d", loginStatus)
-				}
-				assertContains(t, authLoc, devIssuer+"/oauth2/auth")
-				assertLoginRedirect(t, authLoc, kindeStatus, kindeLoc)
+				assertAppLoginAndBrowserFlow(t, defaultProjectURL, devIssuer, defLoginStatus, defAuthLoc, defKindeStatus, defKindeLoc, browserReport)
 			})
 
 			t.Run("when destroying preview-pr-11 twice, then the preview Deployment, Alias, and Neon branch return 404 while dev stays healthy", func(t *testing.T) {
@@ -189,10 +190,15 @@ type fullStackHealthResponse struct {
 	Runtime     string `json:"runtime"`
 	Environment string `json:"environment"`
 	Auth        struct {
-		Issuer       string `json:"issuer"`
-		ClientID     string `json:"clientId"`
-		RedirectURL  string `json:"redirectUrl"`
-		SecretSha256 string `json:"secretSha256"`
+		Issuer        string `json:"issuer"`
+		ClientID      string `json:"clientId"`
+		RedirectURL   string `json:"redirectUrl"`
+		SecretSha256  string `json:"secretSha256"`
+		Authenticated bool   `json:"authenticated"`
+		User          struct {
+			Email string `json:"email"`
+			Name  string `json:"name"`
+		} `json:"user"`
 	} `json:"auth"`
 	DB struct {
 		Connected bool `json:"connected"`
@@ -214,6 +220,26 @@ type appStorageReadResponse struct {
 	SourceBucket string `json:"sourceBucket"`
 	Key          string `json:"key"`
 	Content      string `json:"content"`
+}
+
+func assertAppLoginAndBrowserFlow(
+	t *testing.T,
+	baseURL, devIssuer string,
+	loginStatus int,
+	authLoc string,
+	kindeStatus int,
+	kindeLoc string,
+	report browserAuthReport,
+) {
+	t.Helper()
+	if loginStatus != http.StatusFound {
+		t.Fatalf("expected 302 from %s/api/auth/login, got %d", baseURL, loginStatus)
+	}
+	assertContains(t, authLoc, devIssuer+"/oauth2/auth")
+	assertLoginRedirect(t, authLoc, kindeStatus, kindeLoc)
+	if !report.Authenticated || !report.LoggedOutAgain {
+		t.Fatalf("expected full browser login + logout to succeed, got %+v", report)
+	}
 }
 
 func assertVercelNeonKindeCleanup(t *testing.T, teamID, vercelProjectID, blobStoreID, neonProjectID string) {

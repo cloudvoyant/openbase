@@ -1,6 +1,6 @@
 # Cloud Run + GCS + Neon + Kinde App (`gcp-neon-kinde-app`)
 
-Composite consumer fixture composing `gcp.Shared`, `gcp.Bucket`, `gcp.CloudRunService`, `neon.SharedProject`, `neon.Database`, `kinde.SharedOidcApp`, and `kinde.OidcApp` via native Pulumi `StackReference`s.
+Consumer fixture declaring `composite.GcpCloudRunNeonApp` across `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` stacks.
 
 ## Run E2E & Keep Live for Manual Testing
 

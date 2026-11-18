@@ -17,6 +17,7 @@ go get github.com/cloudvoyant/openbase/libs/components@v0.1.0
 | `libs/components/vercel` | Vercel web hosting and Blob storage | `Shared`, `WebApp`, `BlobStore` |
 | `libs/components/neon` | Branched serverless PostgreSQL | `SharedProject`, `Database` |
 | `libs/components/kinde` | Two-tenant OAuth2 / OIDC authentication | `SharedOidcApp`, `OidcApp` |
+| `libs/components/composite` | Multi-provider application blueprints across `shared` and environment stacks | `VercelNeonApp`, `GcpCloudRunNeonApp`, `KindeConfig` |
 | `libs/components/synthetic` | Deterministic offline doubles for fast unit tests | `Service`, `Storage` |
 
 Standalone consumer fixtures and live cloud end-to-end suites live in [e2e/components](../../e2e/README.md).

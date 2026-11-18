@@ -5,6 +5,7 @@ go 1.25.6
 require (
 	cloud.google.com/go/storage v1.43.0
 	github.com/blang/semver v3.5.1+incompatible
+	github.com/chromedp/chromedp v0.24.0
 	github.com/jackc/pgx/v5 v5.7.2
 	github.com/pulumi/pulumi-gcp/sdk/v9 v9.0.0
 	github.com/pulumi/pulumi/sdk/v3 v3.225.0
@@ -32,6 +33,7 @@ require (
 	github.com/charmbracelet/bubbletea v0.25.0 // indirect
 	github.com/charmbracelet/lipgloss v0.7.1 // indirect
 	github.com/cheggaaa/pb v1.0.29 // indirect
+	github.com/chromedp/cdproto v0.160.1 // indirect
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/containerd/console v1.0.4-0.20230313162750-1ae8d489ac81 // indirect
 	github.com/cyphar/filepath-securejoin v0.4.1 // indirect
@@ -41,6 +43,7 @@ require (
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
 	github.com/go-git/go-billy/v5 v5.6.2 // indirect
 	github.com/go-git/go-git/v5 v5.16.5 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260213210345-44df1a37e875 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect

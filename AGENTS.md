@@ -12,7 +12,7 @@
 
 ### Repository layout
 
-- Place shared lifecycle contracts in `libs/components/core` and provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`. See [docs/architecture/index.md](./docs/architecture/index.md).
+- Place shared lifecycle contracts in `libs/components/core`, provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`, and opinionated multi-provider application blueprints in `libs/components/composite`. See [docs/architecture/index.md](./docs/architecture/index.md).
 - Keep top-level `e2e/` organized by target suite, with component end-to-end suites and consumer fixtures under [e2e/components](./e2e/README.md).
 
 ### File layout
