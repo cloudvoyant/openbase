@@ -125,9 +125,19 @@ for manifest in "$OUTPUTS_ROOT"/*/run-manifest.json; do
       export PULUMI_CONFIG_PASSPHRASE=""
       export PULUMI_SKIP_UPDATE_CHECK="true"
       eval "$(jq -r '(.env // {}) | to_entries[] | "export \(.key)=\(.value | @sh)"' "$manifest")"
-      cd "$WORKSPACE_DIR"
+      STACK_DIR="$WORKSPACE_DIR"
+      if [ "$stack" = "shared" ] && [ -f "$WORKSPACE_DIR/infra/shared/Pulumi.yaml" ]; then
+        STACK_DIR="$WORKSPACE_DIR/infra/shared"
+      elif [ -f "$WORKSPACE_DIR/infra/Pulumi.yaml" ]; then
+        STACK_DIR="$WORKSPACE_DIR/infra"
+      fi
+      cd "$STACK_DIR"
       pulumi login "$BACKEND_URL" >/dev/null
       if pulumi stack ls --json 2>/dev/null | jq -e --arg s "$stack" '.[] | select(.name == $s)' >/dev/null 2>&1; then
+        BKT="$(pulumi stack output bucketName --stack "$stack" 2>/dev/null || true)"
+        if [ -n "$BKT" ] && command -v gcloud >/dev/null 2>&1; then
+          gcloud storage rm --all-versions -r "gs://${BKT}/**" >/dev/null 2>&1 || true
+        fi
         pulumi state unprotect --all --yes --stack "$stack" >/dev/null 2>&1 || true
         pulumi destroy --stack "$stack" --yes --non-interactive --skip-preview
         pulumi stack rm "$stack" --yes --non-interactive >/dev/null 2>&1 || true

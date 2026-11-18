@@ -1,12 +1,13 @@
 # OpenBase
 
-OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs/components`) for declaring stateless and stateful cloud infrastructure across **Google Cloud Platform**, **Vercel**, **Neon**, and **Kinde** from one shared Pulumi program.
+OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs/components`) for declaring stateless and stateful cloud infrastructure across **Google Cloud Platform**, **Vercel**, **Neon**, and **Kinde** following Premise's `infra/shared` (`--shared`) and `infra` (`--env dev|stage|prod|preview`) layout.
 
 ```mermaid
 flowchart TD
-    Program["Shared Go Pulumi Program (infra/main.go)"] --> Composite["libs/components/composite (VercelNeonApp, GcpCloudRunNeonApp)"]
-    Program --> Core["libs/components/core (StatelessResource & StatefulResource)"]
-    Composite --> Core
+    SharedProg["Shared Program (infra/shared/main.go)"] --> SharedComp["composite.*Shared (VercelNeonShared, GcpCloudRunNeonShared)"]
+    EnvProg["Environment Program (infra/main.go)"] --> AppComp["composite.*App (VercelNeonApp, GcpCloudRunNeonApp)"]
+    SharedComp --> Core["libs/components/core (StatelessResource & StatefulResource)"]
+    AppComp --> Core
     Core --> GCP["libs/components/gcp (Shared, CloudRunService, Bucket, overlayfs)"]
     Core --> Vercel["libs/components/vercel (Shared, WebApp, BlobStore)"]
     Core --> Neon["libs/components/neon (SharedProject, Database)"]
@@ -28,7 +29,7 @@ go get github.com/cloudvoyant/openbase/libs/components@latest
 | `github.com/cloudvoyant/openbase/libs/components/vercel` | Team-safe Vercel web apps, Blob stores, custom `staging` environments, and keyless GCP OIDC federation | `Shared`, `WebApp`, `BlobStore`, `BlobOverlayClient` |
 | `github.com/cloudvoyant/openbase/libs/components/neon` | Copy-on-write branched serverless PostgreSQL over `kislerdm/neon` | `SharedProject`, `Database` |
 | `github.com/cloudvoyant/openbase/libs/components/kinde` | Two-tenant (`dev` + `prod`) OAuth2/OIDC applications over `kinde-oss/kinde` | `SharedOidcApp`, `OidcApp` |
-| `github.com/cloudvoyant/openbase/libs/components/composite` | Turnkey multi-provider app blueprints handling `shared` + per-env `StackReference` wiring automatically | `VercelNeonApp`, `GcpCloudRunNeonApp`, `KindeConfig` |
+| `github.com/cloudvoyant/openbase/libs/components/composite` | Premise-aligned `infra/shared` platform roots and `infra/` per-environment app blueprints wired via `StackReference` | `VercelNeonShared`, `VercelNeonApp`, `GcpCloudRunNeonShared`, `GcpCloudRunNeonApp` |
 | `github.com/cloudvoyant/openbase/libs/components/synthetic` | Offline deterministic doubles for `< 2s` unit tests | `Service`, `Storage` |
 
 ## Development

@@ -1,7 +1,6 @@
 package main
 
 import (
-	_ "embed"
 	"os"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -10,33 +9,27 @@ import (
 	"github.com/cloudvoyant/openbase/libs/components/kinde"
 )
 
-//go:embed app/server.py
-var cloudRunServerPy string
-
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		appProject := envOrDefault("OPENBASE_APP_PROJECT", "OPENBASE_TEST_APP_PROJECT", "obgapp")
-		gcpProject := envOrDefault("OPENBASE_GCP_PROJECT", "OPENBASE_TEST_GCP_PROJECT", "cloudvoyant-openbase")
-		projectNum := envOrDefault("OPENBASE_GCP_PROJECT_NUMBER", "OPENBASE_TEST_GCP_PROJECT_NUMBER", "785485436615")
+		appProject := envOrDefault("OPENBASE_APP_PROJECT", "OPENBASE_TEST_APP_PROJECT", "obvapp")
+		vProjName := "openbase-e2e-" + appProject
+		teamID := envOrDefault("VERCEL_TEAM_ID", "OPENBASE_TEST_VERCEL_TEAM_ID", "")
+		teamSlug := envOrDefault("VERCEL_TEAM_SLUG", "OPENBASE_TEST_VERCEL_TEAM_SLUG", "cloudvoyant")
 
-		_, err := composite.GcpCloudRunNeonApp{
-			Name:             "web",
-			Project:          appProject,
-			GCPProject:       gcpProject,
-			GCPProjectNumber: projectNum,
-			PoolSuffix:       os.Getenv("OPENBASE_TEST_RUN_ID"),
-			SkipKeyRing:      true,
-			NeonOrgID:        os.Getenv("NEON_ORG_ID"),
-			Image:            pulumi.String("mirror.gcr.io/library/python:3.12-slim"),
-			Command:          []string{"python3", "-c", cloudRunServerPy},
-			Auth:             envKindeConfig("openbase-e2e-" + appProject),
+		_, err := composite.VercelNeonShared{
+			Project:           appProject,
+			VercelProjectName: vProjName,
+			TeamID:            teamID,
+			TeamSlug:          teamSlug,
+			NeonOrgID:         os.Getenv("NEON_ORG_ID"),
+			Auth:              sharedKindeConfig(vProjName),
 		}.Register(ctx)
 		return err
 	})
 }
 
-func envKindeConfig(defaultAppName string) *composite.KindeConfig {
-	return &composite.KindeConfig{
+func sharedKindeConfig(defaultAppName string) *composite.KindeSharedConfig {
+	return &composite.KindeSharedConfig{
 		AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", defaultAppName),
 		ImportDevAppID:             envOrDefault("OPENBASE_IMPORT_DEV_APP_ID", "OPENBASE_TEST_IMPORT_DEV_APP_ID", ""),
 		ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),

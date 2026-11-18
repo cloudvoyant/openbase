@@ -58,8 +58,8 @@ func TestVercelNeonKindeApp(t *testing.T) {
 		assertVercelNeonKindeCleanup(t, teamID, vercelProjectID, blobStoreID, neonProjectID)
 	})
 
-	t.Run("given a neokit-style vercel-neon-kinde-app consumer module", func(t *testing.T) {
-		for _, stack := range []string{"shared", "dev", "preview-pr-11"} {
+	t.Run("given a Premise-structured composite.VercelNeonShared (infra/shared) and composite.VercelNeonApp (infra) workspace", func(t *testing.T) {
+		for _, stack := range []string{"shared", "dev", "prod", "stage", "preview-pr-11"} {
 			h.InitStack(t, stack)
 		}
 
@@ -74,62 +74,43 @@ func TestVercelNeonKindeApp(t *testing.T) {
 			assertContains(t, planOut, "kinde:index:Application")
 		})
 
-		t.Run("given provisioned shared, seeded dev, and preview-pr-11 stacks wired via StackReferences", func(t *testing.T) {
-			h.Pulumi(t, nil, "up", "--stack", "shared", "--yes", "--non-interactive", "--skip-preview")
-			vercelProjectID = h.Output(t, "shared", "vercelProjectId")
-			blobStoreID = h.Output(t, "shared", "blobStoreId")
-			blobBaseURL = h.Output(t, "shared", "blobBaseUrl")
-			bypassSecret := h.Output(t, "shared", "protectionBypassSecret")
-			neonProjectID = h.Output(t, "shared", "neonProjectId")
-			devIssuer := h.Output(t, "shared", "devIssuerUrl")
-			devClientSec := h.Output(t, "shared", "devClientSecret")
-			blobRWToken = fetchProjectBlobRWToken(t, teamID, vercelProjectID)
-			h.RegisterSecret(blobRWToken)
-			h.RecordVercelBlobStore(vercelProjectID, teamID, blobBaseURL)
+		t.Run("given provisioned shared, dev, prod, stage<-prod, and preview-pr-11<-dev stacks", func(t *testing.T) {
+			s := deployAllVercelAppStacks(t, h, teamID, vProjName)
+			vercelProjectID = s.vercelProjectID
+			blobStoreID = s.blobStoreID
+			blobBaseURL = s.blobBaseURL
+			blobRWToken = s.blobRWToken
+			neonProjectID = s.neonProjectID
 
-			stackEnv := []string{"OPENBASE_TEST_BLOB_RW_TOKEN=" + blobRWToken}
-			h.Pulumi(t, stackEnv, "up", "--stack", "dev", "--yes", "--non-interactive", "--skip-preview")
-			devURL := h.Output(t, "dev", "url")
-			devBranchID := h.Output(t, "dev", "branchId")
-			h.RecordLiveURL("dev", devURL)
-			_ = waitForAppHealth(t, devURL, bypassSecret)
-			postAppNote(t, devURL, bypassSecret, "seeded-in-vercel-dev")
-			postAppStorage(t, devURL, bypassSecret, "seed.txt", "vercel-blob-from-dev")
-
-			h.Pulumi(t, stackEnv, "up", "--stack", "preview-pr-11", "--yes", "--non-interactive", "--skip-preview")
-			previewURL := h.Output(t, "preview-pr-11", "url")
-			previewAliasHost := h.Output(t, "preview-pr-11", "aliasHost")
-			previewDeployID := h.Output(t, "preview-pr-11", "deploymentId")
-			previewBranchID := h.Output(t, "preview-pr-11", "branchId")
-			h.RecordLiveURL("preview-pr-11", previewURL)
-
-			t.Run("when probing / and /api/health on preview-pr-11, then it serves the HTML dashboard and verifies Neon, Blob, and Kinde wiring", func(t *testing.T) {
+			t.Run("when probing prod and stage, then prod serves production and stage inherits prod Neon state with prod Kinde auth", func(t *testing.T) {
 				// Arrange / Act.
-				health := waitForAppHealth(t, previewURL, bypassSecret)
-				dashboardHTML := fetchAppText(t, previewURL+"/", bypassSecret)
+				prodHealth := waitForAppHealth(t, s.prodURL, s.bypassSecret)
+				stageHealth := waitForAppHealth(t, s.stageURL, s.bypassSecret)
+				stageHTML := fetchAppText(t, s.stageURL+"/", s.bypassSecret)
+				h.WriteJSONArtifact(t, "prod-stage-health.json", map[string]any{"prod": prodHealth, "stage": stageHealth})
+
+				// Assert.
+				assertProdAndStageAppHealth(t, prodHealth, stageHealth, stageHTML, "vercel", s.prodIssuer, sha256Hex(s.prodClientSec), "seeded-in-vercel-prod")
+			})
+
+			t.Run("when probing / and /api/health on preview-pr-11, then it serves the HTML dashboard and verifies Neon, Blob, and dev Kinde wiring", func(t *testing.T) {
+				// Arrange / Act.
+				health := waitForAppHealth(t, s.previewURL, s.bypassSecret)
+				dashboardHTML := fetchAppText(t, s.previewURL+"/", s.bypassSecret)
 				h.WriteJSONArtifact(t, "preview-health.json", health)
 
 				// Assert.
-				assertContains(t, dashboardHTML, "Sign in with Kinde OIDC")
-				assertContains(t, dashboardHTML, "seeded-in-vercel-dev")
-				assertEqualStr(t, "runtime", health.Runtime, "vercel")
-				assertEqualStr(t, "environment", health.Environment, "preview-pr-11")
-				assertEqualStr(t, "auth issuer", health.Auth.Issuer, devIssuer)
-				assertEqualStr(t, "auth secret sha256", health.Auth.SecretSha256, sha256Hex(devClientSec))
-				assertEqualStr(t, "blob fallback prefix", health.Storage.FallbackPrefix, "dev/")
-				if !health.DB.Connected || !health.DB.Pooled || health.DB.NoteCount != 1 {
-					t.Fatalf("expected connected pooled Neon DB with 1 inherited note, got %+v", health.DB)
-				}
+				assertPreviewVercelAppHealth(t, health, dashboardHTML, s.devIssuer, sha256Hex(s.devClientSec))
 			})
 
 			t.Run("when mutating notes and blobs on preview-pr-11, then it inherits dev state and isolates preview writes from dev", func(t *testing.T) {
 				// Arrange / Act.
-				seedRead := getAppStorage(t, previewURL, bypassSecret, "seed.txt")
-				postAppNote(t, previewURL, bypassSecret, "only-in-vercel-preview")
-				postAppStorage(t, previewURL, bypassSecret, "delta.txt", "preview-only-blob")
-				previewAfter := waitForAppHealth(t, previewURL, bypassSecret)
-				devAfter := waitForAppHealth(t, devURL, bypassSecret)
-				devDeltaStatus := getAppStorageStatus(t, devURL, bypassSecret, "delta.txt")
+				seedRead := getAppStorage(t, s.previewURL, s.bypassSecret, "seed.txt")
+				postAppNote(t, s.previewURL, s.bypassSecret, "only-in-vercel-preview")
+				postAppStorage(t, s.previewURL, s.bypassSecret, "delta.txt", "preview-only-blob")
+				previewAfter := waitForAppHealth(t, s.previewURL, s.bypassSecret)
+				devAfter := waitForAppHealth(t, s.devURL, s.bypassSecret)
+				devDeltaStatus := getAppStorageStatus(t, s.devURL, s.bypassSecret, "delta.txt")
 				h.WriteJSONArtifact(t, "isolation-report.json", map[string]any{
 					"fallbackRead":   seedRead,
 					"previewNotes":   previewAfter.DB.NoteCount,
@@ -138,25 +119,14 @@ func TestVercelNeonKindeApp(t *testing.T) {
 				})
 
 				// Assert.
-				assertEqualStr(t, "fallback blob sourcePrefix", seedRead.SourcePrefix, "dev/")
-				assertEqualStr(t, "fallback blob content", seedRead.Content, "vercel-blob-from-dev")
-				if previewAfter.DB.NoteCount != 2 || devAfter.DB.NoteCount != 1 {
-					t.Fatalf("expected preview notes=2 and dev notes=1, got preview=%d dev=%d", previewAfter.DB.NoteCount, devAfter.DB.NoteCount)
-				}
-				if devDeltaStatus != http.StatusNotFound {
-					t.Fatalf("expected delta.txt 404 on dev, got %d", devDeltaStatus)
-				}
+				assertAppStorageAndDBIsolation(t, seedRead.SourcePrefix, "dev/", seedRead.Content, "vercel-blob-from-dev", previewAfter.DB.NoteCount, devAfter.DB.NoteCount, devDeltaStatus)
 			})
 
-			t.Run("when logging in and out via Kinde OIDC in headless Chrome, then both preview and default <project>.vercel.app domains succeed end-to-end", func(t *testing.T) {
-				// Arrange.
-				defaultProjectURL := "https://" + vProjName + ".vercel.app"
-				h.RecordLiveURL("default", defaultProjectURL)
-
-				// Act.
-				defLoginStatus, defAuthLoc := callAppNoRedirect(t, defaultProjectURL+"/api/auth/login", bypassSecret)
+			t.Run("when logging in and out via Kinde OIDC in headless Chrome, then preview and default <project>.vercel.app complete end-to-end authentication", func(t *testing.T) {
+				// Arrange / Act.
+				defLoginStatus, defAuthLoc := callAppNoRedirect(t, s.defaultProjectURL+"/api/auth/login", s.bypassSecret)
 				defKindeStatus, defKindeLoc := followAuthorizeRedirect(t, defAuthLoc)
-				browserReport := verifyKindeBrowserLogin(t, h, previewURL, bypassSecret)
+				browserReport := verifyKindeBrowserLogin(t, h, s.previewURL, s.bypassSecret)
 				h.WriteJSONArtifact(t, "auth-login-flow.json", map[string]any{
 					"defaultDomainStatus": defLoginStatus,
 					"defaultKindeStatus":  defKindeStatus,
@@ -164,26 +134,50 @@ func TestVercelNeonKindeApp(t *testing.T) {
 				})
 
 				// Assert.
-				assertAppLoginAndBrowserFlow(t, defaultProjectURL, devIssuer, defLoginStatus, defAuthLoc, defKindeStatus, defKindeLoc, browserReport)
+				assertAppLoginAndBrowserFlow(t, s.defaultProjectURL, s.prodIssuer, defLoginStatus, defAuthLoc, defKindeStatus, defKindeLoc, browserReport)
 			})
 
-			t.Run("when destroying preview-pr-11 twice, then the preview Deployment, Alias, and Neon branch return 404 while dev stays healthy", func(t *testing.T) {
+			t.Run("when destroying preview-pr-11 twice, then the preview Deployment, Alias, and Neon branch return 404 while dev, stage, and prod stay healthy", func(t *testing.T) {
 				h.SkipIfKeep(t)
 				// Arrange / Act.
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-11", "--yes", "--non-interactive", "--skip-preview")
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-11", "--yes", "--non-interactive", "--skip-preview")
 
 				// Assert.
-				assertVercelStatus(t, fmt.Sprintf("https://api.vercel.com/v13/deployments/%s?teamId=%s", previewDeployID, teamID), http.StatusNotFound)
-				assertVercelStatus(t, fmt.Sprintf("https://api.vercel.com/v4/aliases/%s?teamId=%s", previewAliasHost, teamID), http.StatusNotFound)
-				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", neonProjectID, previewBranchID), http.StatusNotFound)
-				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", neonProjectID, devBranchID), http.StatusOK)
+				assertVercelStatus(t, fmt.Sprintf("https://api.vercel.com/v13/deployments/%s?teamId=%s", s.previewDeployID, teamID), http.StatusNotFound)
+				assertVercelStatus(t, fmt.Sprintf("https://api.vercel.com/v4/aliases/%s?teamId=%s", s.previewAliasHost, teamID), http.StatusNotFound)
+				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", neonProjectID, s.previewBranchID), http.StatusNotFound)
+				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", neonProjectID, s.devBranchID), http.StatusOK)
+				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", neonProjectID, s.stageBranchID), http.StatusOK)
 			})
 		})
 	})
 }
 
 // Private helpers ------------------------------------------------------------
+
+type vercelDeployedAppState struct {
+	vercelProjectID   string
+	blobStoreID       string
+	blobBaseURL       string
+	blobRWToken       string
+	bypassSecret      string
+	neonProjectID     string
+	devIssuer         string
+	devClientSec      string
+	prodIssuer        string
+	prodClientSec     string
+	defaultProjectURL string
+	devURL            string
+	prodURL           string
+	stageURL          string
+	previewURL        string
+	previewAliasHost  string
+	previewDeployID   string
+	devBranchID       string
+	stageBranchID     string
+	previewBranchID   string
+}
 
 type fullStackHealthResponse struct {
 	OK          bool   `json:"ok"`
@@ -222,9 +216,108 @@ type appStorageReadResponse struct {
 	Content      string `json:"content"`
 }
 
+func deployAllVercelAppStacks(t *testing.T, h *LiveStackHarness, teamID, vProjName string) vercelDeployedAppState {
+	t.Helper()
+	h.Pulumi(t, nil, "up", "--stack", "shared", "--yes", "--non-interactive", "--skip-preview")
+	s := vercelDeployedAppState{
+		vercelProjectID:   h.Output(t, "shared", "vercelProjectId"),
+		blobStoreID:       h.Output(t, "shared", "blobStoreId"),
+		blobBaseURL:       h.Output(t, "shared", "blobBaseUrl"),
+		bypassSecret:      h.Output(t, "shared", "protectionBypassSecret"),
+		neonProjectID:     h.Output(t, "shared", "neonProjectId"),
+		devIssuer:         h.Output(t, "shared", "devIssuerUrl"),
+		devClientSec:      h.Output(t, "shared", "devClientSecret"),
+		prodIssuer:        h.Output(t, "shared", "prodIssuerUrl"),
+		prodClientSec:     h.Output(t, "shared", "prodClientSecret"),
+		defaultProjectURL: "https://" + vProjName + ".vercel.app",
+	}
+	s.blobRWToken = fetchProjectBlobRWToken(t, teamID, s.vercelProjectID)
+	h.RegisterSecret(s.blobRWToken)
+	h.RecordVercelBlobStore(s.vercelProjectID, teamID, s.blobBaseURL)
+
+	stackEnv := []string{"OPENBASE_TEST_BLOB_RW_TOKEN=" + s.blobRWToken}
+	h.Pulumi(t, stackEnv, "up", "--stack", "dev", "--yes", "--non-interactive", "--skip-preview")
+	s.devURL = h.Output(t, "dev", "url")
+	s.devBranchID = h.Output(t, "dev", "branchId")
+	_ = waitForAppHealth(t, s.devURL, s.bypassSecret)
+	postAppNote(t, s.devURL, s.bypassSecret, "seeded-in-vercel-dev")
+	postAppStorage(t, s.devURL, s.bypassSecret, "seed.txt", "vercel-blob-from-dev")
+
+	h.Pulumi(t, stackEnv, "up", "--stack", "prod", "--yes", "--non-interactive", "--skip-preview")
+	s.prodURL = h.Output(t, "prod", "url")
+	_ = waitForAppHealth(t, s.prodURL, s.bypassSecret)
+	postAppNote(t, s.prodURL, s.bypassSecret, "seeded-in-vercel-prod")
+
+	h.Pulumi(t, stackEnv, "up", "--stack", "stage", "--yes", "--non-interactive", "--skip-preview")
+	s.stageURL = h.Output(t, "stage", "url")
+	s.stageBranchID = h.Output(t, "stage", "branchId")
+
+	h.Pulumi(t, stackEnv, "up", "--stack", "preview-pr-11", "--yes", "--non-interactive", "--skip-preview")
+	s.previewURL = h.Output(t, "preview-pr-11", "url")
+	s.previewAliasHost = h.Output(t, "preview-pr-11", "aliasHost")
+	s.previewDeployID = h.Output(t, "preview-pr-11", "deploymentId")
+	s.previewBranchID = h.Output(t, "preview-pr-11", "branchId")
+
+	h.RecordLiveURL("default", s.defaultProjectURL)
+	h.RecordLiveURL("dev", s.devURL)
+	h.RecordLiveURL("prod", s.prodURL)
+	h.RecordLiveURL("stage", s.stageURL)
+	h.RecordLiveURL("preview-pr-11", s.previewURL)
+	return s
+}
+
+func assertProdAndStageAppHealth(
+	t *testing.T,
+	prodH, stageH fullStackHealthResponse,
+	stageHTML, wantRuntime, prodIssuer, prodSecHash, wantSeededNote string,
+) {
+	t.Helper()
+	assertEqualStr(t, "prod runtime", prodH.Runtime, wantRuntime)
+	assertEqualStr(t, "prod environment", prodH.Environment, "prod")
+	assertEqualStr(t, "prod auth issuer", prodH.Auth.Issuer, prodIssuer)
+	assertEqualStr(t, "prod auth secret sha256", prodH.Auth.SecretSha256, prodSecHash)
+	assertEqualStr(t, "stage environment", stageH.Environment, "stage")
+	assertEqualStr(t, "stage auth issuer", stageH.Auth.Issuer, prodIssuer)
+	assertEqualStr(t, "stage auth secret sha256", stageH.Auth.SecretSha256, prodSecHash)
+	assertContains(t, stageHTML, wantSeededNote)
+	if prodH.DB.NoteCount != 1 || stageH.DB.NoteCount != 1 {
+		t.Fatalf("expected prod notes=1 and stage<-prod inherited notes=1, got prod=%d stage=%d", prodH.DB.NoteCount, stageH.DB.NoteCount)
+	}
+}
+
+func assertPreviewVercelAppHealth(t *testing.T, health fullStackHealthResponse, dashboardHTML, devIssuer, devSecHash string) {
+	t.Helper()
+	assertContains(t, dashboardHTML, "Sign in with Kinde OIDC")
+	assertContains(t, dashboardHTML, "seeded-in-vercel-dev")
+	assertEqualStr(t, "runtime", health.Runtime, "vercel")
+	assertEqualStr(t, "environment", health.Environment, "preview-pr-11")
+	assertEqualStr(t, "auth issuer", health.Auth.Issuer, devIssuer)
+	assertEqualStr(t, "auth secret sha256", health.Auth.SecretSha256, devSecHash)
+	assertEqualStr(t, "blob fallback prefix", health.Storage.FallbackPrefix, "dev/")
+	if !health.DB.Connected || !health.DB.Pooled || health.DB.NoteCount != 1 {
+		t.Fatalf("expected connected pooled Neon DB with 1 inherited note, got %+v", health.DB)
+	}
+}
+
+func assertAppStorageAndDBIsolation(
+	t *testing.T,
+	gotSource, wantSource, gotContent, wantContent string,
+	previewNotes, devNotes, devDeltaStatus int,
+) {
+	t.Helper()
+	assertEqualStr(t, "fallback source", gotSource, wantSource)
+	assertEqualStr(t, "fallback content", gotContent, wantContent)
+	if previewNotes != 2 || devNotes != 1 {
+		t.Fatalf("expected preview notes=2 and dev notes=1, got preview=%d dev=%d", previewNotes, devNotes)
+	}
+	if devDeltaStatus != http.StatusNotFound {
+		t.Fatalf("expected delta.txt 404 on dev, got %d", devDeltaStatus)
+	}
+}
+
 func assertAppLoginAndBrowserFlow(
 	t *testing.T,
-	baseURL, devIssuer string,
+	baseURL, expectedIssuer string,
 	loginStatus int,
 	authLoc string,
 	kindeStatus int,
@@ -235,7 +328,7 @@ func assertAppLoginAndBrowserFlow(
 	if loginStatus != http.StatusFound {
 		t.Fatalf("expected 302 from %s/api/auth/login, got %d", baseURL, loginStatus)
 	}
-	assertContains(t, authLoc, devIssuer+"/oauth2/auth")
+	assertContains(t, authLoc, expectedIssuer+"/oauth2/auth")
 	assertLoginRedirect(t, authLoc, kindeStatus, kindeLoc)
 	if !report.Authenticated || !report.LoggedOutAgain {
 		t.Fatalf("expected full browser login + logout to succeed, got %+v", report)
@@ -263,7 +356,7 @@ func purgeAllStoreBlobs(baseURL, rwToken string) {
 	if err != nil {
 		return
 	}
-	_ = c.Delete(ctx, "dev/seed.txt", "preview-pr-11/delta.txt")
+	_ = c.Delete(ctx, "dev/seed.txt", "prod/seed.txt", "stage/seed.txt", "preview-pr-11/delta.txt")
 }
 
 func waitForAppHealth(t *testing.T, baseURL, bypassSecret string) fullStackHealthResponse {

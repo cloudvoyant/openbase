@@ -210,7 +210,8 @@ func (h *LiveStackHarness) InitStack(t *testing.T, stack string) {
 func (h *LiveStackHarness) Pulumi(t *testing.T, callEnv []string, args ...string) string {
 	t.Helper()
 	h.seedEnvSliceSecrets(callEnv)
-	out := runCommandEnv(t, h.Dir, h.env(callEnv), "pulumi", args...)
+	workDir := h.dirForStack(stackFromArgs(args))
+	out := runCommandEnv(t, workDir, h.env(callEnv), "pulumi", args...)
 	if hasArg(args, "--show-secrets") {
 		h.maybeRegisterSecretOutput(args, strings.TrimSpace(out))
 	}
@@ -222,7 +223,8 @@ func (h *LiveStackHarness) Pulumi(t *testing.T, callEnv []string, args ...string
 func (h *LiveStackHarness) PulumiFail(t *testing.T, callEnv []string, args ...string) string {
 	t.Helper()
 	h.seedEnvSliceSecrets(callEnv)
-	out := commandFailureEnv(t, h.Dir, h.env(callEnv), "pulumi", args...)
+	workDir := h.dirForStack(stackFromArgs(args))
+	out := commandFailureEnv(t, workDir, h.env(callEnv), "pulumi", args...)
 	h.appendTranscript(t.Name(), args, 1, out)
 	return out
 }
@@ -317,6 +319,37 @@ func (h *LiveStackHarness) writeWorkspaceMiseFile(t *testing.T) {
 		_, _ = fmt.Fprintf(&b, "%s = %q\n", k, nonSecret[k])
 	}
 	_ = os.WriteFile(filepath.Join(h.Dir, "mise.toml"), []byte(b.String()), 0o644)
+	premiseManifest := filepath.Join(h.Dir, "premise.yaml")
+	if raw, err := os.ReadFile(premiseManifest); err == nil {
+		rendered := strings.ReplaceAll(string(raw), "{{BACKEND_URL}}", h.BackendURL)
+		_ = os.WriteFile(premiseManifest, []byte(rendered), 0o644)
+	}
+}
+
+func (h *LiveStackHarness) dirForStack(stack string) string {
+	if stack == "shared" {
+		sharedDir := filepath.Join(h.Dir, "infra", "shared")
+		if _, err := os.Stat(filepath.Join(sharedDir, "Pulumi.yaml")); err == nil {
+			return sharedDir
+		}
+	}
+	infraDir := filepath.Join(h.Dir, "infra")
+	if _, err := os.Stat(filepath.Join(infraDir, "Pulumi.yaml")); err == nil {
+		return infraDir
+	}
+	return h.Dir
+}
+
+func stackFromArgs(args []string) string {
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--stack" || args[i] == "-s" {
+			return args[i+1]
+		}
+	}
+	if len(args) >= 3 && args[0] == "stack" && (args[1] == "init" || args[1] == "select" || args[1] == "rm") {
+		return args[2]
+	}
+	return ""
 }
 
 func (h *LiveStackHarness) saveManifest(cleanedUp bool) {
@@ -507,21 +540,22 @@ func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) bo
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
+	workDir := h.dirForStack(stack)
 	baseEnv := append(os.Environ(), h.env(nil)...)
 	unprotect := exec.CommandContext(ctx, "pulumi", "state", "unprotect", "--all", "--yes", "--stack", stack)
-	unprotect.Dir = h.Dir
+	unprotect.Dir = workDir
 	unprotect.Env = baseEnv
 	_ = unprotect.Run()
 
 	destroy := exec.CommandContext(ctx, "pulumi", "destroy", "--stack", stack, "--yes", "--non-interactive", "--skip-preview")
-	destroy.Dir = h.Dir
+	destroy.Dir = workDir
 	destroy.Env = baseEnv
 	if out, err := destroy.CombinedOutput(); err != nil {
 		t.Errorf("cleanup destroy stack %s: %v\n%s", stack, err, h.redact(string(out)))
 		return false
 	}
 	rm := exec.CommandContext(ctx, "pulumi", "stack", "rm", stack, "--yes", "--non-interactive")
-	rm.Dir = h.Dir
+	rm.Dir = workDir
 	rm.Env = baseEnv
 	_ = rm.Run()
 	return true

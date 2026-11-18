@@ -12,8 +12,8 @@ Top-level `e2e/` organizes OpenBase end-to-end suites by target, with `e2e/compo
 | `vercel_blob_store_test.go` | `vercel_blob_store` | `Shared` + `BlobStore`, `stage` CustomEnvironment token propagation, `preview<-dev` `BlobOverlayClient` prefix isolation, and cleanup |
 | `vercel_web_app_test.go` | `vercel_web_app` | Squat-proof `<project>-<team>.vercel.app` domains/aliases, target-scoped env vars, `x-vercel-protection-bypass` (`401`/`403`/`302` vs `200`), in-place revision updates, and `404` `Alias`/`Deployment` cleanup |
 | `links_test.go` | `links` | Cross-cloud `vercel.WebApp` -> keyless GCP WIF OIDC -> internal `gcp.CloudRunService` + `gcp.Bucket` overlay + `neon.Database` CoW + `kinde.OidcApp` secrets, plus multi-cloud `404` preview teardown |
-| `vercel_neon_kinde_app_test.go` | `vercel_neon_kinde_app` | `composite.VercelNeonApp` (`testdata/vercel-neon-kinde-app`) across `shared`, `dev`, and `preview-pr-11`, testing HTML `/`, `/api/health`, `/api/notes`, `/api/storage`, headless Chrome Kinde Email + OTP login/callback/session/logout (plus default `<project>.vercel.app`), and `404` preview cleanup |
-| `gcp_neon_kinde_app_test.go` | `gcp_neon_kinde_app` | `composite.GcpCloudRunNeonApp` (`testdata/gcp-neon-kinde-app`) across `shared`, `dev`, and `preview-pr-12`, testing HTML `/`, `/api/health`, `/api/notes`, `/api/storage`, headless Chrome Kinde Email + OTP login/callback/session/logout (plus Cloud Run `svc.Uri`), and `404` preview cleanup |
+| `vercel_neon_kinde_app_test.go` | `vercel_neon_kinde_app` | Premise-structured `composite.VercelNeonShared` (`infra/shared`) + `composite.VercelNeonApp` (`infra`) across `shared`, `dev`, `prod`, `stage<-prod`, and `preview-pr-11<-dev`, testing HTML `/`, `/api/health`, `/api/notes`, `/api/storage`, `prod` + `stage` Neon CoW & `prod` Kinde routing, `preview` overlay isolation, headless Chrome Kinde Email + OTP login/logout, and `404` cleanup |
+| `gcp_neon_kinde_app_test.go` | `gcp_neon_kinde_app` | Premise-structured `composite.GcpCloudRunNeonShared` (`infra/shared`) + `composite.GcpCloudRunNeonApp` (`infra`) across `shared`, `dev`, `prod`, `stage<-prod`, and `preview-pr-12<-dev`, testing HTML `/`, `/api/health`, `/api/notes`, `/api/storage`, `prod` + `stage` Neon CoW & `prod` Kinde routing, `preview` GCS/Neon isolation, headless Chrome Kinde Email + OTP login/logout, and `404` cleanup |
 
 ## Running suites & retaining live apps for manual testing
 
@@ -28,15 +28,16 @@ mise run e2e -- core
 # Run all live E2E suites and clean up automatically
 mise run e2e
 
-# Run a single composite app E2E and keep dev + preview-* live for manual testing
+# Run a single composite app E2E and keep dev + prod + stage + preview-* live for manual testing
 mise run e2e -- vercel_neon_kinde_app --no-cleanup
 mise run e2e -- gcp_neon_kinde_app --no-cleanup
 # (or via env var: OPENBASE_E2E_KEEP=1 mise run e2e -- vercel_neon_kinde_app)
 
-# Step into a retained materialized project to inspect or iterate with pulumi directly
+# Step into a retained materialized Premise workspace to inspect with pm or pulumi directly
 cd ../outputs/components/TestVercelNeonKindeApp/workspace
-pulumi stack ls
-pulumi stack output --stack preview-pr-11
+pm infra output --shared
+pm infra output --env stage
+cd infra && pulumi stack ls && pulumi stack output --stack preview-pr-11
 
 # Tear down all retained or interrupted E2E stacks (or pass a specific target)
 mise run e2e:cleanup

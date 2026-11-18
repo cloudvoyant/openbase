@@ -11,30 +11,26 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		appProject := envOrDefault("OPENBASE_APP_PROJECT", "OPENBASE_TEST_APP_PROJECT", "obvapp")
-		vProjName := "openbase-e2e-" + appProject
-		teamID := envOrDefault("VERCEL_TEAM_ID", "OPENBASE_TEST_VERCEL_TEAM_ID", "")
-		teamSlug := envOrDefault("VERCEL_TEAM_SLUG", "OPENBASE_TEST_VERCEL_TEAM_SLUG", "cloudvoyant")
-		blobRW := envOrDefault("BLOB_READ_WRITE_TOKEN", "OPENBASE_TEST_BLOB_RW_TOKEN", "")
+		appProject := envOrDefault("OPENBASE_APP_PROJECT", "OPENBASE_TEST_APP_PROJECT", "obgapp")
+		gcpProject := envOrDefault("OPENBASE_GCP_PROJECT", "OPENBASE_TEST_GCP_PROJECT", "cloudvoyant-openbase")
+		projectNum := envOrDefault("OPENBASE_GCP_PROJECT_NUMBER", "OPENBASE_TEST_GCP_PROJECT_NUMBER", "785485436615")
 
-		_, err := composite.VercelNeonApp{
-			Name:               "web",
-			Project:            appProject,
-			VercelProjectName:  vProjName,
-			TeamID:             teamID,
-			TeamSlug:           teamSlug,
-			NeonOrgID:          os.Getenv("NEON_ORG_ID"),
-			SourceDir:          "site",
-			PathPrefix:         "site",
-			BlobReadWriteToken: optionalString(blobRW),
-			Auth:               envKindeConfig(vProjName),
+		_, err := composite.GcpCloudRunNeonShared{
+			ServiceName:      "web",
+			Project:          appProject,
+			GCPProject:       gcpProject,
+			GCPProjectNumber: projectNum,
+			PoolSuffix:       os.Getenv("OPENBASE_TEST_RUN_ID"),
+			SkipKeyRing:      true,
+			NeonOrgID:        os.Getenv("NEON_ORG_ID"),
+			Auth:             sharedKindeConfig("openbase-e2e-" + appProject),
 		}.Register(ctx)
 		return err
 	})
 }
 
-func envKindeConfig(defaultAppName string) *composite.KindeConfig {
-	return &composite.KindeConfig{
+func sharedKindeConfig(defaultAppName string) *composite.KindeSharedConfig {
+	return &composite.KindeSharedConfig{
 		AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", defaultAppName),
 		ImportDevAppID:             envOrDefault("OPENBASE_IMPORT_DEV_APP_ID", "OPENBASE_TEST_IMPORT_DEV_APP_ID", ""),
 		ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),
@@ -62,11 +58,4 @@ func envOrDefault(primaryKey, secondaryKey, fallback string) string {
 		}
 	}
 	return fallback
-}
-
-func optionalString(val string) pulumi.StringInput {
-	if val == "" {
-		return nil
-	}
-	return pulumi.String(val)
 }

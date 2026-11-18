@@ -154,15 +154,15 @@ func TestKindeOidcApp(t *testing.T) {
 func prepareKindeSandboxApp(t *testing.T, tenant, vProj, appProject, teamSlug string) (string, string) {
 	t.Helper()
 	redirects, logouts := expectedInitialKindeURLs(tenant, vProj, teamSlug)
-	return prepareKindeSandboxWithURLs(t, tenant, appProject, redirects, logouts)
+	return prepareKindeSandboxByPrefix(t, tenant, "openbase-e2e-ob", "openbase-e2e-"+appProject, redirects, logouts)
 }
 
-func prepareKindeSandboxWithURLs(t *testing.T, tenant, appProject string, redirects, logouts []string) (string, string) {
+func prepareKindeSandboxByPrefix(t *testing.T, tenant, prefix, fallbackName string, redirects, logouts []string) (string, string) {
 	t.Helper()
 	issuer, tok := kindeMgmtToken(t, tenant)
-	apps := listOpenBaseKindeApps(t, issuer, tok)
+	apps := listKindeAppsByPrefix(t, issuer, tok, prefix)
 	if len(apps) == 0 {
-		return "", "openbase-e2e-" + appProject
+		return "", fallbackName
 	}
 	id, name := apps[0].ID, apps[0].Name
 	putKindeURLs(t, issuer, tok, id, "auth_redirect_urls", redirects)
@@ -228,11 +228,16 @@ type kindeAppItem struct {
 
 func countOpenBaseKindeApps(t *testing.T, tenant string) int {
 	t.Helper()
-	issuer, tok := kindeMgmtToken(t, tenant)
-	return len(listOpenBaseKindeApps(t, issuer, tok))
+	return countKindeAppsByPrefix(t, tenant, "openbase-e2e-ob")
 }
 
-func listOpenBaseKindeApps(t *testing.T, issuer, tok string) []kindeAppItem {
+func countKindeAppsByPrefix(t *testing.T, tenant, prefix string) int {
+	t.Helper()
+	issuer, tok := kindeMgmtToken(t, tenant)
+	return len(listKindeAppsByPrefix(t, issuer, tok, prefix))
+}
+
+func listKindeAppsByPrefix(t *testing.T, issuer, tok, prefix string) []kindeAppItem {
 	t.Helper()
 	req, err := http.NewRequest(http.MethodGet, issuer+"/api/v1/applications", nil)
 	if err != nil {
@@ -251,7 +256,7 @@ func listOpenBaseKindeApps(t *testing.T, issuer, tok string) []kindeAppItem {
 	_ = json.Unmarshal(raw, &parsed)
 	var out []kindeAppItem
 	for _, a := range parsed.Applications {
-		if strings.HasPrefix(a.Name, "openbase-e2e-") {
+		if strings.HasPrefix(a.Name, prefix) {
 			out = append(out, a)
 		}
 	}

@@ -1,31 +1,33 @@
 # OpenBase user guide
 
-Write one shared Go Pulumi program (`infra/main.go`) using declarative OpenBase component specs (`<pkg>.<Product>{...}.Register(ctx)`) and run it across separate Pulumi stacks for `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` using your ambient GCP, Vercel, Neon, and Kinde credentials.
+Write Premise-aligned Go Pulumi programs (`infra/shared/main.go` for cross-environment platform roots and `infra/main.go` for per-environment stacks) using declarative OpenBase component specs (`<pkg>.<Product>{...}.Register(ctx)`) across `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` using your ambient GCP, Vercel, Neon, and Kinde credentials.
 
 ## Stack topology
 
 ```mermaid
 flowchart TD
-    Program["One Shared Go Program (infra/main.go)"] --> Shared["Stack: shared (gcp.Shared, vercel.Shared, neon.SharedProject, kinde.SharedOidcApp)"]
-    Program --> Dev["Stack: dev"]
-    Program --> Stage["Stack: stage (BranchFrom: prod)"]
-    Program --> Prod["Stack: prod"]
-    Program --> Preview["Stack: preview-<slug> (BranchFrom: dev)"]
-    Shared --> Dev
-    Shared --> Stage
-    Shared --> Prod
-    Shared --> Preview
+    SharedProg["Shared Program (infra/shared/main.go)"] --> Shared["Stack: shared (VercelNeonShared / GcpCloudRunNeonShared)"]
+    EnvProg["Environment Program (infra/main.go)"] --> Dev["Stack: dev"]
+    EnvProg --> Stage["Stack: stage (BranchFrom: prod)"]
+    EnvProg --> Prod["Stack: prod"]
+    EnvProg --> Preview["Stack: preview-<slug> (BranchFrom: dev)"]
+    Shared -->|StackReference| Dev
+    Shared -->|StackReference| Stage
+    Shared -->|StackReference| Prod
+    Shared -->|StackReference| Preview
 ```
 
-## 1. Install OpenBase in your infra module
+## 1. Install OpenBase in your workspace
 
 ```sh
 go get github.com/cloudvoyant/openbase/libs/components@latest
 ```
 
-## 2. Quickstart with `libs/components/composite`
+## 2. Quickstart with `libs/components/composite` (Premise layout)
 
-For standard full-stack apps (`Vercel + Blob + Neon + Kinde` or `Cloud Run + GCS + Neon + Kinde`), `composite.VercelNeonApp` and `composite.GcpCloudRunNeonApp` handle both `shared` and per-environment stacks (`dev`, `stage`, `prod`, `preview-<slug>`) from a single `.Register(ctx)` call:
+In `premise.yaml`, configure `workspace.infra.directory: infra` and `workspace.infra.shared_directory: infra/shared`.
+
+### `infra/shared/main.go` (`name: storefront-shared`, deployed via `pm infra apply --shared`)
 
 ```go
 package main
@@ -40,13 +42,12 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		_, err := composite.VercelNeonApp{
-			Name:      "web",
+		_, err := composite.VercelNeonShared{
 			Project:   "storefront",
 			TeamID:    os.Getenv("VERCEL_TEAM_ID"),
 			TeamSlug:  "acme",
-			SourceDir: "apps/web",
-			Auth: &composite.KindeConfig{
+			NeonOrgID: os.Getenv("NEON_ORG_ID"),
+			Auth: &composite.KindeSharedConfig{
 				Dev: kinde.TenantCredentials{
 					Domain:       os.Getenv("KINDE_DEV_TENANT_DOMAIN"),
 					ClientID:     pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_ID")),
@@ -64,7 +65,34 @@ func main() {
 }
 ```
 
-Swap `composite.VercelNeonApp` for `composite.GcpCloudRunNeonApp` to target Cloud Run + GCS + Neon + Kinde with the same stack lifecycle.
+### `infra/main.go` (`name: storefront`, deployed via `pm infra apply --env dev|stage|prod|preview`)
+
+```go
+package main
+
+import (
+	"os"
+
+	"github.com/cloudvoyant/openbase/libs/components/composite"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+)
+
+func main() {
+	pulumi.Run(func(ctx *pulumi.Context) error {
+		_, err := composite.VercelNeonApp{
+			Name:      "web",
+			Project:   "storefront",
+			TeamID:    os.Getenv("VERCEL_TEAM_ID"),
+			TeamSlug:  "acme",
+			SourceDir: "../apps/web",
+			Auth:      &composite.KindeAppConfig{},
+		}.Register(ctx)
+		return err
+	})
+}
+```
+
+`VercelNeonApp` automatically resolves `SharedStackRef` to `<org>/<project>-shared/shared` — no Kinde M2M admin credentials or Neon org IDs are needed in `infra/main.go`. Swap `VercelNeonShared` + `VercelNeonApp` for `GcpCloudRunNeonShared` + `GcpCloudRunNeonApp` to target Cloud Run + GCS + Neon + Kinde with the exact same Premise stack lifecycle.
 
 ## 3. Custom composition in `infra/main.go`
 

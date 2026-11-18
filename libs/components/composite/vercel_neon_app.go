@@ -13,7 +13,7 @@ import (
 
 var _ core.StatelessResource = (*VercelNeonAppResource)(nil)
 
-// VercelNeonApp declares a Neokit-style Vercel web application backed by Neon PostgreSQL, Vercel Blob, and optional Kinde OIDC.
+// VercelNeonApp declares a per-environment Vercel web application (dev, stage, prod, preview-*) wired to VercelNeonShared via StackReference.
 type VercelNeonApp struct {
 	Name               string
 	Project            string
@@ -35,33 +35,31 @@ type VercelNeonApp struct {
 	PreviewAlias       string
 	DisableBlobStore   bool
 	BlobReadWriteToken pulumi.StringInput
-	NeonOrgID          string
-	NeonRegionID       string
 	DatabaseName       string
 	RoleName           string
-	Auth               *KindeConfig
+	Auth               *KindeAppConfig
 	SkipStackExports   bool
 }
 
-// VercelNeonAppResource holds the shared or environment-scoped resources provisioned for a VercelNeonApp.
+// VercelNeonAppResource holds the environment-scoped Neon branch, Blob overlay, Kinde binding, and Vercel WebApp.
 type VercelNeonAppResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
-	VercelShared *vercel.SharedResource
-	NeonShared   *neon.SharedProjectResource
-	KindeShared  *kinde.SharedOidcAppResource
-	Database     *neon.DatabaseResource
-	BlobStore    *vercel.BlobStoreResource
-	Auth         *kinde.OidcAppResource
-	WebApp       *vercel.WebAppResource
-	URL          pulumi.StringOutput
-	DatabaseURL  pulumi.StringOutput
+	Database    *neon.DatabaseResource
+	BlobStore   *vercel.BlobStoreResource
+	Auth        *kinde.OidcAppResource
+	WebApp      *vercel.WebAppResource
+	URL         pulumi.StringOutput
+	DatabaseURL pulumi.StringOutput
 }
 
-// Register provisions shared roots on the "shared" stack or per-environment resources wired via StackReference.
+// Register provisions per-environment resources on dev, stage, prod, or preview-* stacks.
 func (v VercelNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*VercelNeonAppResource, error) {
 	v.Name = defaultCompStr(v.Name, "web")
+	if v.SourceDir != "" && v.SourceDir != "." && v.PathPrefix == "" {
+		v.PathPrefix = v.SourceDir
+	}
 	res := &VercelNeonAppResource{}
 	meta, err := core.InitStateless(ctx, "openbase:composite:VercelNeonApp", "composite-vercel-neon-app", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        v.Name,
@@ -75,12 +73,10 @@ func (v VercelNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOpti
 	if err != nil {
 		return nil, err
 	}
-	if meta.Environment == core.EnvShared {
-		err = provisionVercelSharedStack(ctx, meta, v, res)
-	} else {
-		err = provisionVercelEnvStack(ctx, meta, v, res)
+	if err := requireNonSharedEnv(meta, "composite.VercelNeonShared"); err != nil {
+		return nil, err
 	}
-	if err != nil {
+	if err := provisionVercelEnvStack(ctx, meta, v, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
@@ -90,111 +86,6 @@ func (v VercelNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOpti
 }
 
 // Private helpers ------------------------------------------------------------
-
-func provisionVercelSharedStack(
-	ctx *pulumi.Context,
-	meta core.ResourceMeta,
-	spec VercelNeonApp,
-	res *VercelNeonAppResource,
-) error {
-	vProjName := defaultCompStr(spec.VercelProjectName, "openbase-"+meta.Project)
-	vShared, err := vercel.Shared{
-		Name:              "vercel",
-		Project:           meta.Project,
-		Repo:              meta.Repo,
-		Environment:       string(meta.Environment),
-		VercelProjectName: vProjName,
-		TeamID:            spec.TeamID,
-		TeamSlug:          spec.TeamSlug,
-		ProdDomain:        spec.ProdDomain,
-		StageDomain:       spec.StageDomain,
-		EnableBlobStore:   !spec.DisableBlobStore,
-	}.Register(ctx, pulumi.Parent(res))
-	if err != nil {
-		return err
-	}
-	nShared, err := neon.SharedProject{
-		Name:        "neon",
-		Project:     meta.Project,
-		Repo:        meta.Repo,
-		Environment: string(meta.Environment),
-		OrgID:       spec.NeonOrgID,
-		RegionID:    defaultCompStr(spec.NeonRegionID, "aws-us-east-1"),
-	}.Register(ctx, pulumi.Parent(res))
-	if err != nil {
-		return err
-	}
-	kShared, err := registerOptionalVercelSharedKinde(ctx, meta, vProjName, spec, res)
-	if err != nil {
-		return err
-	}
-	res.VercelShared = vShared
-	res.NeonShared = nShared
-	res.KindeShared = kShared
-	res.URL = pulumi.Sprintf("https://%s", vShared.ProdDomainName)
-	res.SetLink(vShared.Link())
-	exportVercelSharedOutputs(ctx, spec.SkipStackExports, vShared, nShared, kShared)
-	return nil
-}
-
-func registerOptionalVercelSharedKinde(
-	ctx *pulumi.Context,
-	meta core.ResourceMeta,
-	vProjName string,
-	spec VercelNeonApp,
-	parent pulumi.Resource,
-) (*kinde.SharedOidcAppResource, error) {
-	if spec.Auth == nil {
-		return nil, nil
-	}
-	cfg := spec.Auth
-	return kinde.SharedOidcApp{
-		Name:                       "kinde",
-		Project:                    meta.Project,
-		Repo:                       meta.Repo,
-		Environment:                string(meta.Environment),
-		AppName:                    defaultCompStr(cfg.AppName, vProjName),
-		VercelProjectName:          vProjName,
-		VercelTeamSlug:             spec.TeamSlug,
-		ProdDomain:                 spec.ProdDomain,
-		StageDomain:                spec.StageDomain,
-		CallbackPath:               cfg.CallbackPath,
-		ExtraDevRedirectURIs:       cfg.ExtraDevRedirectURIs,
-		ExtraDevLogoutURIs:         cfg.ExtraDevLogoutURIs,
-		ExtraProdRedirectURIs:      cfg.ExtraProdRedirectURIs,
-		ExtraProdLogoutURIs:        cfg.ExtraProdLogoutURIs,
-		ImportDevAppID:             cfg.ImportDevAppID,
-		ImportProdAppID:            cfg.ImportProdAppID,
-		RetainApplicationsOnDelete: cfg.RetainApplicationsOnDelete,
-		SkipEmailPasswordConn:      cfg.SkipEmailPasswordConn,
-		Dev:                        cfg.Dev,
-		Prod:                       cfg.Prod,
-	}.Register(ctx, pulumi.Parent(parent))
-}
-
-func exportVercelSharedOutputs(
-	ctx *pulumi.Context,
-	skip bool,
-	v *vercel.SharedResource,
-	n *neon.SharedProjectResource,
-	k *kinde.SharedOidcAppResource,
-) {
-	if skip {
-		return
-	}
-	ctx.Export("vercelProjectId", v.ProjectID)
-	ctx.Export("vercelProjectName", v.VercelProjectName)
-	ctx.Export("teamSlug", v.TeamSlug)
-	ctx.Export("stageCustomEnvironmentId", v.StageCustomEnvironmentID)
-	ctx.Export("protectionBypassSecret", v.ProtectionBypassSecret)
-	ctx.Export("prodDomainName", v.ProdDomainName)
-	ctx.Export("stageDomainName", v.StageDomainName)
-	ctx.Export("blobStoreId", v.BlobStoreID)
-	ctx.Export("blobBaseUrl", v.BlobBaseURL)
-	ctx.Export("neonProjectId", n.ProjectID)
-	ctx.Export("neonDefaultBranchId", n.DefaultBranchID)
-	exportKindeSharedOutputs(ctx, k)
-}
 
 func provisionVercelEnvStack(
 	ctx *pulumi.Context,

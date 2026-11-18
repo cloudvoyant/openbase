@@ -1,3 +1,0 @@
-name: openbase-gcp-neon-kinde-app
-runtime: go
-description: Cloud Run + GCS + Neon + Kinde OIDC full-stack OpenBase consumer module

@@ -23,8 +23,8 @@ func TestGCPNeonKindeApp(t *testing.T) {
 	appProject := "obga" + runID
 	devR, devL := expectedGCPKindeURLs("dev", appProject, projectNumber)
 	prodR, prodL := expectedGCPKindeURLs("prod", appProject, projectNumber)
-	devAppID, devAppName := prepareKindeSandboxWithURLs(t, "dev", appProject, devR, devL)
-	prodAppID, _ := prepareKindeSandboxWithURLs(t, "prod", appProject, prodR, prodL)
+	devAppID, devAppName := prepareKindeSandboxByPrefix(t, "dev", "openbase-e2e-gcp-", "openbase-e2e-gcp-"+appProject, devR, devL)
+	prodAppID, _ := prepareKindeSandboxByPrefix(t, "prod", "openbase-e2e-gcp-", "openbase-e2e-gcp-"+appProject, prodR, prodL)
 
 	h := NewLiveHarness(
 		t,
@@ -43,13 +43,19 @@ func TestGCPNeonKindeApp(t *testing.T) {
 		"OPENBASE_TEST_RETAIN_KINDE_APPS=1",
 	)
 
-	var devSvc, previewSvc, devSA, previewSA, devBucket, previewBucket, neonProjectID string
+	var state gcpDeployedAppState
 	h.OnCleanupVerify(func(t *testing.T) {
-		assertGCPNeonKindeCleanup(t, gcpProject, neonProjectID, []string{devSvc, previewSvc}, []string{devBucket, previewBucket})
+		assertGCPNeonKindeCleanup(
+			t,
+			gcpProject,
+			state.neonProjectID,
+			[]string{state.devSvc, state.prodSvc, state.stageSvc, state.previewSvc},
+			[]string{state.devBucket, state.prodBucket, state.stageBucket, state.previewBucket},
+		)
 	})
 
-	t.Run("given a gcp-neon-kinde-app consumer module", func(t *testing.T) {
-		for _, stack := range []string{"shared", "dev", "preview-pr-12"} {
+	t.Run("given a Premise-structured composite.GcpCloudRunNeonShared (infra/shared) and composite.GcpCloudRunNeonApp (infra) workspace", func(t *testing.T) {
+		for _, stack := range []string{"shared", "dev", "prod", "stage", "preview-pr-12"} {
 			h.InitStack(t, stack)
 		}
 
@@ -64,60 +70,38 @@ func TestGCPNeonKindeApp(t *testing.T) {
 			assertContains(t, planOut, "kinde:index:Application")
 		})
 
-		t.Run("given provisioned shared, seeded dev, and preview-pr-12 stacks wired via StackReferences", func(t *testing.T) {
-			h.Pulumi(t, nil, "up", "--stack", "shared", "--yes", "--non-interactive", "--skip-preview")
-			neonProjectID = h.Output(t, "shared", "neonProjectId")
-			devIssuer := h.Output(t, "shared", "devIssuerUrl")
-			devClientSec := h.Output(t, "shared", "devClientSecret")
+		t.Run("given provisioned shared, dev, prod, stage<-prod, and preview-pr-12<-dev stacks", func(t *testing.T) {
+			state = deployAllGCPAppStacks(t, h)
 
-			h.Pulumi(t, nil, "up", "--stack", "dev", "--yes", "--non-interactive", "--skip-preview")
-			devURL := h.Output(t, "dev", "regionalUrl")
-			devSvc = h.Output(t, "dev", "serviceName")
-			devSA = h.Output(t, "dev", "serviceAccountEmail")
-			devBucket = h.Output(t, "dev", "bucketName")
-			devBranchID := h.Output(t, "dev", "branchId")
-			h.RecordLiveURL("dev", devURL)
-			_ = devSA
-			_ = waitForAppHealth(t, devURL, "")
-			postAppNote(t, devURL, "", "seeded-in-gcp-dev")
-			postAppStorage(t, devURL, "", "seed.txt", "gcs-object-from-dev")
+			t.Run("when probing prod and stage on Cloud Run, then prod serves production and stage inherits prod Neon state with prod Kinde auth", func(t *testing.T) {
+				// Arrange / Act.
+				prodHealth := waitForAppHealth(t, state.prodURL, "")
+				stageHealth := waitForAppHealth(t, state.stageURL, "")
+				stageHTML := fetchAppText(t, state.stageURL+"/", "")
+				h.WriteJSONArtifact(t, "prod-stage-health.json", map[string]any{"prod": prodHealth, "stage": stageHealth})
 
-			h.Pulumi(t, nil, "up", "--stack", "preview-pr-12", "--yes", "--non-interactive", "--skip-preview")
-			previewURL := h.Output(t, "preview-pr-12", "regionalUrl")
-			previewHashURL := h.Output(t, "preview-pr-12", "url")
-			previewSvc = h.Output(t, "preview-pr-12", "serviceName")
-			previewSA = h.Output(t, "preview-pr-12", "serviceAccountEmail")
-			previewBucket = h.Output(t, "preview-pr-12", "bucketName")
-			previewBranchID := h.Output(t, "preview-pr-12", "branchId")
-			h.RecordLiveURL("preview-pr-12", previewURL)
+				// Assert.
+				assertProdAndStageAppHealth(t, prodHealth, stageHealth, stageHTML, "gcp-cloud-run", state.prodIssuer, sha256Hex(state.prodClientSec), "seeded-in-gcp-prod")
+			})
 
 			t.Run("when probing / and /api/health on preview-pr-12, then it serves the HTML dashboard and verifies Neon, GCS, and Secret Manager Kinde wiring", func(t *testing.T) {
 				// Arrange / Act.
-				health := waitForAppHealth(t, previewURL, "")
-				dashboardHTML := fetchAppText(t, previewURL+"/", "")
+				health := waitForAppHealth(t, state.previewURL, "")
+				dashboardHTML := fetchAppText(t, state.previewURL+"/", "")
 				h.WriteJSONArtifact(t, "preview-health.json", health)
 
 				// Assert.
-				assertContains(t, dashboardHTML, "Sign in with Kinde OIDC")
-				assertContains(t, dashboardHTML, "seeded-in-gcp-dev")
-				assertEqualStr(t, "runtime", health.Runtime, "gcp-cloud-run")
-				assertEqualStr(t, "environment", health.Environment, "preview-pr-12")
-				assertEqualStr(t, "auth issuer", health.Auth.Issuer, devIssuer)
-				assertEqualStr(t, "auth secret sha256", health.Auth.SecretSha256, sha256Hex(devClientSec))
-				assertEqualStr(t, "gcs fallback bucket", health.Storage.FallbackBucket, devBucket)
-				if !health.DB.Connected || !health.DB.Pooled || health.DB.NoteCount != 1 {
-					t.Fatalf("expected connected pooled Neon DB with 1 inherited note, got %+v", health.DB)
-				}
+				assertPreviewGCPAppHealth(t, health, dashboardHTML, state.devIssuer, sha256Hex(state.devClientSec), state.devBucket)
 			})
 
 			t.Run("when mutating notes and objects on preview-pr-12, then it reads dev state via CoW/overlay and isolates preview writes from dev", func(t *testing.T) {
 				// Arrange / Act.
-				seedRead := getAppStorage(t, previewURL, "", "seed.txt")
-				postAppNote(t, previewURL, "", "only-in-gcp-preview")
-				postAppStorage(t, previewURL, "", "delta.txt", "preview-only-gcs")
-				previewAfter := waitForAppHealth(t, previewURL, "")
-				devAfter := waitForAppHealth(t, devURL, "")
-				devDeltaStatus := getAppStorageStatus(t, devURL, "", "delta.txt")
+				seedRead := getAppStorage(t, state.previewURL, "", "seed.txt")
+				postAppNote(t, state.previewURL, "", "only-in-gcp-preview")
+				postAppStorage(t, state.previewURL, "", "delta.txt", "preview-only-gcs")
+				previewAfter := waitForAppHealth(t, state.previewURL, "")
+				devAfter := waitForAppHealth(t, state.devURL, "")
+				devDeltaStatus := getAppStorageStatus(t, state.devURL, "", "delta.txt")
 				h.WriteJSONArtifact(t, "isolation-report.json", map[string]any{
 					"fallbackRead":   seedRead,
 					"previewNotes":   previewAfter.DB.NoteCount,
@@ -126,24 +110,14 @@ func TestGCPNeonKindeApp(t *testing.T) {
 				})
 
 				// Assert.
-				assertEqualStr(t, "fallback sourceBucket", seedRead.SourceBucket, devBucket)
-				assertEqualStr(t, "fallback content", seedRead.Content, "gcs-object-from-dev")
-				if previewAfter.DB.NoteCount != 2 || devAfter.DB.NoteCount != 1 {
-					t.Fatalf("expected preview notes=2 and dev notes=1, got preview=%d dev=%d", previewAfter.DB.NoteCount, devAfter.DB.NoteCount)
-				}
-				if devDeltaStatus != http.StatusNotFound {
-					t.Fatalf("expected delta.txt 404 on dev, got %d", devDeltaStatus)
-				}
+				assertAppStorageAndDBIsolation(t, seedRead.SourceBucket, state.devBucket, seedRead.Content, "gcs-object-from-dev", previewAfter.DB.NoteCount, devAfter.DB.NoteCount, devDeltaStatus)
 			})
 
 			t.Run("when logging in and out via Kinde OIDC in headless Chrome, then both Cloud Run URLs complete end-to-end authentication", func(t *testing.T) {
-				// Arrange.
-				h.RecordLiveURL("preview-pr-12-uri", previewHashURL)
-
-				// Act.
-				hashLoginStatus, hashAuthLoc := callAppNoRedirect(t, previewHashURL+"/api/auth/login", "")
+				// Arrange / Act.
+				hashLoginStatus, hashAuthLoc := callAppNoRedirect(t, state.previewHashURL+"/api/auth/login", "")
 				hashKindeStatus, hashKindeLoc := followAuthorizeRedirect(t, hashAuthLoc)
-				browserReport := verifyKindeBrowserLogin(t, h, previewURL, "")
+				browserReport := verifyKindeBrowserLogin(t, h, state.previewURL, "")
 				h.WriteJSONArtifact(t, "auth-login-flow.json", map[string]any{
 					"hashUriLoginStatus": hashLoginStatus,
 					"hashUriKindeStatus": hashKindeStatus,
@@ -151,27 +125,116 @@ func TestGCPNeonKindeApp(t *testing.T) {
 				})
 
 				// Assert.
-				assertAppLoginAndBrowserFlow(t, previewHashURL, devIssuer, hashLoginStatus, hashAuthLoc, hashKindeStatus, hashKindeLoc, browserReport)
+				assertAppLoginAndBrowserFlow(t, state.previewHashURL, state.devIssuer, hashLoginStatus, hashAuthLoc, hashKindeStatus, hashKindeLoc, browserReport)
 			})
 
-			t.Run("when destroying preview-pr-12 twice, then the preview Cloud Run service, GCS bucket, and Neon branch return 404 while dev stays healthy", func(t *testing.T) {
+			t.Run("when destroying preview-pr-12 twice, then the preview Cloud Run service, GCS bucket, and Neon branch return 404 while dev, stage, and prod stay healthy", func(t *testing.T) {
 				h.SkipIfKeep(t)
 				// Arrange / Act.
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-12", "--yes", "--non-interactive", "--skip-preview")
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-12", "--yes", "--non-interactive", "--skip-preview")
 
 				// Assert.
-				assertCloudRunAbsent(t, gcpProject, previewSvc)
-				assertServiceAccountAbsent(t, gcpProject, previewSA)
-				assertBucketAbsent(t, previewBucket)
-				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", neonProjectID, previewBranchID), http.StatusNotFound)
-				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", neonProjectID, devBranchID), http.StatusOK)
+				assertCloudRunAbsent(t, gcpProject, state.previewSvc)
+				assertServiceAccountAbsent(t, gcpProject, state.previewSA)
+				assertBucketAbsent(t, state.previewBucket)
+				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", state.neonProjectID, state.previewBranchID), http.StatusNotFound)
+				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", state.neonProjectID, state.devBranchID), http.StatusOK)
+				assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", state.neonProjectID, state.stageBranchID), http.StatusOK)
 			})
 		})
 	})
 }
 
 // Private helpers ------------------------------------------------------------
+
+type gcpDeployedAppState struct {
+	neonProjectID   string
+	devIssuer       string
+	devClientSec    string
+	prodIssuer      string
+	prodClientSec   string
+	devURL          string
+	prodURL         string
+	stageURL        string
+	previewURL      string
+	previewHashURL  string
+	devSvc          string
+	prodSvc         string
+	stageSvc        string
+	previewSvc      string
+	previewSA       string
+	devBucket       string
+	prodBucket      string
+	stageBucket     string
+	previewBucket   string
+	devBranchID     string
+	stageBranchID   string
+	previewBranchID string
+}
+
+func deployAllGCPAppStacks(t *testing.T, h *LiveStackHarness) gcpDeployedAppState {
+	t.Helper()
+	h.Pulumi(t, nil, "up", "--stack", "shared", "--yes", "--non-interactive", "--skip-preview")
+	s := gcpDeployedAppState{
+		neonProjectID: h.Output(t, "shared", "neonProjectId"),
+		devIssuer:     h.Output(t, "shared", "devIssuerUrl"),
+		devClientSec:  h.Output(t, "shared", "devClientSecret"),
+		prodIssuer:    h.Output(t, "shared", "prodIssuerUrl"),
+		prodClientSec: h.Output(t, "shared", "prodClientSecret"),
+	}
+
+	h.Pulumi(t, nil, "up", "--stack", "dev", "--yes", "--non-interactive", "--skip-preview")
+	s.devURL = h.Output(t, "dev", "regionalUrl")
+	s.devSvc = h.Output(t, "dev", "serviceName")
+	s.devBucket = h.Output(t, "dev", "bucketName")
+	s.devBranchID = h.Output(t, "dev", "branchId")
+	_ = waitForAppHealth(t, s.devURL, "")
+	postAppNote(t, s.devURL, "", "seeded-in-gcp-dev")
+	postAppStorage(t, s.devURL, "", "seed.txt", "gcs-object-from-dev")
+
+	h.Pulumi(t, nil, "up", "--stack", "prod", "--yes", "--non-interactive", "--skip-preview")
+	s.prodURL = h.Output(t, "prod", "regionalUrl")
+	s.prodSvc = h.Output(t, "prod", "serviceName")
+	s.prodBucket = h.Output(t, "prod", "bucketName")
+	_ = waitForAppHealth(t, s.prodURL, "")
+	postAppNote(t, s.prodURL, "", "seeded-in-gcp-prod")
+
+	h.Pulumi(t, nil, "up", "--stack", "stage", "--yes", "--non-interactive", "--skip-preview")
+	s.stageURL = h.Output(t, "stage", "regionalUrl")
+	s.stageSvc = h.Output(t, "stage", "serviceName")
+	s.stageBucket = h.Output(t, "stage", "bucketName")
+	s.stageBranchID = h.Output(t, "stage", "branchId")
+
+	h.Pulumi(t, nil, "up", "--stack", "preview-pr-12", "--yes", "--non-interactive", "--skip-preview")
+	s.previewURL = h.Output(t, "preview-pr-12", "regionalUrl")
+	s.previewHashURL = h.Output(t, "preview-pr-12", "url")
+	s.previewSvc = h.Output(t, "preview-pr-12", "serviceName")
+	s.previewSA = h.Output(t, "preview-pr-12", "serviceAccountEmail")
+	s.previewBucket = h.Output(t, "preview-pr-12", "bucketName")
+	s.previewBranchID = h.Output(t, "preview-pr-12", "branchId")
+
+	h.RecordLiveURL("dev", s.devURL)
+	h.RecordLiveURL("prod", s.prodURL)
+	h.RecordLiveURL("stage", s.stageURL)
+	h.RecordLiveURL("preview-pr-12", s.previewURL)
+	h.RecordLiveURL("preview-pr-12-uri", s.previewHashURL)
+	return s
+}
+
+func assertPreviewGCPAppHealth(t *testing.T, health fullStackHealthResponse, dashboardHTML, devIssuer, devSecHash, devBucket string) {
+	t.Helper()
+	assertContains(t, dashboardHTML, "Sign in with Kinde OIDC")
+	assertContains(t, dashboardHTML, "seeded-in-gcp-dev")
+	assertEqualStr(t, "runtime", health.Runtime, "gcp-cloud-run")
+	assertEqualStr(t, "environment", health.Environment, "preview-pr-12")
+	assertEqualStr(t, "auth issuer", health.Auth.Issuer, devIssuer)
+	assertEqualStr(t, "auth secret sha256", health.Auth.SecretSha256, devSecHash)
+	assertEqualStr(t, "gcs fallback bucket", health.Storage.FallbackBucket, devBucket)
+	if !health.DB.Connected || !health.DB.Pooled || health.DB.NoteCount != 1 {
+		t.Fatalf("expected connected pooled Neon DB with 1 inherited note, got %+v", health.DB)
+	}
+}
 
 func expectedGCPKindeURLs(tenant, appProject, projectNum string) ([]string, []string) {
 	if tenant == "dev" {
@@ -195,8 +258,20 @@ func expectedGCPKindeURLs(tenant, appProject, projectNum string) ([]string, []st
 	}
 	stage := fmt.Sprintf("https://%s-stage-web-%s.us-central1.run.app", appProject, projectNum)
 	prod := fmt.Sprintf("https://%s-prod-web-%s.us-central1.run.app", appProject, projectNum)
-	redirects := []string{prod + "/api/auth/kinde_callback", stage + "/api/auth/kinde_callback"}
-	logouts := []string{prod + "/", stage + "/"}
+	stageHash := fmt.Sprintf("https://%s-stage-*-uc.a.run.app", appProject)
+	prodHash := fmt.Sprintf("https://%s-prod-*-uc.a.run.app", appProject)
+	redirects := []string{
+		prod + "/api/auth/kinde_callback",
+		prodHash + "/api/auth/kinde_callback",
+		stage + "/api/auth/kinde_callback",
+		stageHash + "/api/auth/kinde_callback",
+	}
+	logouts := []string{
+		prod + "/",
+		prodHash + "/",
+		stage + "/",
+		stageHash + "/",
+	}
 	slices.Sort(redirects)
 	slices.Sort(logouts)
 	return redirects, logouts
@@ -209,7 +284,7 @@ func assertGCPNeonKindeCleanup(t *testing.T, gcpProject, neonProjectID string, s
 	if neonProjectID != "" {
 		assertNeonStatus(t, "https://console.neon.tech/api/v2/projects/"+neonProjectID, http.StatusNotFound)
 	}
-	if countOpenBaseKindeApps(t, "dev") > 1 || countOpenBaseKindeApps(t, "prod") > 1 {
-		t.Fatal("expected at most 1 retained openbase-e2e Kinde sandbox app per tenant")
+	if countKindeAppsByPrefix(t, "dev", "openbase-e2e-gcp-") > 1 || countKindeAppsByPrefix(t, "prod", "openbase-e2e-gcp-") > 1 {
+		t.Fatal("expected at most 1 retained openbase-e2e-gcp Kinde sandbox app per tenant")
 	}
 }

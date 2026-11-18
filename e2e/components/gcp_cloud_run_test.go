@@ -253,14 +253,21 @@ func assertCloudRunAbsent(t *testing.T, gcpProject, serviceName string) {
 
 func assertServiceAccountAbsent(t *testing.T, gcpProject, email string) {
 	t.Helper()
-	listed := strings.TrimSpace(runCommand(
-		t,
-		repositoryRoot(t),
-		"gcloud", "iam", "service-accounts", "list",
-		"--project="+gcpProject,
-		"--filter=email="+email,
-		"--format=value(email)",
-	))
+	var listed string
+	for range 8 {
+		listed = strings.TrimSpace(runCommand(
+			t,
+			repositoryRoot(t),
+			"gcloud", "iam", "service-accounts", "list",
+			"--project="+gcpProject,
+			"--filter=email="+email,
+			"--format=value(email)",
+		))
+		if listed == "" {
+			break
+		}
+		time.Sleep(3 * time.Second)
+	}
 	if listed != "" {
 		t.Fatalf("expected SA %s deleted, still listed: %s", email, listed)
 	}

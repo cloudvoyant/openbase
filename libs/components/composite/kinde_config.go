@@ -1,4 +1,4 @@
-// Package composite provides opinionated full-stack OpenBase application components.
+// Package composite provides opinionated Premise-aligned shared and per-environment OpenBase application blueprints.
 package composite
 
 import (
@@ -12,8 +12,8 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// KindeConfig configures optional two-tenant Kinde OIDC authentication on a composite application.
-type KindeConfig struct {
+// KindeSharedConfig configures optional two-tenant Kinde OIDC applications on a shared platform stack (infra/shared).
+type KindeSharedConfig struct {
 	AppName                    string
 	Dev                        kinde.TenantCredentials
 	Prod                       kinde.TenantCredentials
@@ -26,6 +26,11 @@ type KindeConfig struct {
 	ImportProdAppID            string
 	RetainApplicationsOnDelete bool
 	SkipEmailPasswordConn      bool
+}
+
+// KindeAppConfig configures optional per-environment Kinde OIDC wiring from SharedStackRef on an environment stack (infra/).
+type KindeAppConfig struct {
+	CallbackPath string
 }
 
 // Private helpers ------------------------------------------------------------
@@ -41,7 +46,21 @@ func resolveSharedStackRef(ctx *pulumi.Context, explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
-	return fmt.Sprintf("%s/%s/shared", ctx.Organization(), ctx.Project())
+	return fmt.Sprintf("%s/%s-shared/shared", ctx.Organization(), ctx.Project())
+}
+
+func requireSharedEnv(meta core.ResourceMeta) error {
+	if meta.Environment != core.EnvShared {
+		return fmt.Errorf("%w: %q requires the shared stack, got %q", core.ErrInvalidEnvironment, meta.Kind, meta.Environment)
+	}
+	return nil
+}
+
+func requireNonSharedEnv(meta core.ResourceMeta, sharedComponent string) error {
+	if meta.Environment == core.EnvShared {
+		return fmt.Errorf("%w: %q is per-environment; declare %s in infra/shared for the shared stack", core.ErrInvalidEnvironment, meta.Kind, sharedComponent)
+	}
+	return nil
 }
 
 func resolveDBBranch(ctx *pulumi.Context, env core.Environment) (string, string) {

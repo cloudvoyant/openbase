@@ -1,9 +1,6 @@
 package composite
 
 import (
-	"fmt"
-	"strings"
-
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
@@ -18,7 +15,7 @@ var _ core.StatelessResource = (*GcpCloudRunNeonAppResource)(nil)
 
 const defaultGCPLocation = "us-central1"
 
-// GcpCloudRunNeonApp declares a Cloud Run v2 web application backed by Neon PostgreSQL, GCS, and optional Kinde OIDC.
+// GcpCloudRunNeonApp declares a per-environment Cloud Run v2 web application (dev, stage, prod, preview-*) wired to GcpCloudRunNeonShared via StackReference.
 type GcpCloudRunNeonApp struct {
 	Name             string
 	Project          string
@@ -31,10 +28,6 @@ type GcpCloudRunNeonApp struct {
 	GCPProject       string
 	GCPProjectNumber string
 	Location         string
-	PoolSuffix       string
-	GitHubOrg        string
-	GitHubRepo       string
-	SkipKeyRing      bool
 	DisableBucket    bool
 	BucketNamespace  string
 	Image            pulumi.StringInput
@@ -43,22 +36,17 @@ type GcpCloudRunNeonApp struct {
 	Visibility       string
 	Port             int
 	Domain           string
-	NeonOrgID        string
-	NeonRegionID     string
 	DatabaseName     string
 	RoleName         string
-	Auth             *KindeConfig
+	Auth             *KindeAppConfig
 	SkipStackExports bool
 }
 
-// GcpCloudRunNeonAppResource holds the shared or environment-scoped resources provisioned for a GcpCloudRunNeonApp.
+// GcpCloudRunNeonAppResource holds the environment-scoped GCS bucket, Neon branch, Kinde binding, and Cloud Run service.
 type GcpCloudRunNeonAppResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
-	GCPShared   *gcp.SharedResource
-	NeonShared  *neon.SharedProjectResource
-	KindeShared *kinde.SharedOidcAppResource
 	Bucket      *gcp.BucketResource
 	Database    *neon.DatabaseResource
 	Auth        *kinde.OidcAppResource
@@ -68,7 +56,7 @@ type GcpCloudRunNeonAppResource struct {
 	DatabaseURL pulumi.StringOutput
 }
 
-// Register provisions shared roots on the "shared" stack or per-environment Cloud Run resources via StackReference.
+// Register provisions per-environment Cloud Run resources on dev, stage, prod, or preview-* stacks.
 func (g GcpCloudRunNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*GcpCloudRunNeonAppResource, error) {
 	g.Name = defaultCompStr(g.Name, "web")
 	g.Location = defaultCompStr(g.Location, defaultGCPLocation)
@@ -85,12 +73,10 @@ func (g GcpCloudRunNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.Resourc
 	if err != nil {
 		return nil, err
 	}
-	if meta.Environment == core.EnvShared {
-		err = provisionGCPSharedStack(ctx, meta, g, res)
-	} else {
-		err = provisionGCPEnvStack(ctx, meta, g, res)
+	if err := requireNonSharedEnv(meta, "composite.GcpCloudRunNeonShared"); err != nil {
+		return nil, err
 	}
-	if err != nil {
+	if err := provisionGCPEnvStack(ctx, meta, g, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
@@ -101,130 +87,6 @@ func (g GcpCloudRunNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.Resourc
 }
 
 // Private helpers ------------------------------------------------------------
-
-func provisionGCPSharedStack(
-	ctx *pulumi.Context,
-	meta core.ResourceMeta,
-	spec GcpCloudRunNeonApp,
-	res *GcpCloudRunNeonAppResource,
-) error {
-	gShared, err := gcp.Shared{
-		Name:        "gcp",
-		Project:     meta.Project,
-		Repo:        meta.Repo,
-		Environment: string(meta.Environment),
-		GCPProject:  optionalGCPProjectPtr(spec.GCPProject),
-		Location:    spec.Location,
-		PoolSuffix:  spec.PoolSuffix,
-		GitHubOrg:   spec.GitHubOrg,
-		GitHubRepo:  spec.GitHubRepo,
-		SkipKeyRing: spec.SkipKeyRing,
-	}.Register(ctx, pulumi.Parent(res))
-	if err != nil {
-		return err
-	}
-	nShared, err := neon.SharedProject{
-		Name:        "neon",
-		Project:     meta.Project,
-		Repo:        meta.Repo,
-		Environment: string(meta.Environment),
-		OrgID:       spec.NeonOrgID,
-		RegionID:    defaultCompStr(spec.NeonRegionID, "aws-us-east-1"),
-	}.Register(ctx, pulumi.Parent(res))
-	if err != nil {
-		return err
-	}
-	kShared, err := registerOptionalGCPSharedKinde(ctx, meta, spec, res)
-	if err != nil {
-		return err
-	}
-	res.GCPShared = gShared
-	res.NeonShared = nShared
-	res.KindeShared = kShared
-	res.URL = gShared.RepositoryURL
-	res.RegionalURL = gShared.RepositoryURL
-	res.SetLink(gShared.Link())
-	exportGCPSharedOutputs(ctx, spec.SkipStackExports, gShared, nShared, kShared)
-	return nil
-}
-
-func registerOptionalGCPSharedKinde(
-	ctx *pulumi.Context,
-	meta core.ResourceMeta,
-	spec GcpCloudRunNeonApp,
-	parent pulumi.Resource,
-) (*kinde.SharedOidcAppResource, error) {
-	if spec.Auth == nil {
-		return nil, nil
-	}
-	cfg := spec.Auth
-	cb := defaultCompStr(cfg.CallbackPath, "/api/auth/kinde_callback")
-	if !strings.HasPrefix(cb, "/") {
-		cb = "/" + cb
-	}
-	stageHost, prodHost, devRedirects, devLogouts, err := computeGCPKindeURLs(meta.Project, spec, cb)
-	if err != nil {
-		return nil, err
-	}
-	return kinde.SharedOidcApp{
-		Name:                       "kinde",
-		Project:                    meta.Project,
-		Repo:                       meta.Repo,
-		Environment:                string(meta.Environment),
-		AppName:                    defaultCompStr(cfg.AppName, "openbase-"+meta.Project),
-		StageDomain:                stageHost,
-		ProdDomain:                 prodHost,
-		CallbackPath:               cb,
-		ExtraDevRedirectURIs:       append(devRedirects, cfg.ExtraDevRedirectURIs...),
-		ExtraDevLogoutURIs:         append(devLogouts, cfg.ExtraDevLogoutURIs...),
-		ExtraProdRedirectURIs:      cfg.ExtraProdRedirectURIs,
-		ExtraProdLogoutURIs:        cfg.ExtraProdLogoutURIs,
-		ImportDevAppID:             cfg.ImportDevAppID,
-		ImportProdAppID:            cfg.ImportProdAppID,
-		RetainApplicationsOnDelete: cfg.RetainApplicationsOnDelete,
-		SkipEmailPasswordConn:      cfg.SkipEmailPasswordConn,
-		Dev:                        cfg.Dev,
-		Prod:                       cfg.Prod,
-	}.Register(ctx, pulumi.Parent(parent))
-}
-
-func computeGCPKindeURLs(project string, spec GcpCloudRunNeonApp, cb string) (string, string, []string, []string, error) {
-	stageURL, err := gcp.CloudRunURL(project, core.EnvStage, spec.Name, spec.GCPProjectNumber, spec.Location)
-	if err != nil {
-		return "", "", nil, nil, err
-	}
-	prodURL, err := gcp.CloudRunURL(project, core.EnvProd, spec.Name, spec.GCPProjectNumber, spec.Location)
-	if err != nil {
-		return "", "", nil, nil, err
-	}
-	hashWildcard := fmt.Sprintf("https://%s-*-uc.a.run.app", project)
-	devRedirects := []string{hashWildcard + cb}
-	devLogouts := []string{hashWildcard + "/"}
-	if spec.GCPProjectNumber != "" {
-		regWildcard := fmt.Sprintf("https://%s-*-%s.%s.run.app", project, spec.GCPProjectNumber, spec.Location)
-		devRedirects = append(devRedirects, regWildcard+cb)
-		devLogouts = append(devLogouts, regWildcard+"/")
-	}
-	return strings.TrimPrefix(stageURL, "https://"), strings.TrimPrefix(prodURL, "https://"), devRedirects, devLogouts, nil
-}
-
-func exportGCPSharedOutputs(
-	ctx *pulumi.Context,
-	skip bool,
-	g *gcp.SharedResource,
-	n *neon.SharedProjectResource,
-	k *kinde.SharedOidcAppResource,
-) {
-	if skip {
-		return
-	}
-	ctx.Export("repositoryId", g.RepositoryID)
-	ctx.Export("repositoryUrl", g.RepositoryURL)
-	ctx.Export("workloadIdentityPoolName", g.WorkloadIdentityPoolName)
-	ctx.Export("neonProjectId", n.ProjectID)
-	ctx.Export("neonDefaultBranchId", n.DefaultBranchID)
-	exportKindeSharedOutputs(ctx, k)
-}
 
 func provisionGCPEnvStack(
 	ctx *pulumi.Context,
