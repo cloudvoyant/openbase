@@ -12,7 +12,7 @@ import (
 func TestCoreLifecycle(t *testing.T) {
 	t.Run("given a standalone Pulumi program declaring linked core.Stateful and core.Stateless specs", func(t *testing.T) {
 		// Arrange.
-		h := NewLiveHarness(t, "core-lifecycle", "openbase-core-lifecycle-fixture", "file://"+filepath.ToSlash(t.TempDir()))
+		h := NewLiveHarness(t, "core-lifecycle", "openbase-core-lifecycle-fixture", "")
 		h.InitStack(t, "preview-pr-42")
 		h.InitStack(t, "dev")
 

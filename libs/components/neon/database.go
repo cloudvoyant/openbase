@@ -144,10 +144,10 @@ func resolveNeonRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, s
 			return neonParentRefs{}, err
 		}
 		if !isSet(refs.projectID) {
-			refs.projectID = sr.GetStringOutput(pulumi.String("projectId"))
+			refs.projectID = preferStackOutput(sr, "neonProjectId", "projectId")
 		}
 		if !isSet(defaultBranch) {
-			defaultBranch = sr.GetStringOutput(pulumi.String("defaultBranchId"))
+			defaultBranch = preferStackOutput(sr, "neonDefaultBranchId", "defaultBranchId")
 		}
 	}
 	parentBranch, err := resolveParentBranch(ctx, name, meta, spec, defaultBranch)
@@ -340,4 +340,19 @@ func optionalStringPtr(out pulumi.StringOutput) pulumi.StringPtrInput {
 		return nil
 	}
 	return out
+}
+
+func preferStackOutput(sr *pulumi.StackReference, primaryKey, fallbackKey string) pulumi.StringOutput {
+	return pulumi.All(
+		sr.GetOutput(pulumi.String(primaryKey)),
+		sr.GetOutput(pulumi.String(fallbackKey)),
+	).ApplyT(func(vs []any) string {
+		if first, ok := vs[0].(string); ok && first != "" {
+			return first
+		}
+		if second, ok := vs[1].(string); ok {
+			return second
+		}
+		return ""
+	}).(pulumi.StringOutput)
 }

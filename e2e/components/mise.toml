@@ -7,43 +7,40 @@ golangci-lint = "2.15.0"
 pulumi = "3.200.0"
 
 [tasks."e2e"]
-description = "Run offline standalone consumer fixture checks"
-run = "go test . -count=1 -v"
+description = "Run E2E suite(s): mise run e2e [file_or_suite] [--no-cleanup | --keep | --offline]"
+run = "sh ../../scripts/e2e-run.sh"
+
+[tasks."e2e:cleanup"]
+description = "Destroy leftover/retained E2E stacks from e2e/outputs/components/*/run-manifest.json"
+run = "sh ../../scripts/e2e-cleanup.sh"
+
+[tasks."e2e:offline"]
+description = "Run offline standalone consumer fixture checks without cloud credentials"
+run = "sh ../../scripts/e2e-run.sh --offline"
 
 [tasks."e2e:gcp"]
 description = "Run live GCP Bucket and CloudRunService E2E suites"
-run = "go test . -run '^TestGCP' -count=1 -timeout 45m -v"
-
-[tasks."e2e:gcp".env]
-OPENBASE_TEST_GCP = "1"
+run = "sh ../../scripts/e2e-run.sh gcp"
 
 [tasks."e2e:neon"]
 description = "Run live Neon Database E2E suite"
-run = "go test . -run '^TestNeon' -count=1 -timeout 45m -v"
-
-[tasks."e2e:neon".env]
-OPENBASE_TEST_NEON = "1"
+run = "sh ../../scripts/e2e-run.sh neon"
 
 [tasks."e2e:kinde"]
 description = "Run live Kinde OidcApp E2E suite"
-run = "go test . -run '^TestKinde' -count=1 -timeout 45m -v"
-
-[tasks."e2e:kinde".env]
-OPENBASE_TEST_KINDE = "1"
+run = "sh ../../scripts/e2e-run.sh kinde"
 
 [tasks."e2e:vercel"]
 description = "Run live Vercel BlobStore and WebApp E2E suites"
-run = "go test . -run '^TestVercel' -count=1 -timeout 45m -v"
+run = "sh ../../scripts/e2e-run.sh vercel"
 
-[tasks."e2e:vercel".env]
-OPENBASE_TEST_VERCEL = "1"
+[tasks."e2e:apps"]
+description = "Run live composite Vercel+Neon+Kinde and GCP+Neon+Kinde app E2E suites"
+run = "sh ../../scripts/e2e-run.sh apps"
 
 [tasks."e2e:live"]
-description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, and Links"
-run = "go test . -count=1 -timeout 60m -v"
-
-[tasks."e2e:live".env]
-OPENBASE_TEST_LIVE = "1"
+description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, Links, and composite apps"
+run = "sh ../../scripts/e2e-run.sh"
 
 [tasks."lint"]
 run = "golangci-lint run"

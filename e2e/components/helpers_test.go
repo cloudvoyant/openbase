@@ -61,9 +61,13 @@ func commandFailureEnv(t *testing.T, directory string, extraEnv []string, name s
 
 func copyFixture(t *testing.T, fixtureName string) string {
 	t.Helper()
+	return copyFixtureTo(t, fixtureName, filepath.Join(t.TempDir(), fixtureName))
+}
+
+func copyFixtureTo(t *testing.T, fixtureName, destination string) string {
+	t.Helper()
 	repoRoot := repositoryRoot(t)
 	source := filepath.Join(repoRoot, "e2e", "components", "testdata", fixtureName)
-	destination := filepath.Join(t.TempDir(), fixtureName)
 	err := filepath.WalkDir(source, func(path string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -85,7 +89,7 @@ func copyFixture(t *testing.T, fixtureName string) string {
 
 func shouldSkipFixtureEntry(entry fs.DirEntry) bool {
 	name := entry.Name()
-	if name == ".pulumi" || name == "node_modules" {
+	if name == ".pulumi" || name == ".pulumi-state" || name == "node_modules" || name == "__pycache__" {
 		return true
 	}
 	return strings.HasPrefix(name, "Pulumi.") && name != "Pulumi.yaml"

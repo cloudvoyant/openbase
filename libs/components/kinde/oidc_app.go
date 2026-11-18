@@ -107,11 +107,16 @@ func populateOidcOutputs(
 	if useProd {
 		res.Tenant = "prod"
 	}
-	issuer, clientID, clientSecret, err := resolveTenantCredOutputs(ctx, name, useProd, spec)
-	if err != nil {
-		return err
+	var sharedSR *pulumi.StackReference
+	if spec.SharedStackRef != "" && spec.Shared == nil {
+		sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.SharedStackRef)})
+		if err != nil {
+			return err
+		}
+		sharedSR = sr
 	}
-	siteURL := resolveSiteURL(meta, spec)
+	issuer, clientID, clientSecret := resolveTenantCredOutputs(useProd, spec, sharedSR)
+	siteURL := resolveSiteURL(meta, spec, sharedSR)
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	postLogin := ensureLeadingSlash(defaultKindeStr(spec.PostLoginPath, "/"))
 	postLogout := ensureLeadingSlash(defaultKindeStr(spec.PostLogoutPath, "/"))
@@ -127,23 +132,18 @@ func populateOidcOutputs(
 }
 
 func resolveTenantCredOutputs(
-	ctx *pulumi.Context,
-	name string,
 	useProd bool,
 	spec OidcApp,
-) (pulumi.StringOutput, pulumi.StringOutput, pulumi.StringOutput, error) {
+	sr *pulumi.StackReference,
+) (pulumi.StringOutput, pulumi.StringOutput, pulumi.StringOutput) {
 	if spec.IssuerURL != nil && spec.ClientID != nil && spec.ClientSecret != nil {
-		return spec.IssuerURL.ToStringOutput(), spec.ClientID.ToStringOutput(), spec.ClientSecret.ToStringOutput(), nil
+		return spec.IssuerURL.ToStringOutput(), spec.ClientID.ToStringOutput(), spec.ClientSecret.ToStringOutput()
 	}
 	if spec.Shared != nil {
 		if useProd {
-			return spec.Shared.ProdIssuerURL, spec.Shared.ProdClientID, spec.Shared.ProdClientSecret, nil
+			return spec.Shared.ProdIssuerURL, spec.Shared.ProdClientID, spec.Shared.ProdClientSecret
 		}
-		return spec.Shared.DevIssuerURL, spec.Shared.DevClientID, spec.Shared.DevClientSecret, nil
-	}
-	sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.SharedStackRef)})
-	if err != nil {
-		return pulumi.StringOutput{}, pulumi.StringOutput{}, pulumi.StringOutput{}, err
+		return spec.Shared.DevIssuerURL, spec.Shared.DevClientID, spec.Shared.DevClientSecret
 	}
 	prefix := "dev"
 	if useProd {
@@ -151,31 +151,60 @@ func resolveTenantCredOutputs(
 	}
 	return sr.GetStringOutput(pulumi.String(prefix + "IssuerUrl")),
 		sr.GetStringOutput(pulumi.String(prefix + "ClientId")),
-		pulumi.ToSecret(sr.GetOutput(pulumi.String(prefix + "ClientSecret"))).(pulumi.StringOutput),
-		nil
+		pulumi.ToSecret(sr.GetStringOutput(pulumi.String(prefix + "ClientSecret"))).(pulumi.StringOutput)
 }
 
-func resolveSiteURL(meta core.ResourceMeta, spec OidcApp) pulumi.StringOutput {
+func resolveSiteURL(meta core.ResourceMeta, spec OidcApp, sr *pulumi.StackReference) pulumi.StringOutput {
 	if spec.SiteURL != nil {
 		return spec.SiteURL.ToStringOutput()
 	}
-	vProj := defaultKindeStr(spec.VercelProjectName, meta.Project)
-	team := defaultKindeStr(spec.VercelTeamSlug, "local")
-	switch {
-	case meta.Environment == core.EnvDev || meta.Environment == core.EnvShared:
+	if meta.Environment == core.EnvDev || meta.Environment == core.EnvShared {
 		return pulumi.String("http://localhost:5173").ToStringOutput()
-	case meta.Environment.IsPreview():
-		return pulumi.String(fmt.Sprintf("https://%s-%s-%s.vercel.app", vProj, meta.Environment.PreviewID(), team)).ToStringOutput()
-	case meta.Environment == core.EnvStage:
-		if spec.StageDomain != "" {
-			return pulumi.String(NormalizeIssuerURL(spec.StageDomain)).ToStringOutput()
+	}
+	vProjOut, teamOut := resolveVercelHostParts(meta.Project, spec, sr)
+	return pulumi.All(vProjOut, teamOut).ApplyT(func(vs []any) string {
+		return computeDefaultSiteOrigin(meta.Environment, vs[0].(string), vs[1].(string), spec)
+	}).(pulumi.StringOutput)
+}
+
+func resolveVercelHostParts(project string, spec OidcApp, sr *pulumi.StackReference) (pulumi.StringOutput, pulumi.StringOutput) {
+	vProj := pulumi.String(defaultKindeStr(spec.VercelProjectName, project)).ToStringOutput()
+	team := pulumi.String(defaultKindeStr(spec.VercelTeamSlug, "local")).ToStringOutput()
+	if sr == nil {
+		return vProj, team
+	}
+	if spec.VercelProjectName == "" {
+		vProj = optionalKindeStackOutput(sr, "vercelProjectName", project)
+	}
+	if spec.VercelTeamSlug == "" {
+		team = optionalKindeStackOutput(sr, "teamSlug", "local")
+	}
+	return vProj, team
+}
+
+func optionalKindeStackOutput(sr *pulumi.StackReference, key, fallback string) pulumi.StringOutput {
+	return sr.GetOutput(pulumi.String(key)).ApplyT(func(v any) string {
+		if s, ok := v.(string); ok && s != "" {
+			return s
 		}
-		return pulumi.String(fmt.Sprintf("https://%s-stage-%s.vercel.app", vProj, team)).ToStringOutput()
+		return fallback
+	}).(pulumi.StringOutput)
+}
+
+func computeDefaultSiteOrigin(env core.Environment, vProj, team string, spec OidcApp) string {
+	switch {
+	case env.IsPreview():
+		return fmt.Sprintf("https://%s-%s-%s.vercel.app", vProj, env.PreviewID(), team)
+	case env == core.EnvStage:
+		if spec.StageDomain != "" {
+			return NormalizeIssuerURL(spec.StageDomain)
+		}
+		return fmt.Sprintf("https://%s-stage-%s.vercel.app", vProj, team)
 	default:
 		if spec.ProdDomain != "" {
-			return pulumi.String(NormalizeIssuerURL(spec.ProdDomain)).ToStringOutput()
+			return NormalizeIssuerURL(spec.ProdDomain)
 		}
-		return pulumi.String(fmt.Sprintf("https://%s-%s.vercel.app", vProj, team)).ToStringOutput()
+		return fmt.Sprintf("https://%s-%s.vercel.app", vProj, team)
 	}
 }
 

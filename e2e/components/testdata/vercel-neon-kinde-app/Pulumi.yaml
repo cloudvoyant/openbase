@@ -1,0 +1,3 @@
+name: openbase-vercel-neon-kinde-app
+runtime: go
+description: Neokit-style Vercel web app wired to Neon PostgreSQL, Vercel Blob, and two-tenant Kinde OIDC

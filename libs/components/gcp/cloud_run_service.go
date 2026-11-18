@@ -122,6 +122,17 @@ func (c CloudRunService) Register(
 	return res, nil
 }
 
+// CloudRunURL returns the deterministic regional Cloud Run v2 URL for a service before deployment.
+func CloudRunURL(project string, env core.Environment, name, projectNumber, location string) (string, error) {
+	canonical, err := core.CanonicalName(project, env, name)
+	if err != nil {
+		return "", err
+	}
+	loc := defaultStr(location, "us-central1")
+	svcName := core.BoundedName(canonical, 49)
+	return fmt.Sprintf("https://%s-%s.%s.run.app", svcName, strings.TrimSpace(projectNumber), loc), nil
+}
+
 // Private helpers ------------------------------------------------------------
 
 type sharedRefs struct {

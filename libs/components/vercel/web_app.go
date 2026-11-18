@@ -155,17 +155,41 @@ func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta,
 
 func applySharedStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
 	if !isOutSet(refs.projectID) {
-		refs.projectID = sr.GetStringOutput(pulumi.String("projectId"))
+		refs.projectID = preferVercelStackOutput(sr, "vercelProjectId", "projectId")
 	}
 	if !isOutSet(refs.stageEnvID) {
-		refs.stageEnvID = sr.GetStringOutput(pulumi.String("stageCustomEnvironmentId"))
+		refs.stageEnvID = optionalVercelStackOutput(sr, "stageCustomEnvironmentId")
 	}
 	if spec.Shared == nil && spec.VercelProjectName == "" {
-		refs.projectName = sr.GetStringOutput(pulumi.String("vercelProjectName"))
+		refs.projectName = optionalVercelStackOutput(sr, "vercelProjectName")
 	}
 	if spec.Shared == nil && spec.TeamSlug == "" {
-		refs.teamSlug = sr.GetStringOutput(pulumi.String("teamSlug"))
+		refs.teamSlug = optionalVercelStackOutput(sr, "teamSlug")
 	}
+}
+
+func preferVercelStackOutput(sr *pulumi.StackReference, primaryKey, fallbackKey string) pulumi.StringOutput {
+	return pulumi.All(
+		sr.GetOutput(pulumi.String(primaryKey)),
+		sr.GetOutput(pulumi.String(fallbackKey)),
+	).ApplyT(func(vs []any) string {
+		if first, ok := vs[0].(string); ok && first != "" {
+			return first
+		}
+		if second, ok := vs[1].(string); ok {
+			return second
+		}
+		return ""
+	}).(pulumi.StringOutput)
+}
+
+func optionalVercelStackOutput(sr *pulumi.StackReference, key string) pulumi.StringOutput {
+	return sr.GetOutput(pulumi.String(key)).ApplyT(func(v any) string {
+		if s, ok := v.(string); ok {
+			return s
+		}
+		return ""
+	}).(pulumi.StringOutput)
 }
 
 func initExplicitWebRefs(meta core.ResourceMeta, spec WebApp) webAppRefs {
@@ -285,14 +309,43 @@ func createScopedProjectEnvVars(
 	if meta.Environment.IsPreview() {
 		return nil
 	}
-	for _, k := range sortedMapKeys(resolved.Env) {
-		if err := createSingleProjectEnvVar(ctx, name, k, resolved.Env[k], false, meta, spec, refs, res); err != nil {
+	skipKeys := blobManagedProjectEnvKeys(meta.Environment, spec.Links)
+	if err := registerProjectEnvMap(ctx, name, resolved.Env, false, skipKeys, meta, spec, refs, res); err != nil {
+		return err
+	}
+	return registerProjectEnvMap(ctx, name, resolved.Secrets, true, skipKeys, meta, spec, refs, res)
+}
+
+func registerProjectEnvMap(
+	ctx *pulumi.Context,
+	name string,
+	vars map[string]pulumi.StringOutput,
+	isSecret bool,
+	skipKeys map[string]bool,
+	meta core.ResourceMeta,
+	spec WebApp,
+	refs webAppRefs,
+	res *WebAppResource,
+) error {
+	for _, k := range sortedMapKeys(vars) {
+		if skipKeys[k] {
+			continue
+		}
+		if err := createSingleProjectEnvVar(ctx, name, k, vars[k], isSecret, meta, spec, refs, res); err != nil {
 			return err
 		}
 	}
-	for _, k := range sortedMapKeys(resolved.Secrets) {
-		if err := createSingleProjectEnvVar(ctx, name, k, resolved.Secrets[k], true, meta, spec, refs, res); err != nil {
-			return err
+	return nil
+}
+
+func blobManagedProjectEnvKeys(env core.Environment, links []core.Resource) map[string]bool {
+	for _, link := range links {
+		if link != nil && link.Link().Kind == "vercel-blob" {
+			skip := map[string]bool{"BLOB_READ_WRITE_TOKEN": true}
+			if env == core.EnvStage {
+				skip["BLOB_BASE_URL"] = true
+			}
+			return skip
 		}
 	}
 	return nil

@@ -135,6 +135,7 @@ func TestKindeOidcApp(t *testing.T) {
 			})
 
 			t.Run("when destroying preview-pr-5 twice, then shared dev and prod Kinde applications remain active", func(t *testing.T) {
+				h.SkipIfKeep(t)
 				// Arrange / Act.
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-5", "--yes", "--non-interactive", "--skip-preview")
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-5", "--yes", "--non-interactive", "--skip-preview")
@@ -151,13 +152,18 @@ func TestKindeOidcApp(t *testing.T) {
 
 func prepareKindeSandboxApp(t *testing.T, tenant, vProj, appProject, teamSlug string) (string, string) {
 	t.Helper()
+	redirects, logouts := expectedInitialKindeURLs(tenant, vProj, teamSlug)
+	return prepareKindeSandboxWithURLs(t, tenant, appProject, redirects, logouts)
+}
+
+func prepareKindeSandboxWithURLs(t *testing.T, tenant, appProject string, redirects, logouts []string) (string, string) {
+	t.Helper()
 	issuer, tok := kindeMgmtToken(t, tenant)
 	apps := listOpenBaseKindeApps(t, issuer, tok)
 	if len(apps) == 0 {
 		return "", "openbase-e2e-" + appProject
 	}
 	id, name := apps[0].ID, apps[0].Name
-	redirects, logouts := expectedInitialKindeURLs(tenant, vProj, teamSlug)
 	putKindeURLs(t, issuer, tok, id, "auth_redirect_urls", redirects)
 	putKindeURLs(t, issuer, tok, id, "auth_logout_urls", logouts)
 	return id, name

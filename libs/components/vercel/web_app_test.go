@@ -6,6 +6,7 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
+	"github.com/cloudvoyant/openbase/libs/components/core"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
 )
 
@@ -88,6 +89,37 @@ func TestVercelWebApp(t *testing.T) {
 			if !errors.Is(err, vercel.ErrProjectSourceRequired) {
 				t.Fatalf("expected ErrProjectSourceRequired, got %v", err)
 			}
+		})
+
+		t.Run("when linking BlobStore into a dev WebApp, then it skips duplicate BLOB_READ_WRITE_TOKEN ProjectEnvironmentVariable while keeping BLOB_PREFIX", func(t *testing.T) {
+			// Arrange.
+			mocks := newVercelMocks()
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				blobs, err := vercel.BlobStore{
+					Name:               "uploads",
+					Project:            "storefront",
+					Environment:        "dev",
+					SharedStackRef:     "org/storefront/shared",
+					BlobReadWriteToken: pulumi.String("vercel_blob_rw_tok"),
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				_, err = vercel.WebApp{
+					Name:           "web",
+					Project:        "storefront",
+					Environment:    "dev",
+					Links:          []core.Resource{blobs},
+					SharedStackRef: "org/storefront/shared",
+				}.Register(ctx)
+				return err
+			}, pulumi.WithMocks("storefront", "dev", mocks))
+
+			// Assert.
+			requireVercelNoErr(t, err)
+			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 3)
 		})
 	})
 }

@@ -81,6 +81,7 @@ func (m *vercelMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.P
 			"vercelProjectName":        resource.NewStringProperty("openbase-storefront"),
 			"teamSlug":                 resource.NewStringProperty("cloudvoyant"),
 			"stageCustomEnvironmentId": resource.NewStringProperty("env_stage_ref"),
+			"blobStoreId":              resource.NewStringProperty("store_AbcXyz"),
 		})
 	}
 	return id, outs, nil

@@ -117,6 +117,7 @@ func TestNeonDatabase(t *testing.T) {
 				})
 
 				t.Run("when destroying preview-pr-1 twice, then it deletes the Neon branch (404) idempotently while keeping dev intact", func(t *testing.T) {
+					h.SkipIfKeep(t)
 					// Arrange / Act.
 					h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-1", "--yes", "--non-interactive", "--skip-preview")
 					h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-1", "--yes", "--non-interactive", "--skip-preview")

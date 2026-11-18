@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -158,6 +159,7 @@ func TestGCPBucket(t *testing.T) {
 				})
 
 				t.Run("when destroying preview-pr-1 twice, then it deletes the preview bucket (404) idempotently while keeping dev intact", func(t *testing.T) {
+					h.SkipIfKeep(t)
 					// Arrange / Act.
 					h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-1", "--yes", "--non-interactive", "--skip-preview")
 					h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-1", "--yes", "--non-interactive", "--skip-preview")
@@ -234,6 +236,14 @@ func assertBucketAbsent(t *testing.T, bucketName string) {
 
 func assertRemoteStateExists(t *testing.T, backendURL, stack string) {
 	t.Helper()
+	if strings.HasPrefix(backendURL, "file://") {
+		stateRoot := strings.TrimPrefix(backendURL, "file://")
+		matches, _ := filepath.Glob(filepath.Join(stateRoot, ".pulumi", "stacks", "*", stack+".json"))
+		if len(matches) == 0 {
+			t.Fatalf("expected stack file %s.json under %s", stack, stateRoot)
+		}
+		return
+	}
 	lsOut := runCommand(t, repositoryRoot(t), "gcloud", "storage", "ls", backendURL+"/.pulumi/stacks/**")
 	assertContains(t, lsOut, stack+".json")
 }

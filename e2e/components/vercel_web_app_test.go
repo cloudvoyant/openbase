@@ -75,6 +75,9 @@ func TestVercelWebApp(t *testing.T) {
 			previewDeployID := h.Output(t, "preview-pr-7", "deploymentId")
 			stageURL := h.Output(t, "stage", "url")
 			prodURL := h.Output(t, "prod", "url")
+			h.RecordLiveURL("stage", stageURL)
+			h.RecordLiveURL("prod", prodURL)
+			h.RecordLiveURL("preview-pr-7", previewURL)
 
 			t.Run("when probing stage and prod aliases, then squat-proof <project>-<team>.vercel.app hosts serve target-scoped env vars", func(t *testing.T) {
 				// Arrange / Act.
@@ -113,6 +116,7 @@ func TestVercelWebApp(t *testing.T) {
 			})
 
 			t.Run("when destroying preview-pr-7 twice, then the preview Deployment and Alias return 404", func(t *testing.T) {
+				h.SkipIfKeep(t)
 				// Arrange / Act.
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-7", "--yes", "--non-interactive", "--skip-preview")
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-7", "--yes", "--non-interactive", "--skip-preview")

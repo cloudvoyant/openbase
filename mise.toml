@@ -30,10 +30,12 @@ run = [
 ]
 
 [tasks.e2e]
-description = "Run end-to-end suites"
-run = [
-  "mise run '//e2e/components:e2e'",
-]
+description = "Run E2E suite(s): mise run e2e [file_or_suite] [--no-cleanup | --keep | --offline]"
+run = "sh scripts/e2e-run.sh"
+
+[tasks."e2e:cleanup"]
+description = "Destroy leftover/retained E2E stacks from e2e/outputs/components/*/run-manifest.json"
+run = "sh scripts/e2e-cleanup.sh"
 
 [tasks."e2e:components"]
 description = "Run components E2E suite"
@@ -63,6 +65,12 @@ run = [
 description = "Run live Vercel BlobStore and WebApp E2E suites"
 run = [
   "mise run '//e2e/components:e2e:vercel'",
+]
+
+[tasks."e2e:apps"]
+description = "Run live full-stack Vercel+Neon+Kinde and GCP+Neon+Kinde app E2E suites"
+run = [
+  "mise run '//e2e/components:e2e:apps'",
 ]
 
 [tasks."e2e:live"]

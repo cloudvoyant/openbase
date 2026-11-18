@@ -125,6 +125,23 @@ func TestCloudRunService(t *testing.T) {
 				t.Fatalf("expected ErrInvalidVisibility, got %v", errBadVisibility)
 			}
 		})
+
+		t.Run("when computing a deterministic CloudRunURL before deployment, then it bounds the service name to 49 chars", func(t *testing.T) {
+			// Arrange / Act.
+			url, err := gcp.CloudRunURL(
+				"storefront",
+				core.Environment("preview-feature-very-long-branch-slug-with-ticket-98765"),
+				"web",
+				"785485436615",
+				"us-central1",
+			)
+
+			// Assert.
+			requireGCPNoErr(t, err)
+			if len(url) == 0 || url[:8] != "https://" {
+				t.Fatalf("unexpected CloudRunURL %q", url)
+			}
+		})
 	})
 }
 

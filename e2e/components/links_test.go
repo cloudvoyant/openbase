@@ -75,6 +75,7 @@ func TestLinks(t *testing.T) {
 			h.Pulumi(t, previewEnv, "up", "--stack", "preview-pr-99", "--yes", "--non-interactive", "--skip-preview")
 
 			webURL := h.Output(t, "preview-pr-99", "webUrl")
+			h.RecordLiveURL("preview-pr-99", webURL)
 			ordersURL := h.Output(t, "preview-pr-99", "ordersUrl")
 			previewSvc := h.Output(t, "preview-pr-99", "ordersServiceName")
 			previewBucket := h.Output(t, "preview-pr-99", "bucketName")
@@ -110,6 +111,7 @@ func TestLinks(t *testing.T) {
 			})
 
 			t.Run("when destroying preview-pr-99 twice, then preview resources across GCP, Neon, and Vercel return 404", func(t *testing.T) {
+				h.SkipIfKeep(t)
 				// Arrange / Act.
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-99", "--yes", "--non-interactive", "--skip-preview")
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-99", "--yes", "--non-interactive", "--skip-preview")

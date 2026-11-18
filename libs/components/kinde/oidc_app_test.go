@@ -88,6 +88,33 @@ func TestKindeOidcApp(t *testing.T) {
 				t.Fatalf("expected ErrOidcSourceRequired, got %v", errMissingOidcSrc)
 			}
 		})
+
+		t.Run("when resolving credentials and host parts via SharedStackRef, then secret clientSecret and callback URL resolve cleanly", func(t *testing.T) {
+			// Arrange.
+			secCh := make(chan string, 1)
+			redirCh := make(chan string, 1)
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				app, e := kinde.OidcApp{
+					Name:           "oidc",
+					Project:        "storefront",
+					Environment:    "preview-pr-8",
+					SharedStackRef: "organization/storefront/shared",
+				}.Register(ctx)
+				if e != nil {
+					return e
+				}
+				app.Link().Secrets["KINDE_CLIENT_SECRET"].ApplyT(func(v string) string { secCh <- v; return v })
+				app.Link().Env["KINDE_REDIRECT_URL"].ApplyT(func(v string) string { redirCh <- v; return v })
+				return nil
+			}, pulumi.WithMocks("storefront", "preview-pr-8", newKindeMocks()))
+
+			// Assert.
+			requireKindeNoErr(t, err)
+			assertKindeEq(t, "SharedStackRef secret", <-secCh, "ref_dev_secret")
+			assertKindeEq(t, "SharedStackRef redirect", <-redirCh, "https://openbase-storefront-pr-8-cloudvoyant.vercel.app/api/auth/kinde_callback")
+		})
 	})
 }
 
@@ -128,6 +155,15 @@ func (m *kindeMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Pr
 	if a.TypeToken == "kinde:index/application:Application" {
 		outs["clientId"] = resource.NewStringProperty(a.Name + "_cid")
 		outs["clientSecret"] = resource.NewStringProperty(a.Name + "_csec")
+	}
+	if a.TypeToken == "pulumi:pulumi:StackReference" {
+		outs["outputs"] = resource.NewObjectProperty(resource.PropertyMap{
+			"devIssuerUrl":      resource.NewStringProperty("https://dev-ref.kinde.com"),
+			"devClientId":       resource.NewStringProperty("ref_dev_cid"),
+			"devClientSecret":   resource.NewStringProperty("ref_dev_secret"),
+			"vercelProjectName": resource.NewStringProperty("openbase-storefront"),
+			"teamSlug":          resource.NewStringProperty("cloudvoyant"),
+		})
 	}
 	return a.Name + "_id", outs, nil
 }

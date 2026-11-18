@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -16,28 +17,52 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// LiveStackHarness manages an isolated temporary Pulumi consumer checkout, artifact capture, and stack cleanup.
-type LiveStackHarness struct {
-	Dir        string
-	Project    string
-	BackendURL string
-	PulumiHome string
-	OutputDir  string
-	extraEnv   []string
-	order      []string
-	touched    map[string]bool
-	verifiers  []func(t *testing.T)
-	mu         sync.Mutex
-	secrets    []string
+// RunManifest records non-secret stack and workspace metadata under e2e/outputs/components/<Test>/run-manifest.json.
+type RunManifest struct {
+	TestName        string            `json:"testName"`
+	Fixture         string            `json:"fixture"`
+	Project         string            `json:"project"`
+	WorkspaceDir    string            `json:"workspaceDir"`
+	PulumiHome      string            `json:"pulumiHome"`
+	BackendURL      string            `json:"backendUrl"`
+	Stacks          []string          `json:"stacks"`
+	Env             map[string]string `json:"env,omitempty"`
+	LiveURLs        map[string]string `json:"liveUrls,omitempty"`
+	VercelProjectID string            `json:"vercelProjectId,omitempty"`
+	VercelTeamID    string            `json:"vercelTeamId,omitempty"`
+	BlobBaseURL     string            `json:"blobBaseUrl,omitempty"`
+	CleanedUp       bool              `json:"cleanedUp"`
+	UpdatedAt       string            `json:"updatedAt"`
 }
 
-// RequireLiveGCP checks OPENBASE_TEST_GCP/OPENBASE_TEST_LIVE and returns (gcpProject, gsBackend).
+// LiveStackHarness manages an isolated Pulumi consumer checkout, output-dir state, artifact capture, and cleanup.
+type LiveStackHarness struct {
+	TestName        string
+	Fixture         string
+	Dir             string
+	Project         string
+	BackendURL      string
+	PulumiHome      string
+	OutputDir       string
+	Keep            bool
+	extraEnv        []string
+	order           []string
+	touched         map[string]bool
+	liveURLs        map[string]string
+	vercelProjectID string
+	vercelTeamID    string
+	blobBaseURL     string
+	verifiers       []func(t *testing.T)
+	mu              sync.Mutex
+	secrets         []string
+}
+
+// RequireLiveGCP checks OPENBASE_TEST_GCP/OPENBASE_TEST_LIVE and returns (gcpProject, backendOverride).
 func RequireLiveGCP(t *testing.T) (string, string) {
 	t.Helper()
 	if !isLiveEnabled("OPENBASE_TEST_GCP") {
 		t.Skip("set OPENBASE_TEST_GCP=1 or OPENBASE_TEST_LIVE=1 to run against live GCP")
 	}
-	backend := requireRemoteBackend(t)
 	project := os.Getenv("OPENBASE_TEST_GCP_PROJECT")
 	if project == "" {
 		project = os.Getenv("PREMISE_TEST_GCP_PROJECT")
@@ -45,66 +70,97 @@ func RequireLiveGCP(t *testing.T) (string, string) {
 	if project == "" {
 		t.Fatal("set OPENBASE_TEST_GCP_PROJECT (or PREMISE_TEST_GCP_PROJECT) for live GCP E2E")
 	}
-	return project, backend
+	return project, optionalBackendEnv()
 }
 
-// RequireLiveNeon checks OPENBASE_TEST_NEON/OPENBASE_TEST_LIVE and returns gsBackend.
+// RequireLiveNeon checks OPENBASE_TEST_NEON/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveNeon(t *testing.T) string {
 	t.Helper()
 	if !isLiveEnabled("OPENBASE_TEST_NEON") {
 		t.Skip("set OPENBASE_TEST_NEON=1 or OPENBASE_TEST_LIVE=1 to run against live Neon")
 	}
-	backend := requireRemoteBackend(t)
 	requireEnvVars(t, "NEON_API_KEY")
-	return backend
+	return optionalBackendEnv()
 }
 
-// RequireLiveKinde checks OPENBASE_TEST_KINDE/OPENBASE_TEST_LIVE and returns gsBackend.
+// RequireLiveKinde checks OPENBASE_TEST_KINDE/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveKinde(t *testing.T) string {
 	t.Helper()
 	if !isLiveEnabled("OPENBASE_TEST_KINDE") {
 		t.Skip("set OPENBASE_TEST_KINDE=1 or OPENBASE_TEST_LIVE=1 to run against live Kinde")
 	}
-	backend := requireRemoteBackend(t)
 	requireEnvVars(
 		t,
 		"KINDE_DEV_TENANT_DOMAIN", "KINDE_DEV_M2M_CLIENT_ID", "KINDE_DEV_M2M_CLIENT_SECRET",
 		"KINDE_PROD_TENANT_DOMAIN", "KINDE_PROD_M2M_CLIENT_ID", "KINDE_PROD_M2M_CLIENT_SECRET",
 	)
-	return backend
+	return optionalBackendEnv()
 }
 
-// RequireLiveVercel checks OPENBASE_TEST_VERCEL/OPENBASE_TEST_LIVE and returns gsBackend.
+// RequireLiveVercel checks OPENBASE_TEST_VERCEL/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveVercel(t *testing.T) string {
 	t.Helper()
 	if !isLiveEnabled("OPENBASE_TEST_VERCEL") {
 		t.Skip("set OPENBASE_TEST_VERCEL=1 or OPENBASE_TEST_LIVE=1 to run against live Vercel")
 	}
-	backend := requireRemoteBackend(t)
 	requireEnvVars(t, "VERCEL_TOKEN")
-	return backend
+	return optionalBackendEnv()
 }
 
-// NewLiveHarness copies fixtureName into t.TempDir(), prepares e2e/outputs/components/<Test>, logs in, and registers t.Cleanup.
+// NewLiveHarness materializes fixtureName + Pulumi state under e2e/outputs/components/<Test>, logs in, and registers cleanup.
 func NewLiveHarness(t *testing.T, fixtureName, pulumiProject, baseBackend string, extraEnv ...string) *LiveStackHarness {
 	t.Helper()
-	dir := copyFixture(t, fixtureName)
-	pulumiHome := t.TempDir()
-	runBackend := prepareBackendPath(t, baseBackend)
-	outDir := prepareArtifactDir(t)
+	suiteTest, _, _ := strings.Cut(t.Name(), "/")
+	outDir := prepareArtifactDir(t, suiteTest)
+	dir := copyFixtureTo(t, fixtureName, filepath.Join(outDir, "workspace"))
+	pulumiHome := filepath.Join(outDir, "pulumi-home")
+	if err := os.MkdirAll(pulumiHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runBackend := prepareBackendPath(t, outDir, baseBackend)
 	h := &LiveStackHarness{
+		TestName:   suiteTest,
+		Fixture:    fixtureName,
 		Dir:        dir,
 		Project:    pulumiProject,
 		BackendURL: runBackend,
 		PulumiHome: pulumiHome,
 		OutputDir:  outDir,
+		Keep:       isKeepEnabled(),
 		extraEnv:   extraEnv,
 		touched:    map[string]bool{},
+		liveURLs:   map[string]string{},
 	}
 	h.seedAmbientSecrets(extraEnv)
+	h.writeWorkspaceMiseFile(t)
 	h.Pulumi(t, nil, "login", runBackend)
 	t.Cleanup(func() { h.cleanup(t) })
 	return h
+}
+
+// SkipIfKeep skips destructive teardown subtests when OPENBASE_E2E_KEEP=1 so live deployments remain inspectable.
+func (h *LiveStackHarness) SkipIfKeep(t *testing.T) {
+	t.Helper()
+	if h.Keep {
+		t.Skip("skipping destructive preview teardown check because OPENBASE_E2E_KEEP=1 is set")
+	}
+}
+
+// RecordLiveURL records a deployed stack URL for retained-run output and run-manifest.json.
+func (h *LiveStackHarness) RecordLiveURL(stack, rawURL string) {
+	if rawURL == "" {
+		return
+	}
+	h.liveURLs[stack] = rawURL
+	h.saveManifest(false)
+}
+
+// RecordVercelBlobStore records non-secret Vercel IDs so e2e:cleanup can purge blobs before destroying shared.
+func (h *LiveStackHarness) RecordVercelBlobStore(projectID, teamID, blobBaseURL string) {
+	h.vercelProjectID = projectID
+	h.vercelTeamID = teamID
+	h.blobBaseURL = blobBaseURL
+	h.saveManifest(false)
 }
 
 // RegisterSecret registers a sensitive value so command transcripts and saved artifacts redact it.
@@ -139,7 +195,7 @@ func (h *LiveStackHarness) WriteJSONArtifact(t *testing.T, filename string, v an
 	return h.WriteArtifact(t, filename, string(raw)+"\n")
 }
 
-// InitStack initializes stack and records it for reverse-order cleanup.
+// InitStack initializes stack and records it in run-manifest.json for reverse-order cleanup.
 func (h *LiveStackHarness) InitStack(t *testing.T, stack string) {
 	t.Helper()
 	if !h.touched[stack] {
@@ -147,6 +203,7 @@ func (h *LiveStackHarness) InitStack(t *testing.T, stack string) {
 		h.order = append(h.order, stack)
 	}
 	h.Pulumi(t, nil, "stack", "init", stack, "--non-interactive")
+	h.saveManifest(false)
 }
 
 // Pulumi executes a pulumi CLI command expected to succeed and appends to commands.log.
@@ -192,8 +249,15 @@ var ambientSecretEnvKeys = []string{
 	"OPENBASE_TEST_SECRET_VALUE",
 }
 
-func prepareBackendPath(t *testing.T, baseBackend string) string {
+func prepareBackendPath(t *testing.T, outDir, baseBackend string) string {
 	t.Helper()
+	if strings.TrimSpace(baseBackend) == "" {
+		stateDir := filepath.Join(outDir, "state")
+		if err := os.MkdirAll(stateDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return "file://" + filepath.ToSlash(stateDir)
+	}
 	runBackend := fmt.Sprintf("%s/run-%d", strings.TrimRight(baseBackend, "/"), time.Now().UnixNano())
 	if strings.HasPrefix(runBackend, "file://") {
 		if err := os.MkdirAll(strings.TrimPrefix(runBackend, "file://"), 0o755); err != nil {
@@ -203,10 +267,10 @@ func prepareBackendPath(t *testing.T, baseBackend string) string {
 	return runBackend
 }
 
-func prepareArtifactDir(t *testing.T) string {
+func prepareArtifactDir(t *testing.T, suiteTest string) string {
 	t.Helper()
-	suiteTest, _, _ := strings.Cut(t.Name(), "/")
 	outDir := filepath.Join(repositoryRoot(t), "e2e", "outputs", "components", suiteTest)
+	assertNoUncleanManifest(t, outDir)
 	if err := os.RemoveAll(outDir); err != nil {
 		t.Fatalf("clean artifact dir: %v", err)
 	}
@@ -214,6 +278,84 @@ func prepareArtifactDir(t *testing.T) string {
 		t.Fatalf("create artifact dir: %v", err)
 	}
 	return outDir
+}
+
+func assertNoUncleanManifest(t *testing.T, outDir string) {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join(outDir, "run-manifest.json"))
+	if err != nil {
+		return
+	}
+	var m RunManifest
+	if json.Unmarshal(raw, &m) == nil && !m.CleanedUp && len(m.Stacks) > 0 {
+		t.Fatalf(
+			"leftover live stacks found in %s (%s); run 'mise run e2e:cleanup' before re-running",
+			outDir,
+			strings.Join(m.Stacks, ", "),
+		)
+	}
+}
+
+func (h *LiveStackHarness) writeWorkspaceMiseFile(t *testing.T) {
+	t.Helper()
+	var b strings.Builder
+	b.WriteString("[env]\n")
+	b.WriteString("GOWORK = \"off\"\n")
+	_, _ = fmt.Fprintf(&b, "PULUMI_HOME = %q\n", h.PulumiHome)
+	_, _ = fmt.Fprintf(&b, "PULUMI_BACKEND_URL = %q\n", h.BackendURL)
+	b.WriteString("PULUMI_CONFIG_PASSPHRASE = \"\"\n")
+	b.WriteString("PULUMI_SKIP_UPDATE_CHECK = \"true\"\n")
+	nonSecret := nonSecretEnvMap(h.extraEnv)
+	keys := make([]string, 0, len(nonSecret))
+	for k := range nonSecret {
+		keys = append(keys, k)
+	}
+	slices.Sort(keys)
+	for _, k := range keys {
+		_, _ = fmt.Fprintf(&b, "%s = %q\n", k, nonSecret[k])
+	}
+	_ = os.WriteFile(filepath.Join(h.Dir, "mise.toml"), []byte(b.String()), 0o644)
+}
+
+func (h *LiveStackHarness) saveManifest(cleanedUp bool) {
+	m := RunManifest{
+		TestName:        h.TestName,
+		Fixture:         h.Fixture,
+		Project:         h.Project,
+		WorkspaceDir:    h.Dir,
+		PulumiHome:      h.PulumiHome,
+		BackendURL:      h.BackendURL,
+		Stacks:          append([]string{}, h.order...),
+		Env:             nonSecretEnvMap(h.extraEnv),
+		LiveURLs:        h.liveURLs,
+		VercelProjectID: h.vercelProjectID,
+		VercelTeamID:    h.vercelTeamID,
+		BlobBaseURL:     h.blobBaseURL,
+		CleanedUp:       cleanedUp,
+		UpdatedAt:       time.Now().UTC().Format(time.RFC3339),
+	}
+	raw, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(h.OutputDir, "run-manifest.json"), append(raw, '\n'), 0o644)
+}
+
+func nonSecretEnvMap(entries []string) map[string]string {
+	out := map[string]string{}
+	for _, kv := range entries {
+		k, v, ok := strings.Cut(kv, "=")
+		if !ok || v == "" || isSensitiveKey(k) {
+			continue
+		}
+		out[k] = v
+	}
+	return out
+}
+
+func isSensitiveKey(key string) bool {
+	u := strings.ToUpper(key)
+	return strings.Contains(u, "SECRET") || strings.Contains(u, "TOKEN") || strings.Contains(u, "PASSWORD") || strings.Contains(u, "KEY")
 }
 
 func (h *LiveStackHarness) seedAmbientSecrets(extraEnv []string) {
@@ -228,11 +370,7 @@ func (h *LiveStackHarness) seedAmbientSecrets(extraEnv []string) {
 func (h *LiveStackHarness) seedEnvSliceSecrets(entries []string) {
 	for _, kv := range entries {
 		k, v, ok := strings.Cut(kv, "=")
-		if !ok || v == "" {
-			continue
-		}
-		upper := strings.ToUpper(k)
-		if strings.Contains(upper, "SECRET") || strings.Contains(upper, "TOKEN") || strings.Contains(upper, "PASSWORD") {
+		if ok && v != "" && isSensitiveKey(k) {
 			h.RegisterSecret(v)
 		}
 	}
@@ -243,7 +381,7 @@ func (h *LiveStackHarness) maybeRegisterSecretOutput(args []string, val string) 
 		return
 	}
 	lowerKey := strings.ToLower(args[2])
-	if strings.Contains(lowerKey, "secret") || strings.Contains(lowerKey, "token") || strings.HasPrefix(val, "postgres") {
+	if isSensitiveKey(lowerKey) || strings.HasPrefix(val, "postgres") {
 		h.RegisterSecret(val)
 	}
 }
@@ -289,25 +427,19 @@ func (h *LiveStackHarness) appendTranscript(testName string, args []string, exit
 }
 
 func hasArg(args []string, target string) bool {
-	for _, a := range args {
-		if a == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(args, target)
 }
 
 func isLiveEnabled(flag string) bool {
 	return os.Getenv("OPENBASE_TEST_LIVE") == "1" || os.Getenv(flag) == "1"
 }
 
-func requireRemoteBackend(t *testing.T) string {
-	t.Helper()
-	backend := strings.TrimRight(os.Getenv("PULUMI_BACKEND_URL"), "/")
-	if !strings.HasPrefix(backend, "gs://") {
-		t.Fatal("set PULUMI_BACKEND_URL to an existing gs:// state bucket prefix")
-	}
-	return backend
+func isKeepEnabled() bool {
+	return os.Getenv("OPENBASE_E2E_KEEP") == "1" || os.Getenv("OPENBASE_TEST_KEEP") == "1"
+}
+
+func optionalBackendEnv() string {
+	return strings.TrimRight(os.Getenv("PULUMI_BACKEND_URL"), "/")
 }
 
 func requireEnvVars(t *testing.T, keys ...string) {
@@ -336,15 +468,40 @@ func (h *LiveStackHarness) env(callEnv []string) []string {
 
 func (h *LiveStackHarness) cleanup(t *testing.T) {
 	t.Helper()
+	if h.Keep {
+		h.saveManifest(false)
+		h.logRetainedSummary(t)
+		return
+	}
+	allOK := true
 	for i := len(h.order) - 1; i >= 0; i-- {
-		h.destroyStackForCleanup(t, h.order[i])
+		if !h.destroyStackForCleanup(t, h.order[i]) {
+			allOK = false
+		}
+	}
+	if allOK {
+		h.saveManifest(true)
 	}
 	for _, verify := range h.verifiers {
 		verify(t)
 	}
 }
 
-func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) {
+func (h *LiveStackHarness) logRetainedSummary(t *testing.T) {
+	t.Helper()
+	t.Logf("=== RETAINED LIVE E2E ENVIRONMENT (%s) ===", h.TestName)
+	t.Logf("Workspace : %s", h.Dir)
+	t.Logf("State     : %s", h.BackendURL)
+	t.Logf("Stacks    : %s", strings.Join(h.order, ", "))
+	for _, stack := range h.order {
+		if u, ok := h.liveURLs[stack]; ok {
+			t.Logf("URL [%s] : %s", stack, u)
+		}
+	}
+	t.Logf("Cleanup   : mise run e2e:cleanup")
+}
+
+func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) bool {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Minute)
 	defer cancel()
@@ -359,10 +516,11 @@ func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) {
 	destroy.Env = baseEnv
 	if out, err := destroy.CombinedOutput(); err != nil {
 		t.Errorf("cleanup destroy stack %s: %v\n%s", stack, err, h.redact(string(out)))
-		return
+		return false
 	}
 	rm := exec.CommandContext(ctx, "pulumi", "stack", "rm", stack, "--yes", "--non-interactive")
 	rm.Dir = h.Dir
 	rm.Env = baseEnv
 	_ = rm.Run()
+	return true
 }

@@ -35,7 +35,9 @@ func TestVercelBlobStore(t *testing.T) {
 
 	var vercelProjectID, blobStoreID, blobBaseURL, blobRWToken string
 	t.Cleanup(func() {
-		purgeTestBlobs(blobBaseURL, blobRWToken)
+		if !h.Keep {
+			purgeTestBlobs(blobBaseURL, blobRWToken)
+		}
 	})
 	h.OnCleanupVerify(func(t *testing.T) {
 		assertVercelBlobCleanup(t, teamID, vercelProjectID, blobStoreID)
@@ -54,6 +56,7 @@ func TestVercelBlobStore(t *testing.T) {
 			blobBaseURL = h.Output(t, "shared", "blobBaseUrl")
 			blobRWToken = fetchProjectBlobRWToken(t, teamID, vercelProjectID)
 			h.RegisterSecret(blobRWToken)
+			h.RecordVercelBlobStore(vercelProjectID, teamID, blobBaseURL)
 
 			stackEnv := []string{
 				"OPENBASE_TEST_BLOB_STORE_ID=" + blobStoreID,
@@ -107,6 +110,7 @@ func TestVercelBlobStore(t *testing.T) {
 			})
 
 			t.Run("when destroying preview-pr-3 twice, then dev/ seed blobs remain intact", func(t *testing.T) {
+				h.SkipIfKeep(t)
 				// Arrange / Act.
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-3", "--yes", "--non-interactive", "--skip-preview")
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-3", "--yes", "--non-interactive", "--skip-preview")

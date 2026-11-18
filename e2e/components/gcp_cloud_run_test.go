@@ -66,6 +66,7 @@ func TestGCPCloudRunService(t *testing.T) {
 				h.Pulumi(t, envRevA, "up", "--stack", stack, "--yes", "--non-interactive", "--skip-preview")
 			}
 			previewPubURL := h.Output(t, longPreviewStack, "publicUrl")
+			h.RecordLiveURL(longPreviewStack, previewPubURL)
 			previewIntURL := h.Output(t, longPreviewStack, "internalUrl")
 			previewSAID := h.Output(t, longPreviewStack, "publicSAId")
 			previewSAEmail = h.Output(t, longPreviewStack, "publicSAEmail")
@@ -128,6 +129,7 @@ func TestGCPCloudRunService(t *testing.T) {
 			})
 
 			t.Run("when destroying the preview stack twice, then it deletes the Cloud Run service and SA (404) idempotently", func(t *testing.T) {
+				h.SkipIfKeep(t)
 				// Arrange / Act.
 				h.Pulumi(t, nil, "destroy", "--stack", longPreviewStack, "--yes", "--non-interactive", "--skip-preview")
 				h.Pulumi(t, nil, "destroy", "--stack", longPreviewStack, "--yes", "--non-interactive", "--skip-preview")

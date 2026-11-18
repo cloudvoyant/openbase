@@ -153,13 +153,13 @@ func loadSharedBlobStackRef(
 		return resolvedBlobRefs{}, err
 	}
 	if !isOutSet(refs.storeID) {
-		refs.storeID = sr.GetStringOutput(pulumi.String("blobStoreId"))
+		refs.storeID = optionalVercelStackOutput(sr, "blobStoreId")
 	}
 	if !isOutSet(refs.projectID) {
-		refs.projectID = sr.GetStringOutput(pulumi.String("projectId"))
+		refs.projectID = preferVercelStackOutput(sr, "vercelProjectId", "projectId")
 	}
 	if !isOutSet(refs.stageEnvID) {
-		refs.stageEnvID = sr.GetStringOutput(pulumi.String("stageCustomEnvironmentId"))
+		refs.stageEnvID = optionalVercelStackOutput(sr, "stageCustomEnvironmentId")
 	}
 	return refs, nil
 }
