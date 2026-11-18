@@ -122,7 +122,7 @@ func TestVercelWebApp(t *testing.T) {
 			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 3)
 		})
 
-		t.Run("when deploying with BaseDomain and ExtraDomains, then it binds {project}-{previewId}.{baseDomain} plus extra custom domains and aliases", func(t *testing.T) {
+		t.Run("when deploying preview with BaseDomain and ExtraDomains, then it binds {project}-{previewId}.{baseDomain} and extra aliases without registering Production ProjectDomains", func(t *testing.T) {
 			// Arrange.
 			mocks := newVercelMocks()
 			urlCh := make(chan string, 1)
@@ -148,7 +148,7 @@ func TestVercelWebApp(t *testing.T) {
 			// Assert.
 			requireVercelNoErr(t, err)
 			assertVercelEq(t, "preview baseDomain URL", <-urlCh, "https://storefront-pr-22.vercel.cloudvoyant.io")
-			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
+			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 0)
 			mocks.assertCount(t, "vercel:index/alias:Alias", 2)
 		})
 

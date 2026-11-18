@@ -109,7 +109,7 @@ func TestVercelComposite(t *testing.T) {
 				t.Fatalf("BaseDomain preview URL = %q", got)
 			}
 			mocks.assertCount(t, "vercel:index/alias:Alias", 2)
-			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
+			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 0)
 		})
 	})
 }

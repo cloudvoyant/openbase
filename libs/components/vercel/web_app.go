@@ -545,9 +545,6 @@ func bindWebAppAliases(
 	aliasHost pulumi.StringOutput,
 	res *WebAppResource,
 ) error {
-	if err := ensureEnvScopedProjectDomain(ctx, name, meta, spec, refs, aliasHost, res); err != nil {
-		return err
-	}
 	primary, err := vercelprov.NewAlias(ctx, name+"-alias", &vercelprov.AliasArgs{
 		DeploymentId: dep.ID(),
 		Alias:        aliasHost,
@@ -558,55 +555,28 @@ func bindWebAppAliases(
 	}
 	res.Alias = primary
 	res.Aliases = append(res.Aliases, primary)
-	return attachExtraDeploymentAliases(ctx, name, spec, refs, dep, res)
-}
-
-func ensureEnvScopedProjectDomain(
-	ctx *pulumi.Context,
-	name string,
-	meta core.ResourceMeta,
-	spec WebApp,
-	refs webAppRefs,
-	aliasHost pulumi.StringOutput,
-	res *WebAppResource,
-) error {
-	needsCustomDomain := core.NormalizeDomain(spec.BaseDomain) != "" || !strings.HasSuffix(explicitAliasOverride(meta.Environment, spec), ".vercel.app") && explicitAliasOverride(meta.Environment, spec) != ""
-	sharedAlreadyOwns := meta.Environment == core.EnvProd ||
-		(meta.Environment == core.EnvStage && !spec.SkipStageEnvironment) ||
-		(meta.Environment == core.EnvDev && usesDevCustomEnv(spec))
-	if !needsCustomDomain || sharedAlreadyOwns {
-		return nil
-	}
-	pd, err := vercelprov.NewProjectDomain(ctx, name+"-custom-domain", &vercelprov.ProjectDomainArgs{
-		ProjectId:    refs.projectID,
-		TeamId:       optionalVercelStr(spec.TeamID),
-		Domain:       aliasHost,
-		WaitForReady: pulumi.Bool(false),
-	}, pulumi.Parent(res))
-	if err != nil {
-		return err
-	}
-	res.CustomDomains = append(res.CustomDomains, pd)
-	return nil
+	return attachExtraDeploymentAliases(ctx, name, meta, spec, refs, dep, res)
 }
 
 func attachExtraDeploymentAliases(
 	ctx *pulumi.Context,
 	name string,
+	meta core.ResourceMeta,
 	spec WebApp,
 	refs webAppRefs,
 	dep *vercelprov.Deployment,
 	res *WebAppResource,
 ) error {
+	attachProjDom, customEnvID := extraProjectDomainTarget(meta.Environment, spec, refs)
 	for idx, dom := range core.DedupeDomains(spec.ExtraDomains) {
-		var opts []pulumi.ResourceOption
-		opts = append(opts, pulumi.Parent(res))
-		if !strings.HasSuffix(dom, ".vercel.app") {
+		opts := []pulumi.ResourceOption{pulumi.Parent(res)}
+		if attachProjDom && !strings.HasSuffix(dom, ".vercel.app") {
 			pd, err := vercelprov.NewProjectDomain(ctx, fmt.Sprintf("%s-extra-domain-%d", name, idx), &vercelprov.ProjectDomainArgs{
-				ProjectId:    refs.projectID,
-				TeamId:       optionalVercelStr(spec.TeamID),
-				Domain:       pulumi.String(dom),
-				WaitForReady: pulumi.Bool(false),
+				ProjectId:           refs.projectID,
+				TeamId:              optionalVercelStr(spec.TeamID),
+				Domain:              pulumi.String(dom),
+				CustomEnvironmentId: customEnvID,
+				WaitForReady:        pulumi.Bool(false),
 			}, pulumi.Parent(res))
 			if err != nil {
 				return err
@@ -625,6 +595,19 @@ func attachExtraDeploymentAliases(
 		res.Aliases = append(res.Aliases, al)
 	}
 	return nil
+}
+
+func extraProjectDomainTarget(env core.Environment, spec WebApp, refs webAppRefs) (bool, pulumi.StringPtrInput) {
+	switch {
+	case env == core.EnvProd:
+		return true, nil
+	case env == core.EnvStage && !spec.SkipStageEnvironment && isOutSet(refs.stageEnvID):
+		return true, nonEmptyStringPtrOutput(refs.stageEnvID)
+	case env == core.EnvDev && usesDevCustomEnv(spec) && isOutSet(refs.devEnvID):
+		return true, nonEmptyStringPtrOutput(refs.devEnvID)
+	default:
+		return false, nil
+	}
 }
 
 func buildDeploymentArgs(
