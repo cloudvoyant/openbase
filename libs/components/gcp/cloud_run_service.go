@@ -71,7 +71,9 @@ type CloudRunService struct {
 	MinInstances             *int
 	MaxInstances             *int
 	AllowedMembers           []pulumi.StringInput
+	BaseDomain               string
 	Domain                   string
+	Domains                  []string
 	StartupProbe             *ProbeConfig
 	LivenessProbe            *ProbeConfig
 	ExtraLabels              map[string]string
@@ -85,7 +87,10 @@ type CloudRunServiceResource struct {
 	ServiceAccount      *serviceaccount.Account
 	Service             *cloudrunv2.Service
 	DomainMapping       *cloudrun.DomainMapping
+	DomainMappings      []*cloudrun.DomainMapping
 	URL                 pulumi.StringOutput
+	CustomURL           pulumi.StringOutput
+	URLs                pulumi.StringArrayOutput
 	ServiceAccountEmail pulumi.StringOutput
 	ServiceAccountID    string
 }
@@ -124,13 +129,29 @@ func (c CloudRunService) Register(
 
 // CloudRunURL returns the deterministic regional Cloud Run v2 URL for a service before deployment.
 func CloudRunURL(project string, env core.Environment, name, projectNumber, location string) (string, error) {
-	canonical, err := core.CanonicalName(project, env, name)
+	return CloudRunRegionalURL(project, env, name, projectNumber, location, "")
+}
+
+// CloudRunRegionalURL returns the deterministic regional *.run.app URL, accounting for BaseDomain service naming when set.
+func CloudRunRegionalURL(project string, env core.Environment, name, projectNumber, location, baseDomain string) (string, error) {
+	svcName, err := CloudRunServiceName(project, env, name, baseDomain)
 	if err != nil {
 		return "", err
 	}
 	loc := defaultStr(location, "us-central1")
-	svcName := core.BoundedName(canonical, 49)
 	return fmt.Sprintf("https://%s-%s.%s.run.app", svcName, strings.TrimSpace(projectNumber), loc), nil
+}
+
+// CloudRunServiceName returns the Cloud Run v2 service name ("{project}-{envLabel}" when BaseDomain is set, else "{project}-{env}-{name}").
+func CloudRunServiceName(project string, env core.Environment, name, baseDomain string) (string, error) {
+	if core.NormalizeDomain(baseDomain) != "" {
+		return core.HostLabel(project, env, name)
+	}
+	canonical, err := core.CanonicalName(project, env, name)
+	if err != nil {
+		return "", err
+	}
+	return core.BoundedName(canonical, 49), nil
 }
 
 // Private helpers ------------------------------------------------------------
@@ -184,11 +205,13 @@ func buildCloudRunResources(
 		return err
 	}
 	res.Service = svc
-	res.URL = svc.Uri
+	res.CustomURL = computeCustomBaseURL(meta, spec)
+	res.URL = selectPrimaryCloudRunURL(svc.Uri, res.CustomURL, spec)
+	res.URLs = collectCloudRunURLs(svc.Uri, res.CustomURL, spec)
 	if err := configureInvokerIAM(ctx, name, spec, svc, res); err != nil {
 		return err
 	}
-	return createOptionalDomainMapping(ctx, name, meta, spec, svc, res)
+	return createOptionalDomainMappings(ctx, name, meta, spec, svc, res)
 }
 
 func createServiceAccount(
@@ -430,7 +453,10 @@ func createCloudRunV2(
 		StartupProbe:  buildStartupProbe(spec.StartupProbe, port),
 		LivenessProbe: buildLivenessProbe(spec.LivenessProbe, port),
 	}
-	serviceName := core.BoundedName(meta.CanonicalName, 49)
+	serviceName, err := CloudRunServiceName(meta.Project, meta.Environment, meta.Name, spec.BaseDomain)
+	if err != nil {
+		return nil, err
+	}
 	return cloudrunv2.NewService(ctx, name+"-svc", &cloudrunv2.ServiceArgs{
 		Project:            spec.GCPProject,
 		Name:               pulumi.String(serviceName),
@@ -558,7 +584,39 @@ func configureInvokerIAM(
 	return nil
 }
 
-func createOptionalDomainMapping(
+func computeCustomBaseURL(meta core.ResourceMeta, spec CloudRunService) pulumi.StringOutput {
+	if dom, err := core.EnvironmentDomain(meta.Project, meta.Environment, meta.Name, spec.BaseDomain); err == nil && dom != "" {
+		return pulumi.String("https://" + dom).ToStringOutput()
+	}
+	return pulumi.String("").ToStringOutput()
+}
+
+func selectPrimaryCloudRunURL(svcURI, customURL pulumi.StringOutput, spec CloudRunService) pulumi.StringOutput {
+	if core.NormalizeDomain(spec.BaseDomain) != "" {
+		return customURL
+	}
+	return svcURI
+}
+
+func collectCloudRunURLs(svcURI, customURL pulumi.StringOutput, spec CloudRunService) pulumi.StringArrayOutput {
+	mapped := core.DedupeDomains([]string{spec.Domain}, spec.Domains)
+	return pulumi.All(svcURI, customURL).ApplyT(func(vs []any) []string {
+		uri, custom := vs[0].(string), vs[1].(string)
+		var out []string
+		if custom != "" {
+			out = append(out, custom)
+		}
+		for _, d := range mapped {
+			out = append(out, "https://"+d)
+		}
+		if uri != "" {
+			out = append(out, uri)
+		}
+		return out
+	}).(pulumi.StringArrayOutput)
+}
+
+func createOptionalDomainMappings(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
@@ -566,25 +624,35 @@ func createOptionalDomainMapping(
 	svc *cloudrunv2.Service,
 	res *CloudRunServiceResource,
 ) error {
-	if spec.Domain == "" || !meta.Environment.IsPersistent() {
+	domains := core.DedupeDomains([]string{spec.Domain}, spec.Domains)
+	if len(domains) == 0 || !meta.Environment.IsPersistent() {
 		return nil
 	}
-	dm, err := cloudrun.NewDomainMapping(ctx, name+"-domain", &cloudrun.DomainMappingArgs{
-		Project:  svc.Project,
-		Location: svc.Location,
-		Name:     pulumi.String(spec.Domain),
-		Metadata: &cloudrun.DomainMappingMetadataArgs{
-			Namespace: svc.Project,
-			Labels:    core.GCPLabels(meta, spec.ExtraLabels),
-		},
-		Spec: &cloudrun.DomainMappingSpecArgs{
-			RouteName: svc.Name,
-		},
-	}, pulumi.Parent(res))
-	if err != nil {
-		return err
+	for idx, dom := range domains {
+		resName := name + "-domain"
+		if idx > 0 {
+			resName = fmt.Sprintf("%s-domain-%d", name, idx)
+		}
+		dm, err := cloudrun.NewDomainMapping(ctx, resName, &cloudrun.DomainMappingArgs{
+			Project:  svc.Project,
+			Location: svc.Location,
+			Name:     pulumi.String(dom),
+			Metadata: &cloudrun.DomainMappingMetadataArgs{
+				Namespace: svc.Project,
+				Labels:    core.GCPLabels(meta, spec.ExtraLabels),
+			},
+			Spec: &cloudrun.DomainMappingSpecArgs{
+				RouteName: svc.Name,
+			},
+		}, pulumi.Parent(res))
+		if err != nil {
+			return err
+		}
+		if idx == 0 {
+			res.DomainMapping = dm
+		}
+		res.DomainMappings = append(res.DomainMappings, dm)
 	}
-	res.DomainMapping = dm
 	return nil
 }
 
@@ -617,6 +685,8 @@ func registerCloudRunOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *C
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName":       pulumi.String(meta.CanonicalName),
 		"url":                 res.URL,
+		"customUrl":           res.CustomURL,
+		"urls":                res.URLs,
 		"serviceAccountEmail": res.ServiceAccountEmail,
 		"serviceAccountId":    pulumi.String(res.ServiceAccountID),
 	})

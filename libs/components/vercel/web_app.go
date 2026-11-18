@@ -20,7 +20,7 @@ var _ core.StatelessResource = (*WebAppResource)(nil)
 // ErrProjectSourceRequired reports a missing Vercel project reference on WebApp.
 var ErrProjectSourceRequired = errors.New("vercel: shared, sharedStackRef, or vercelProjectId is required")
 
-// WebApp declares a per-environment Vercel WebApp deployment, alias, env vars, and GCP OIDC federation.
+// WebApp declares a per-environment Vercel WebApp deployment, aliases, env vars, and GCP OIDC federation.
 type WebApp struct {
 	Name                     string
 	Project                  string
@@ -36,20 +36,26 @@ type WebApp struct {
 	VercelProjectName        string
 	TeamID                   string
 	TeamSlug                 string
+	BaseDomain               string
+	EnableDevEnvironment     bool
+	SkipStageEnvironment     bool
+	DevCustomEnvironmentID   pulumi.StringInput
 	StageCustomEnvironmentID pulumi.StringInput
 	SourceDir                string
 	PathPrefix               string
 	Framework                string
 	RootDirectory            string
+	DevDomain                string
 	ProdDomain               string
 	StageDomain              string
 	PreviewAlias             string
+	ExtraDomains             []string
 	GCPProject               pulumi.StringPtrInput
 	GCPWorkloadIdentityPool  pulumi.StringInput
 	GCPVercelOIDCProvider    pulumi.StringInput
 }
 
-// WebAppResource is the provisioned Vercel WebApp handle with scoped env vars, GCP WIF identity, Deployment, and Alias.
+// WebAppResource is the provisioned Vercel WebApp handle with scoped env vars, GCP WIF identity, Deployment, and Aliases.
 type WebAppResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
@@ -58,7 +64,10 @@ type WebAppResource struct {
 	EnvVariables        []*vercelprov.ProjectEnvironmentVariable
 	Deployment          *vercelprov.Deployment
 	Alias               *vercelprov.Alias
+	Aliases             []*vercelprov.Alias
+	CustomDomains       []*vercelprov.ProjectDomain
 	URL                 pulumi.StringOutput
+	URLs                pulumi.StringArrayOutput
 	AliasHost           pulumi.StringOutput
 	DeploymentID        pulumi.StringOutput
 	FederatedSAEmail    pulumi.StringOutput
@@ -104,6 +113,8 @@ type webAppRefs struct {
 	projectID   pulumi.StringOutput
 	projectName pulumi.StringOutput
 	teamSlug    pulumi.StringOutput
+	baseDomain  pulumi.StringOutput
+	devEnvID    pulumi.StringOutput
 	stageEnvID  pulumi.StringOutput
 	wifPool     pulumi.StringOutput
 	wifProvider pulumi.StringOutput
@@ -136,7 +147,8 @@ func provisionWebApp(
 	aliasHost := computeAliasHost(meta, spec, refs)
 	res.AliasHost = aliasHost
 	res.URL = pulumi.Sprintf("https://%s", aliasHost)
-	return createOptionalDeploymentAndAlias(ctx, name, meta, spec, refs, resolved, aliasHost, res)
+	res.URLs = computeAllWebAppURLs(aliasHost, spec.ExtraDomains)
+	return createOptionalDeploymentAndAliases(ctx, name, meta, spec, refs, resolved, aliasHost, res)
 }
 
 func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec WebApp) (webAppRefs, error) {
@@ -157,14 +169,27 @@ func applySharedStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spe
 	if !isOutSet(refs.projectID) {
 		refs.projectID = preferVercelStackOutput(sr, "vercelProjectId", "projectId")
 	}
+	if !isOutSet(refs.devEnvID) {
+		refs.devEnvID = optionalVercelStackOutput(sr, "devCustomEnvironmentId")
+	}
 	if !isOutSet(refs.stageEnvID) {
 		refs.stageEnvID = optionalVercelStackOutput(sr, "stageCustomEnvironmentId")
 	}
-	if spec.Shared == nil && spec.VercelProjectName == "" {
+	applyOptionalSharedNamingRefs(refs, sr, spec)
+}
+
+func applyOptionalSharedNamingRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
+	if spec.Shared != nil {
+		return
+	}
+	if spec.VercelProjectName == "" {
 		refs.projectName = optionalVercelStackOutput(sr, "vercelProjectName")
 	}
-	if spec.Shared == nil && spec.TeamSlug == "" {
+	if spec.TeamSlug == "" {
 		refs.teamSlug = optionalVercelStackOutput(sr, "teamSlug")
+	}
+	if spec.BaseDomain == "" {
+		refs.baseDomain = optionalVercelStackOutput(sr, "baseDomain")
 	}
 }
 
@@ -200,6 +225,10 @@ func initExplicitWebRefs(meta core.ResourceMeta, spec WebApp) webAppRefs {
 	vName := defaultVercelStr(spec.VercelProjectName, "openbase-"+meta.Project)
 	refs.projectName = pulumi.String(vName).ToStringOutput()
 	refs.teamSlug = pulumi.String(spec.TeamSlug).ToStringOutput()
+	refs.baseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
+	if spec.DevCustomEnvironmentID != nil {
+		refs.devEnvID = spec.DevCustomEnvironmentID.ToStringOutput()
+	}
 	if spec.StageCustomEnvironmentID != nil {
 		refs.stageEnvID = spec.StageCustomEnvironmentID.ToStringOutput()
 	}
@@ -220,10 +249,14 @@ func applySharedStructWebRefs(refs *webAppRefs, shared *SharedResource) {
 		refs.projectID = shared.ProjectID
 	}
 	refs.projectName = shared.VercelProjectName
-	if !isOutSet(refs.stageEnvID) {
+	refs.teamSlug = shared.TeamSlug
+	refs.baseDomain = shared.BaseDomain
+	if !isOutSet(refs.devEnvID) && shared.DevEnvironment != nil {
+		refs.devEnvID = shared.DevCustomEnvironmentID
+	}
+	if !isOutSet(refs.stageEnvID) && shared.StageEnvironment != nil {
 		refs.stageEnvID = shared.StageCustomEnvironmentID
 	}
-	refs.teamSlug = shared.TeamSlug
 }
 
 func configureOptionalGCPFederation(
@@ -306,14 +339,29 @@ func createScopedProjectEnvVars(
 	resolved core.ResolvedLinks,
 	res *WebAppResource,
 ) error {
-	if meta.Environment.IsPreview() {
+	if shouldSkipProjectEnvVars(meta.Environment, spec, refs) {
 		return nil
 	}
-	skipKeys := blobManagedProjectEnvKeys(meta.Environment, spec.Links)
+	useDevCustom := usesDevCustomEnv(spec)
+	skipKeys := blobManagedProjectEnvKeys(meta.Environment, useDevCustom, spec.Links)
 	if err := registerProjectEnvMap(ctx, name, resolved.Env, false, skipKeys, meta, spec, refs, res); err != nil {
 		return err
 	}
 	return registerProjectEnvMap(ctx, name, resolved.Secrets, true, skipKeys, meta, spec, refs, res)
+}
+
+func shouldSkipProjectEnvVars(env core.Environment, spec WebApp, refs webAppRefs) bool {
+	if env.IsPreview() {
+		return true
+	}
+	if env == core.EnvStage {
+		return spec.SkipStageEnvironment || !isOutSet(refs.stageEnvID)
+	}
+	return false
+}
+
+func usesDevCustomEnv(spec WebApp) bool {
+	return spec.EnableDevEnvironment || spec.DevCustomEnvironmentID != nil || (spec.Shared != nil && spec.Shared.DevEnvironment != nil)
 }
 
 func registerProjectEnvMap(
@@ -338,11 +386,11 @@ func registerProjectEnvMap(
 	return nil
 }
 
-func blobManagedProjectEnvKeys(env core.Environment, links []core.Resource) map[string]bool {
+func blobManagedProjectEnvKeys(env core.Environment, useDevCustom bool, links []core.Resource) map[string]bool {
 	for _, link := range links {
 		if link != nil && link.Link().Kind == "vercel-blob" {
 			skip := map[string]bool{"BLOB_READ_WRITE_TOKEN": true}
-			if env == core.EnvStage {
+			if env == core.EnvStage || (env == core.EnvDev && useDevCustom) {
 				skip["BLOB_BASE_URL"] = true
 			}
 			return skip
@@ -361,8 +409,9 @@ func createSingleProjectEnvVar(
 	refs webAppRefs,
 	res *WebAppResource,
 ) error {
+	useDevCustom := usesDevCustomEnv(spec)
 	sensitive := isSecret
-	if meta.Environment == core.EnvDev {
+	if meta.Environment == core.EnvDev && !useDevCustom {
 		sensitive = false
 	}
 	evArgs := &vercelprov.ProjectEnvironmentVariableArgs{
@@ -372,7 +421,7 @@ func createSingleProjectEnvVar(
 		Value:     val,
 		Sensitive: pulumi.Bool(sensitive),
 	}
-	applyEnvTarget(evArgs, meta.Environment, refs.stageEnvID)
+	applyEnvTarget(evArgs, meta.Environment, useDevCustom, refs)
 	slug := core.BoundedName(strings.ToLower(key), 28)
 	ev, err := vercelprov.NewProjectEnvironmentVariable(ctx, fmt.Sprintf("%s-env-%s-%s", name, meta.Environment, slug), evArgs, pulumi.Parent(res))
 	if err != nil {
@@ -382,16 +431,19 @@ func createSingleProjectEnvVar(
 	return nil
 }
 
-func applyEnvTarget(evArgs *vercelprov.ProjectEnvironmentVariableArgs, env core.Environment, stageEnvID pulumi.StringOutput) {
-	switch env {
-	case core.EnvDev:
+func applyEnvTarget(
+	evArgs *vercelprov.ProjectEnvironmentVariableArgs,
+	env core.Environment,
+	useDevCustom bool,
+	refs webAppRefs,
+) {
+	switch {
+	case env == core.EnvDev && useDevCustom && isOutSet(refs.devEnvID):
+		evArgs.CustomEnvironmentIds = pulumi.StringArray{refs.devEnvID}
+	case env == core.EnvDev:
 		evArgs.Targets = pulumi.ToStringArray([]string{"development"})
-	case core.EnvStage:
-		if isOutSet(stageEnvID) {
-			evArgs.CustomEnvironmentIds = pulumi.StringArray{stageEnvID}
-		} else {
-			evArgs.Targets = pulumi.ToStringArray([]string{"preview"})
-		}
+	case env == core.EnvStage:
+		evArgs.CustomEnvironmentIds = pulumi.StringArray{refs.stageEnvID}
 	default:
 		evArgs.Targets = pulumi.ToStringArray([]string{"production"})
 	}
@@ -399,10 +451,18 @@ func applyEnvTarget(evArgs *vercelprov.ProjectEnvironmentVariableArgs, env core.
 
 func computeAliasHost(meta core.ResourceMeta, spec WebApp, refs webAppRefs) pulumi.StringOutput {
 	if explicit := explicitAliasOverride(meta.Environment, spec); explicit != "" {
-		return pulumi.String(stripScheme(explicit)).ToStringOutput()
+		return pulumi.String(core.NormalizeDomain(explicit)).ToStringOutput()
 	}
-	return pulumi.All(refs.projectName, refs.teamSlug).ApplyT(func(vs []any) string {
-		return defaultAliasForEnv(meta.Environment, vs[0].(string), defaultVercelStr(vs[1].(string), "local"))
+	return pulumi.All(refs.projectName, refs.teamSlug, refs.baseDomain).ApplyT(func(vs []any) string {
+		vProj := defaultVercelStr(vs[0].(string), "openbase-"+meta.Project)
+		team := defaultVercelStr(vs[1].(string), "local")
+		base := core.NormalizeDomain(vs[2].(string))
+		if base != "" {
+			if dom, err := core.EnvironmentDomain(meta.Project, meta.Environment, meta.Name, base); err == nil && dom != "" {
+				return dom
+			}
+		}
+		return defaultAliasForEnv(meta.Environment, vProj, team)
 	}).(pulumi.StringOutput)
 }
 
@@ -410,6 +470,8 @@ func explicitAliasOverride(env core.Environment, spec WebApp) string {
 	switch {
 	case env.IsPreview():
 		return spec.PreviewAlias
+	case env == core.EnvDev:
+		return spec.DevDomain
 	case env == core.EnvStage:
 		return spec.StageDomain
 	case env == core.EnvProd:
@@ -422,7 +484,7 @@ func explicitAliasOverride(env core.Environment, spec WebApp) string {
 func defaultAliasForEnv(env core.Environment, proj, team string) string {
 	switch {
 	case env.IsPreview():
-		return fmt.Sprintf("%s-%s-%s.vercel.app", proj, env.PreviewID(), team)
+		return fmt.Sprintf("%s-%s-%s.vercel.app", proj, core.EnvDomainLabel(env), team)
 	case env == core.EnvStage:
 		return fmt.Sprintf("%s-stage-%s.vercel.app", proj, team)
 	case env == core.EnvDev:
@@ -432,7 +494,20 @@ func defaultAliasForEnv(env core.Environment, proj, team string) string {
 	}
 }
 
-func createOptionalDeploymentAndAlias(
+func computeAllWebAppURLs(primaryHost pulumi.StringOutput, extraDomains []string) pulumi.StringArrayOutput {
+	extras := core.DedupeDomains(extraDomains)
+	return primaryHost.ApplyT(func(primary string) []string {
+		urls := []string{"https://" + primary}
+		for _, d := range extras {
+			if d != primary {
+				urls = append(urls, "https://"+d)
+			}
+		}
+		return urls
+	}).(pulumi.StringArrayOutput)
+}
+
+func createOptionalDeploymentAndAliases(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
@@ -457,7 +532,23 @@ func createOptionalDeploymentAndAlias(
 	}
 	res.Deployment = dep
 	res.DeploymentID = dep.ID().ToStringOutput()
-	alias, err := vercelprov.NewAlias(ctx, name+"-alias", &vercelprov.AliasArgs{
+	return bindWebAppAliases(ctx, name, meta, spec, refs, dep, aliasHost, res)
+}
+
+func bindWebAppAliases(
+	ctx *pulumi.Context,
+	name string,
+	meta core.ResourceMeta,
+	spec WebApp,
+	refs webAppRefs,
+	dep *vercelprov.Deployment,
+	aliasHost pulumi.StringOutput,
+	res *WebAppResource,
+) error {
+	if err := ensureEnvScopedProjectDomain(ctx, name, meta, spec, refs, aliasHost, res); err != nil {
+		return err
+	}
+	primary, err := vercelprov.NewAlias(ctx, name+"-alias", &vercelprov.AliasArgs{
 		DeploymentId: dep.ID(),
 		Alias:        aliasHost,
 		TeamId:       optionalVercelStr(spec.TeamID),
@@ -465,7 +556,74 @@ func createOptionalDeploymentAndAlias(
 	if err != nil {
 		return err
 	}
-	res.Alias = alias
+	res.Alias = primary
+	res.Aliases = append(res.Aliases, primary)
+	return attachExtraDeploymentAliases(ctx, name, spec, refs, dep, res)
+}
+
+func ensureEnvScopedProjectDomain(
+	ctx *pulumi.Context,
+	name string,
+	meta core.ResourceMeta,
+	spec WebApp,
+	refs webAppRefs,
+	aliasHost pulumi.StringOutput,
+	res *WebAppResource,
+) error {
+	needsCustomDomain := core.NormalizeDomain(spec.BaseDomain) != "" || !strings.HasSuffix(explicitAliasOverride(meta.Environment, spec), ".vercel.app") && explicitAliasOverride(meta.Environment, spec) != ""
+	sharedAlreadyOwns := meta.Environment == core.EnvProd ||
+		(meta.Environment == core.EnvStage && !spec.SkipStageEnvironment) ||
+		(meta.Environment == core.EnvDev && usesDevCustomEnv(spec))
+	if !needsCustomDomain || sharedAlreadyOwns {
+		return nil
+	}
+	pd, err := vercelprov.NewProjectDomain(ctx, name+"-custom-domain", &vercelprov.ProjectDomainArgs{
+		ProjectId:    refs.projectID,
+		TeamId:       optionalVercelStr(spec.TeamID),
+		Domain:       aliasHost,
+		WaitForReady: pulumi.Bool(false),
+	}, pulumi.Parent(res))
+	if err != nil {
+		return err
+	}
+	res.CustomDomains = append(res.CustomDomains, pd)
+	return nil
+}
+
+func attachExtraDeploymentAliases(
+	ctx *pulumi.Context,
+	name string,
+	spec WebApp,
+	refs webAppRefs,
+	dep *vercelprov.Deployment,
+	res *WebAppResource,
+) error {
+	for idx, dom := range core.DedupeDomains(spec.ExtraDomains) {
+		var opts []pulumi.ResourceOption
+		opts = append(opts, pulumi.Parent(res))
+		if !strings.HasSuffix(dom, ".vercel.app") {
+			pd, err := vercelprov.NewProjectDomain(ctx, fmt.Sprintf("%s-extra-domain-%d", name, idx), &vercelprov.ProjectDomainArgs{
+				ProjectId:    refs.projectID,
+				TeamId:       optionalVercelStr(spec.TeamID),
+				Domain:       pulumi.String(dom),
+				WaitForReady: pulumi.Bool(false),
+			}, pulumi.Parent(res))
+			if err != nil {
+				return err
+			}
+			res.CustomDomains = append(res.CustomDomains, pd)
+			opts = append(opts, pulumi.DependsOn([]pulumi.Resource{pd}))
+		}
+		al, err := vercelprov.NewAlias(ctx, fmt.Sprintf("%s-extra-alias-%d", name, idx), &vercelprov.AliasArgs{
+			DeploymentId: dep.ID(),
+			Alias:        pulumi.String(dom),
+			TeamId:       optionalVercelStr(spec.TeamID),
+		}, opts...)
+		if err != nil {
+			return err
+		}
+		res.Aliases = append(res.Aliases, al)
+	}
 	return nil
 }
 
@@ -494,16 +652,38 @@ func buildDeploymentArgs(
 		DeleteOnDestroy: pulumi.Bool(!meta.Environment.IsProtected()),
 		Environment:     mergedEnv,
 	}
-	if meta.Environment == core.EnvStage && isOutSet(refs.stageEnvID) {
-		depArgs.CustomEnvironmentId = refs.stageEnvID
-	}
+	applyDeploymentCustomEnv(depArgs, meta.Environment, spec, refs)
 	return depArgs
+}
+
+func applyDeploymentCustomEnv(
+	depArgs *vercelprov.DeploymentArgs,
+	env core.Environment,
+	spec WebApp,
+	refs webAppRefs,
+) {
+	if env == core.EnvStage && !spec.SkipStageEnvironment && isOutSet(refs.stageEnvID) {
+		depArgs.CustomEnvironmentId = nonEmptyStringPtrOutput(refs.stageEnvID)
+	}
+	if env == core.EnvDev && usesDevCustomEnv(spec) && isOutSet(refs.devEnvID) {
+		depArgs.CustomEnvironmentId = nonEmptyStringPtrOutput(refs.devEnvID)
+	}
+}
+
+func nonEmptyStringPtrOutput(out pulumi.StringOutput) pulumi.StringPtrOutput {
+	return out.ApplyT(func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}).(pulumi.StringPtrOutput)
 }
 
 func registerWebAppOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *WebAppResource) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName":    pulumi.String(meta.CanonicalName),
 		"url":              res.URL,
+		"urls":             res.URLs,
 		"aliasHost":        res.AliasHost,
 		"deploymentId":     res.DeploymentID,
 		"federatedSaEmail": res.FederatedSAEmail,
@@ -517,9 +697,4 @@ func sortedMapKeys(m map[string]pulumi.StringOutput) []string {
 	}
 	slices.Sort(keys)
 	return keys
-}
-
-func stripScheme(raw string) string {
-	s := strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(raw), "https://"), "http://")
-	return strings.TrimRight(s, "/")
 }

@@ -21,6 +21,7 @@ func main() {
 			VercelProjectName:  vProjName,
 			TeamID:             teamID,
 			TeamSlug:           teamSlug,
+			BaseDomain:         os.Getenv("OPENBASE_BASE_DOMAIN"),
 			SourceDir:          "../apps/web",
 			BlobReadWriteToken: optionalString(blobRW),
 			Auth:               &composite.KindeAppConfig{},

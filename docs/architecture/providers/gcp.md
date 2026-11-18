@@ -34,13 +34,15 @@ flowchart TD
     CR -->|"Links (IAM + Secret Manager + Env)"| Bkt
 ```
 
-- **`gcp.Shared`**: Enables `run`, `artifactregistry`, `iam`, `iamcredentials`, `sts`, `storage`, `secretmanager`, and `cloudkms` APIs (`DisableOnDestroy: false`), creates a Docker Artifact Registry repository, creates a `4–32` char Workload Identity Pool (`ob-<project>-pool`) with optional GitHub Actions (`https://token.actions.githubusercontent.com`) and Vercel (`https://oidc.vercel.com/<team>`) OIDC providers, and creates a KMS KeyRing.
+- **`gcp.Shared` & `gcp.CloudLoadBalancer`**:
+  - `gcp.Shared` enables `run`, `artifactregistry`, `iam`, `iamcredentials`, `sts`, `storage`, `secretmanager`, and `cloudkms` APIs (`DisableOnDestroy: false`), creates a Docker Artifact Registry repository, creates a `4–32` char Workload Identity Pool (`ob-<project>-pool`) with optional GitHub Actions and Vercel OIDC providers, and creates a KMS KeyRing.
+  - `gcp.CloudLoadBalancer` (standalone or enabled via `EnableLoadBalancer: true` + `BaseDomain` on `gcp.Shared`) provisions a shared Global External HTTPS Load Balancer with a static Global IPv4 (`ipAddress`), DNS-authorized wildcard Google Certificate Manager certificate (`*.{baseDomain}`), and a regional Serverless NEG with `urlMask: "<service>.{baseDomain}"` — routing `{project}-{dev|stage|prod|previewId}.{baseDomain}` to every Cloud Run service across apps and PR previews with instant wildcard TLS and zero per-PR load-balancer changes.
 - **`gcp.CloudRunService` (`*gcp.CloudRunServiceResource`)**:
   - Creates a `gcp.serviceaccount.Account` bounded to `6–30` characters via `core.ServiceAccountID`.
   - Grants `roles/iam.serviceAccountTokenCreator` to the service account on itself so running containers sign GCS v4 URLs under Application Default Credentials without JSON keys.
   - Grants `roles/artifactregistry.reader` to both the service account and `service-<projectNumber>@serverless-robot-prod.iam.gserviceaccount.com` when an Artifact Registry repository is configured.
   - Stores resolved link and workload secrets in `gcp.secretmanager.Secret` + `SecretVersion`, grants `roles/secretmanager.secretAccessor` to the service account, and mounts them via `ValueSource.SecretKeyRef`.
-  - Configures `allUsers` `roles/run.invoker` for `public`, caller-scoped IAM for `internal`, internal-only ingress for `worker`, and optional `gcp.cloudrun.DomainMapping` on persistent environments.
+  - Configures `allUsers` `roles/run.invoker` for `public`, caller-scoped IAM for `internal`, internal-only ingress for `worker`, names the service `{project}-{dev|stage|prod|previewId}` when `BaseDomain` is set (matching `CloudLoadBalancer`'s `<service>.{baseDomain}` URL mask), and binds multiple `gcp.cloudrun.DomainMapping`s when `Domain` / `Domains` are supplied on persistent environments.
 - **`gcp.Bucket` (`*gcp.BucketResource`) & `gcp/overlayfs`**:
   - Enforces `UniformBucketLevelAccess: true`, `PublicAccessPrevention: "enforced"`, and sanitized `openbase-*` GCP labels.
   - Applies `pulumi.Protect(true)`, object versioning, and 7-day `SoftDeletePolicy` in `prod` and `stage`, and `ForceDestroy: true` with zero soft-delete retention in `dev` and `preview-*`.

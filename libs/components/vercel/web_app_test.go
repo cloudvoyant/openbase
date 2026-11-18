@@ -121,5 +121,60 @@ func TestVercelWebApp(t *testing.T) {
 			requireVercelNoErr(t, err)
 			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 3)
 		})
+
+		t.Run("when deploying with BaseDomain and ExtraDomains, then it binds {project}-{previewId}.{baseDomain} plus extra custom domains and aliases", func(t *testing.T) {
+			// Arrange.
+			mocks := newVercelMocks()
+			urlCh := make(chan string, 1)
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				app, err := vercel.WebApp{
+					Name:            "web",
+					Project:         "storefront",
+					Environment:     "preview-pr-22",
+					VercelProjectID: pulumi.String("prj_123"),
+					BaseDomain:      "vercel.cloudvoyant.io",
+					ExtraDomains:    []string{"pr22.storefront.io"},
+					SourceDir:       ".",
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				app.URL.ApplyT(func(v string) string { urlCh <- v; return v })
+				return nil
+			}, pulumi.WithMocks("storefront", "preview-pr-22", mocks))
+
+			// Assert.
+			requireVercelNoErr(t, err)
+			assertVercelEq(t, "preview baseDomain URL", <-urlCh, "https://storefront-pr-22.vercel.cloudvoyant.io")
+			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
+			mocks.assertCount(t, "vercel:index/alias:Alias", 2)
+		})
+
+		t.Run("when deploying stage with SkipStageEnvironment, then it skips conflicting preview ProjectEnvironmentVariables and deploys via DeploymentArgs.Environment", func(t *testing.T) {
+			// Arrange.
+			mocks := newVercelMocks()
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := vercel.WebApp{
+					Name:                 "web",
+					Project:              "storefront",
+					Environment:          "stage",
+					Env:                  map[string]pulumi.StringInput{"KINDE_ISSUER_URL": pulumi.String("https://prod.kinde.com")},
+					SharedStackRef:       "org/storefront/shared",
+					SkipStageEnvironment: true,
+					SourceDir:            ".",
+				}.Register(ctx)
+				return err
+			}, pulumi.WithMocks("storefront", "stage", mocks))
+
+			// Assert.
+			requireVercelNoErr(t, err)
+			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 0)
+			mocks.assertCount(t, "vercel:index/deployment:Deployment", 1)
+			mocks.assertCount(t, "vercel:index/alias:Alias", 1)
+		})
 	})
 }

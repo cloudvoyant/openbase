@@ -35,6 +35,8 @@ type OidcApp struct {
 	SiteURL           pulumi.StringInput
 	VercelProjectName string
 	VercelTeamSlug    string
+	BaseDomain        string
+	DevDomain         string
 	StageDomain       string
 	ProdDomain        string
 	CallbackPath      string
@@ -158,20 +160,25 @@ func resolveSiteURL(meta core.ResourceMeta, spec OidcApp, sr *pulumi.StackRefere
 	if spec.SiteURL != nil {
 		return spec.SiteURL.ToStringOutput()
 	}
-	if meta.Environment == core.EnvDev || meta.Environment == core.EnvShared {
+	if meta.Environment == core.EnvShared {
 		return pulumi.String("http://localhost:5173").ToStringOutput()
 	}
-	vProjOut, teamOut := resolveVercelHostParts(meta.Project, spec, sr)
-	return pulumi.All(vProjOut, teamOut).ApplyT(func(vs []any) string {
-		return computeDefaultSiteOrigin(meta.Environment, vs[0].(string), vs[1].(string), spec)
+	vProjOut, teamOut, baseOut := resolveVercelHostParts(meta.Project, spec, sr)
+	return pulumi.All(vProjOut, teamOut, baseOut).ApplyT(func(vs []any) string {
+		return computeDefaultSiteOrigin(meta.Project, meta.Environment, vs[0].(string), vs[1].(string), vs[2].(string), spec)
 	}).(pulumi.StringOutput)
 }
 
-func resolveVercelHostParts(project string, spec OidcApp, sr *pulumi.StackReference) (pulumi.StringOutput, pulumi.StringOutput) {
+func resolveVercelHostParts(
+	project string,
+	spec OidcApp,
+	sr *pulumi.StackReference,
+) (pulumi.StringOutput, pulumi.StringOutput, pulumi.StringOutput) {
 	vProj := pulumi.String(defaultKindeStr(spec.VercelProjectName, project)).ToStringOutput()
 	team := pulumi.String(defaultKindeStr(spec.VercelTeamSlug, "local")).ToStringOutput()
+	base := pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
 	if sr == nil {
-		return vProj, team
+		return vProj, team, base
 	}
 	if spec.VercelProjectName == "" {
 		vProj = optionalKindeStackOutput(sr, "vercelProjectName", project)
@@ -179,7 +186,10 @@ func resolveVercelHostParts(project string, spec OidcApp, sr *pulumi.StackRefere
 	if spec.VercelTeamSlug == "" {
 		team = optionalKindeStackOutput(sr, "teamSlug", "local")
 	}
-	return vProj, team
+	if spec.BaseDomain == "" {
+		base = optionalKindeStackOutput(sr, "baseDomain", "")
+	}
+	return vProj, team, base
 }
 
 func optionalKindeStackOutput(sr *pulumi.StackReference, key, fallback string) pulumi.StringOutput {
@@ -191,20 +201,37 @@ func optionalKindeStackOutput(sr *pulumi.StackReference, key, fallback string) p
 	}).(pulumi.StringOutput)
 }
 
-func computeDefaultSiteOrigin(env core.Environment, vProj, team string, spec OidcApp) string {
-	switch {
-	case env.IsPreview():
-		return fmt.Sprintf("https://%s-%s-%s.vercel.app", vProj, env.PreviewID(), team)
-	case env == core.EnvStage:
-		if spec.StageDomain != "" {
-			return NormalizeIssuerURL(spec.StageDomain)
+func computeDefaultSiteOrigin(project string, env core.Environment, vProj, team, baseDomain string, spec OidcApp) string {
+	if explicit := explicitKindeEnvDomain(env, spec); explicit != "" {
+		return NormalizeIssuerURL(explicit)
+	}
+	if baseDomain != "" {
+		if dom, err := core.EnvironmentDomain(project, env, "web", baseDomain); err == nil && dom != "" {
+			return "https://" + dom
 		}
+	}
+	switch {
+	case env == core.EnvDev:
+		return "http://localhost:5173"
+	case env.IsPreview():
+		return fmt.Sprintf("https://%s-%s-%s.vercel.app", vProj, core.EnvDomainLabel(env), team)
+	case env == core.EnvStage:
 		return fmt.Sprintf("https://%s-stage-%s.vercel.app", vProj, team)
 	default:
-		if spec.ProdDomain != "" {
-			return NormalizeIssuerURL(spec.ProdDomain)
-		}
 		return fmt.Sprintf("https://%s-%s.vercel.app", vProj, team)
+	}
+}
+
+func explicitKindeEnvDomain(env core.Environment, spec OidcApp) string {
+	switch env {
+	case core.EnvDev:
+		return spec.DevDomain
+	case core.EnvStage:
+		return spec.StageDomain
+	case core.EnvProd:
+		return spec.ProdDomain
+	default:
+		return ""
 	}
 }
 

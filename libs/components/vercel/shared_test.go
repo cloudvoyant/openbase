@@ -44,6 +44,59 @@ func TestVercelShared(t *testing.T) {
 			mocks.assertCount(t, "vercel:index/blobProjectConnection:BlobProjectConnection", 1)
 			assertVercelEq(t, "derived BLOB_BASE_URL", <-baseURLCh, "https://abcxyz.public.blob.vercel-storage.com")
 		})
+
+		t.Run("when BaseDomain, EnableDevEnvironment, and ExtraProdDomains are set, then it creates dev and staging CustomEnvironments and attaches all tier domains", func(t *testing.T) {
+			// Arrange.
+			mocks := newVercelMocks()
+			prodDomCh := make(chan string, 1)
+			devDomCh := make(chan string, 1)
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				shared, err := vercel.Shared{
+					Project:              "storefront",
+					TeamID:               "team_123",
+					TeamSlug:             "cloudvoyant",
+					BaseDomain:           "vercel.cloudvoyant.io",
+					EnableDevEnvironment: true,
+					ExtraProdDomains:     []string{"storefront.io"},
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				shared.ProdDomainName.ApplyT(func(v string) string { prodDomCh <- v; return v })
+				shared.DevDomainName.ApplyT(func(v string) string { devDomCh <- v; return v })
+				return nil
+			}, pulumi.WithMocks("storefront", "shared", mocks))
+
+			// Assert.
+			requireVercelNoErr(t, err)
+			assertVercelEq(t, "prod domain", <-prodDomCh, "storefront-prod.vercel.cloudvoyant.io")
+			assertVercelEq(t, "dev domain", <-devDomCh, "storefront-dev.vercel.cloudvoyant.io")
+			mocks.assertCount(t, "vercel:index/customEnvironment:CustomEnvironment", 2)
+			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 4)
+		})
+
+		t.Run("when SkipStageEnvironment is set for zero-custom-env plans, then it creates 0 CustomEnvironments and attaches only prod domain", func(t *testing.T) {
+			// Arrange.
+			mocks := newVercelMocks()
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := vercel.Shared{
+					Project:              "storefront",
+					TeamID:               "team_123",
+					TeamSlug:             "cloudvoyant",
+					SkipStageEnvironment: true,
+				}.Register(ctx)
+				return err
+			}, pulumi.WithMocks("storefront", "shared", mocks))
+
+			// Assert.
+			requireVercelNoErr(t, err)
+			mocks.assertCount(t, "vercel:index/customEnvironment:CustomEnvironment", 0)
+			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 1)
+		})
 	})
 }
 

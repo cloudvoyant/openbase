@@ -23,6 +23,7 @@ func main() {
 			Project:          appProject,
 			GCPProject:       gcpProject,
 			GCPProjectNumber: projectNum,
+			BaseDomain:       os.Getenv("OPENBASE_BASE_DOMAIN"),
 			Image:            pulumi.String("mirror.gcr.io/library/python:3.12-slim"),
 			Command:          []string{"python3", "-c", cloudRunServerPy},
 			Auth:             &composite.KindeAppConfig{},

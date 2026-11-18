@@ -39,8 +39,13 @@ type SharedOidcApp struct {
 	Prod                       TenantCredentials
 	VercelProjectName          string
 	VercelTeamSlug             string
+	BaseDomain                 string
+	DevDomain                  string
 	StageDomain                string
 	ProdDomain                 string
+	ExtraDevDomains            []string
+	ExtraStageDomains          []string
+	ExtraProdDomains           []string
 	CallbackPath               string
 	ExtraDevRedirectURIs       []string
 	ExtraDevLogoutURIs         []string
@@ -155,7 +160,7 @@ func provisionTwoTenantApps(
 	res.ProdIssuerURL = pulumi.String(prodIssuer).ToStringOutput()
 
 	appName := defaultKindeStr(spec.AppName, "openbase-"+meta.Project)
-	if err := createDevApplication(ctx, name, appName, spec, devProv, res); err != nil {
+	if err := createDevApplication(ctx, name, appName, meta.Project, spec, devProv, res); err != nil {
 		return err
 	}
 	return createProdApplication(ctx, name, appName, meta, spec, prodProv, res)
@@ -178,12 +183,12 @@ func createTenantProvider(
 
 func createDevApplication(
 	ctx *pulumi.Context,
-	name, appName string,
+	name, appName, project string,
 	spec SharedOidcApp,
 	prov *kindeprov.Provider,
 	res *SharedOidcAppResource,
 ) error {
-	redirects, logouts := buildDevCallbacks(spec)
+	redirects, logouts := buildDevCallbacks(project, spec)
 	appOpts := buildKindeAppOptions(res, prov, spec.ImportDevAppID, spec.RetainApplicationsOnDelete)
 	app, err := kindeprov.NewApplication(ctx, name+"-dev-app", &kindeprov.ApplicationArgs{
 		Name:         pulumi.String(appName),
@@ -283,18 +288,30 @@ func buildKindeAppOptions(
 	return opts
 }
 
-func buildDevCallbacks(spec SharedOidcApp) ([]string, []string) {
+func buildDevCallbacks(project string, spec SharedOidcApp) ([]string, []string) {
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	redirects := []string{"http://localhost:5173" + cb, "http://localhost:3000" + cb}
 	logouts := []string{"http://localhost:5173/", "http://localhost:3000/"}
-	vProj := defaultKindeStr(spec.VercelProjectName, spec.Project)
-	for _, host := range devVercelHosts(vProj, spec.VercelTeamSlug) {
-		redirects = append(redirects, host+cb)
-		logouts = append(logouts, host+"/")
+	vProj := defaultKindeStr(spec.VercelProjectName, project)
+	for _, host := range devCallbackHosts(project, vProj, spec) {
+		origin := NormalizeIssuerURL(host)
+		redirects = append(redirects, origin+cb)
+		logouts = append(logouts, origin+"/")
 	}
 	redirects = append(redirects, spec.ExtraDevRedirectURIs...)
 	logouts = append(logouts, spec.ExtraDevLogoutURIs...)
 	return sortAndCompact(redirects), sortAndCompact(logouts)
+}
+
+func devCallbackHosts(project, vProj string, spec SharedOidcApp) []string {
+	hosts := devVercelHosts(vProj, spec.VercelTeamSlug)
+	if base := core.NormalizeDomain(spec.BaseDomain); base != "" && project != "" {
+		hosts = append(hosts, "https://"+project+"-*."+base)
+	}
+	for _, d := range core.DedupeDomains([]string{spec.DevDomain}, spec.ExtraDevDomains) {
+		hosts = append(hosts, "https://"+d)
+	}
+	return hosts
 }
 
 func devVercelHosts(vProj, teamSlug string) []string {
@@ -312,7 +329,7 @@ func buildProdCallbacks(project string, spec SharedOidcApp) ([]string, []string)
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	vProj := defaultKindeStr(spec.VercelProjectName, project)
 	var redirects, logouts []string
-	for _, host := range prodVercelAndCustomHosts(vProj, spec) {
+	for _, host := range prodVercelAndCustomHosts(project, vProj, spec) {
 		origin := NormalizeIssuerURL(host)
 		redirects = append(redirects, origin+cb)
 		logouts = append(logouts, origin+"/")
@@ -322,8 +339,21 @@ func buildProdCallbacks(project string, spec SharedOidcApp) ([]string, []string)
 	return sortAndCompact(redirects), sortAndCompact(logouts)
 }
 
-func prodVercelAndCustomHosts(vProj string, spec SharedOidcApp) []string {
+func prodVercelAndCustomHosts(project, vProj string, spec SharedOidcApp) []string {
 	var hosts []string
+	if base := core.NormalizeDomain(spec.BaseDomain); base != "" && project != "" {
+		if pd, err := core.EnvironmentDomain(project, core.EnvProd, "web", base); err == nil {
+			hosts = append(hosts, pd)
+		}
+		if sd, err := core.EnvironmentDomain(project, core.EnvStage, "web", base); err == nil {
+			hosts = append(hosts, sd)
+		}
+	}
+	hosts = appendProdFallbackOrExplicit(hosts, vProj, spec)
+	return core.DedupeDomains(hosts, spec.ExtraProdDomains, spec.ExtraStageDomains)
+}
+
+func appendProdFallbackOrExplicit(hosts []string, vProj string, spec SharedOidcApp) []string {
 	if spec.ProdDomain != "" {
 		hosts = append(hosts, spec.ProdDomain)
 	} else if spec.VercelTeamSlug != "" {

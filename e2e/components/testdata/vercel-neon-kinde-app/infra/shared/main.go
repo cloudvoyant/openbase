@@ -21,6 +21,7 @@ func main() {
 			VercelProjectName: vProjName,
 			TeamID:            teamID,
 			TeamSlug:          teamSlug,
+			BaseDomain:        os.Getenv("OPENBASE_BASE_DOMAIN"),
 			NeonOrgID:         os.Getenv("NEON_ORG_ID"),
 			Auth:              sharedKindeConfig(vProjName),
 		}.Register(ctx)

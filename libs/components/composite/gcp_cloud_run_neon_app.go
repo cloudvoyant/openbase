@@ -35,7 +35,9 @@ type GcpCloudRunNeonApp struct {
 	ContainerArgs    []string
 	Visibility       string
 	Port             int
+	BaseDomain       string
 	Domain           string
+	Domains          []string
 	DatabaseName     string
 	RoleName         string
 	Auth             *KindeAppConfig
@@ -95,11 +97,11 @@ func provisionGCPEnvStack(
 	res *GcpCloudRunNeonAppResource,
 ) error {
 	sharedRef := resolveSharedStackRef(ctx, spec.SharedStackRef)
-	regionalURL, err := gcp.CloudRunURL(meta.Project, meta.Environment, spec.Name, spec.GCPProjectNumber, spec.Location)
+	regionalURL, siteURL, err := resolveGCPEnvSiteURLs(meta, spec)
 	if err != nil {
 		return err
 	}
-	links, err := registerGCPBackingResources(ctx, meta, sharedRef, regionalURL, spec, res)
+	links, err := registerGCPBackingResources(ctx, meta, sharedRef, siteURL, spec, res)
 	if err != nil {
 		return err
 	}
@@ -123,7 +125,9 @@ func provisionGCPEnvStack(
 		ContainerArgs:    spec.ContainerArgs,
 		Visibility:       defaultCompStr(spec.Visibility, gcp.VisibilityPublic),
 		Port:             spec.Port,
+		BaseDomain:       spec.BaseDomain,
 		Domain:           spec.Domain,
+		Domains:          spec.Domains,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -135,6 +139,17 @@ func provisionGCPEnvStack(
 	res.SetLink(svc.Link())
 	exportGCPEnvOutputs(ctx, spec.SkipStackExports, res)
 	return nil
+}
+
+func resolveGCPEnvSiteURLs(meta core.ResourceMeta, spec GcpCloudRunNeonApp) (string, string, error) {
+	regionalURL, err := gcp.CloudRunRegionalURL(meta.Project, meta.Environment, spec.Name, spec.GCPProjectNumber, spec.Location, spec.BaseDomain)
+	if err != nil {
+		return "", "", err
+	}
+	if dom, err := core.EnvironmentDomain(meta.Project, meta.Environment, spec.Name, spec.BaseDomain); err == nil && dom != "" {
+		return regionalURL, "https://" + dom, nil
+	}
+	return regionalURL, regionalURL, nil
 }
 
 func registerGCPBackingResources(
@@ -244,6 +259,7 @@ func exportGCPEnvOutputs(ctx *pulumi.Context, skip bool, res *GcpCloudRunNeonApp
 		return
 	}
 	ctx.Export("url", res.Service.URL)
+	ctx.Export("urls", res.Service.URLs)
 	ctx.Export("regionalUrl", res.RegionalURL)
 	ctx.Export("serviceName", res.Service.Service.Name)
 	ctx.Export("serviceAccountEmail", res.Service.ServiceAccountEmail)

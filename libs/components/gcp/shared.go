@@ -20,20 +20,22 @@ var _ core.StatelessResource = (*SharedResource)(nil)
 
 // Shared declares cross-environment GCP prerequisites in the "shared" stack.
 type Shared struct {
-	Name             string
-	Project          string
-	Repo             string
-	Environment      string
-	GCPProject       pulumi.StringPtrInput
-	Location         string
-	PoolSuffix       string
-	GitHubOrg        string
-	GitHubRepo       string
-	VercelTeamSlug   string
-	VercelIssuerMode string
-	Services         []string
-	SkipKeyRing      bool
-	ExtraLabels      map[string]string
+	Name               string
+	Project            string
+	Repo               string
+	Environment        string
+	GCPProject         pulumi.StringPtrInput
+	Location           string
+	PoolSuffix         string
+	GitHubOrg          string
+	GitHubRepo         string
+	VercelTeamSlug     string
+	VercelIssuerMode   string
+	BaseDomain         string
+	EnableLoadBalancer bool
+	Services           []string
+	SkipKeyRing        bool
+	ExtraLabels        map[string]string
 }
 
 // SharedResource is the provisioned handle for Artifact Registry, WIF, KMS, and required GCP APIs.
@@ -47,6 +49,8 @@ type SharedResource struct {
 	GitHubOIDCProvider       *iam.WorkloadIdentityPoolProvider
 	VercelOIDCProvider       *iam.WorkloadIdentityPoolProvider
 	KeyRing                  *kms.KeyRing
+	LoadBalancer             *CloudLoadBalancerResource
+	BaseDomain               pulumi.StringOutput
 	RepositoryID             pulumi.StringOutput
 	RepositoryURL            pulumi.StringOutput
 	WorkloadIdentityPoolName pulumi.StringOutput
@@ -110,7 +114,28 @@ func provisionSharedResources(ctx *pulumi.Context, name string, meta core.Resour
 	if err := createIdentityFederation(ctx, name, meta, spec, res); err != nil {
 		return err
 	}
-	return createOptionalKeyRing(ctx, name, location, meta, spec, res)
+	if err := createOptionalKeyRing(ctx, name, location, meta, spec, res); err != nil {
+		return err
+	}
+	res.BaseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
+	if !spec.EnableLoadBalancer || core.NormalizeDomain(spec.BaseDomain) == "" {
+		return nil
+	}
+	lb, err := CloudLoadBalancer{
+		Name:        name + "-lb",
+		Project:     meta.Project,
+		Repo:        meta.Repo,
+		Environment: string(meta.Environment),
+		GCPProject:  spec.GCPProject,
+		Location:    location,
+		BaseDomain:  spec.BaseDomain,
+		ExtraLabels: spec.ExtraLabels,
+	}.Register(ctx, pulumi.Parent(res))
+	if err != nil {
+		return err
+	}
+	res.LoadBalancer = lb
+	return nil
 }
 
 func enableProjectServices(ctx *pulumi.Context, name string, spec Shared, parent pulumi.Resource) ([]*projects.Service, error) {
@@ -291,13 +316,20 @@ func buildSharedLink(meta core.ResourceMeta, res *SharedResource) core.LinkDescr
 }
 
 func registerSharedOutputs(ctx *pulumi.Context, res *SharedResource) error {
-	return ctx.RegisterResourceOutputs(res, pulumi.Map{
+	outs := pulumi.Map{
+		"baseDomain":               res.BaseDomain,
 		"repositoryId":             res.RepositoryID,
 		"repositoryUrl":            res.RepositoryURL,
 		"workloadIdentityPoolName": res.WorkloadIdentityPoolName,
 		"vercelOidcProviderName":   res.VercelOIDCProviderName,
 		"keyRingId":                res.KeyRingID,
-	})
+	}
+	if res.LoadBalancer != nil {
+		outs["loadBalancerIp"] = res.LoadBalancer.IPAddress
+		outs["dnsAuthRecordName"] = res.LoadBalancer.DnsAuthRecordName
+		outs["dnsAuthRecordData"] = res.LoadBalancer.DnsAuthRecordData
+	}
+	return ctx.RegisterResourceOutputs(res, outs)
 }
 
 func defaultStr(val, fallback string) string {

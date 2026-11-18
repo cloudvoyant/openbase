@@ -15,7 +15,7 @@ import (
 
 var _ core.StatelessResource = (*SharedResource)(nil)
 
-// Shared declares cross-environment Vercel Project, CustomEnvironment, ProtectionBypass, and optional BlobStore.
+// Shared declares cross-environment Vercel Project, CustomEnvironments, ProtectionBypass, Domains, and optional BlobStore.
 type Shared struct {
 	Name                  string
 	Project               string
@@ -28,34 +28,47 @@ type Shared struct {
 	RootDirectory         string
 	OIDCIssuerMode        string
 	DeploymentProtection  string
+	BaseDomain            string
+	DevEnvironmentSlug    string
+	EnableDevEnvironment  bool
 	StageEnvironmentSlug  string
 	SkipStageEnvironment  bool
+	DevDomain             string
 	StageDomain           string
 	ProdDomain            string
+	ExtraDevDomains       []string
+	ExtraStageDomains     []string
+	ExtraProdDomains      []string
 	EnableBlobStore       bool
 	BlobAccess            string
 	BlobRegion            string
 	ProtectionBypassToken string
 }
 
-// SharedResource is the provisioned handle for the shared Vercel Project, staging CustomEnvironment, domains, and bypass secret.
+// SharedResource is the provisioned handle for the shared Vercel Project, custom environments, domains, and bypass secret.
 type SharedResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
 	Project                  *vercelprov.Project
+	DevEnvironment           *vercelprov.CustomEnvironment
 	StageEnvironment         *vercelprov.CustomEnvironment
 	ProtectionBypass         *vercelprov.ProjectProtectionBypass
+	DevProjectDomain         *vercelprov.ProjectDomain
 	ProdProjectDomain        *vercelprov.ProjectDomain
 	StageProjectDomain       *vercelprov.ProjectDomain
+	ExtraProjectDomains      []*vercelprov.ProjectDomain
 	BlobStore                *vercelprov.BlobStore
 	BlobConnection           *vercelprov.BlobProjectConnection
 	ProjectID                pulumi.StringOutput
 	VercelProjectName        pulumi.StringOutput
 	TeamID                   pulumi.StringOutput
 	TeamSlug                 pulumi.StringOutput
+	BaseDomain               pulumi.StringOutput
+	DevCustomEnvironmentID   pulumi.StringOutput
 	StageCustomEnvironmentID pulumi.StringOutput
 	ProtectionBypassSecret   pulumi.StringOutput
+	DevDomainName            pulumi.StringOutput
 	ProdDomainName           pulumi.StringOutput
 	StageDomainName          pulumi.StringOutput
 	BlobStoreID              pulumi.StringOutput
@@ -124,11 +137,15 @@ func provisionSharedVercel(
 	res.VercelProjectName = pulumi.String(vProjName).ToStringOutput()
 	res.TeamID = proj.TeamId
 	res.TeamSlug = pulumi.String(spec.TeamSlug).ToStringOutput()
+	res.BaseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
 
+	if err := createDevCustomEnv(ctx, name, spec, proj, res); err != nil {
+		return err
+	}
 	if err := createStageCustomEnv(ctx, name, spec, proj, res); err != nil {
 		return err
 	}
-	if err := createSharedDomains(ctx, name, vProjName, spec, proj, res); err != nil {
+	if err := createSharedDomains(ctx, name, meta.Project, vProjName, spec, proj, res); err != nil {
 		return err
 	}
 	if err := createAutomationBypass(ctx, name, spec, proj, res); err != nil {
@@ -165,6 +182,32 @@ func createVercelProject(
 	return proj, vProjName, err
 }
 
+func createDevCustomEnv(
+	ctx *pulumi.Context,
+	name string,
+	spec Shared,
+	proj *vercelprov.Project,
+	res *SharedResource,
+) error {
+	if !spec.EnableDevEnvironment {
+		res.DevCustomEnvironmentID = pulumi.String("").ToStringOutput()
+		return nil
+	}
+	slug := defaultVercelStr(spec.DevEnvironmentSlug, "dev")
+	ce, err := vercelprov.NewCustomEnvironment(ctx, name+"-dev-env", &vercelprov.CustomEnvironmentArgs{
+		ProjectId:   proj.ID(),
+		TeamId:      optionalVercelStr(spec.TeamID),
+		Name:        pulumi.String(slug),
+		Description: pulumi.String("OpenBase development environment"),
+	}, pulumi.Parent(res))
+	if err != nil {
+		return err
+	}
+	res.DevEnvironment = ce
+	res.DevCustomEnvironmentID = ce.ID().ToStringOutput()
+	return nil
+}
+
 func createStageCustomEnv(
 	ctx *pulumi.Context,
 	name string,
@@ -193,58 +236,91 @@ func createStageCustomEnv(
 
 func createSharedDomains(
 	ctx *pulumi.Context,
-	name, vProjName string,
+	name, project, vProjName string,
 	spec Shared,
 	proj *vercelprov.Project,
 	res *SharedResource,
 ) error {
-	prodDom := spec.ProdDomain
-	if prodDom == "" && spec.TeamSlug != "" {
-		prodDom = fmt.Sprintf("%s-%s.vercel.app", vProjName, spec.TeamSlug)
-	}
-	stageDom := spec.StageDomain
-	if stageDom == "" && spec.TeamSlug != "" {
-		stageDom = fmt.Sprintf("%s-stage-%s.vercel.app", vProjName, spec.TeamSlug)
-	}
+	prodDom := resolveSharedTierDomain(project, vProjName, core.EnvProd, spec.ProdDomain, spec.BaseDomain, spec.TeamSlug)
+	stageDom := resolveSharedTierDomain(project, vProjName, core.EnvStage, spec.StageDomain, spec.BaseDomain, spec.TeamSlug)
+	devDom := resolveSharedTierDomain(project, vProjName, core.EnvDev, spec.DevDomain, spec.BaseDomain, spec.TeamSlug)
 	res.ProdDomainName = pulumi.String(prodDom).ToStringOutput()
 	res.StageDomainName = pulumi.String(stageDom).ToStringOutput()
-	if prodDom != "" {
-		pd, err := vercelprov.NewProjectDomain(ctx, name+"-prod-domain", &vercelprov.ProjectDomainArgs{
-			ProjectId:    proj.ID(),
-			TeamId:       optionalVercelStr(spec.TeamID),
-			Domain:       pulumi.String(prodDom),
-			WaitForReady: pulumi.Bool(true),
-		}, pulumi.Parent(res))
-		if err != nil {
-			return err
-		}
-		res.ProdProjectDomain = pd
-	}
-	return attachStageDomain(ctx, name, stageDom, spec, proj, res)
-}
+	res.DevDomainName = pulumi.String(devDom).ToStringOutput()
 
-func attachStageDomain(
-	ctx *pulumi.Context,
-	name, stageDom string,
-	spec Shared,
-	proj *vercelprov.Project,
-	res *SharedResource,
-) error {
-	if stageDom == "" || res.StageEnvironment == nil {
-		return nil
-	}
-	sd, err := vercelprov.NewProjectDomain(ctx, name+"-stage-domain", &vercelprov.ProjectDomainArgs{
-		ProjectId:           proj.ID(),
-		TeamId:              optionalVercelStr(spec.TeamID),
-		Domain:              pulumi.String(stageDom),
-		CustomEnvironmentId: res.StageEnvironment.ID(),
-		WaitForReady:        pulumi.Bool(true),
-	}, pulumi.Parent(res))
+	pd, err := attachTierDomains(ctx, name+"-prod-domain", prodDom, spec.ExtraProdDomains, nil, spec.TeamID, proj, res)
 	if err != nil {
 		return err
 	}
-	res.StageProjectDomain = sd
+	res.ProdProjectDomain = pd
+	if res.StageEnvironment != nil {
+		sd, err := attachTierDomains(ctx, name+"-stage-domain", stageDom, spec.ExtraStageDomains, res.StageEnvironment.ID(), spec.TeamID, proj, res)
+		if err != nil {
+			return err
+		}
+		res.StageProjectDomain = sd
+	}
+	if res.DevEnvironment != nil {
+		dd, err := attachTierDomains(ctx, name+"-dev-domain", devDom, spec.ExtraDevDomains, res.DevEnvironment.ID(), spec.TeamID, proj, res)
+		if err != nil {
+			return err
+		}
+		res.DevProjectDomain = dd
+	}
 	return nil
+}
+
+func resolveSharedTierDomain(project, vProjName string, env core.Environment, explicit, baseDomain, teamSlug string) string {
+	if explicit != "" {
+		return core.NormalizeDomain(explicit)
+	}
+	if baseDomain != "" {
+		if dom, err := core.EnvironmentDomain(project, env, "web", baseDomain); err == nil && dom != "" {
+			return dom
+		}
+	}
+	if teamSlug == "" {
+		return ""
+	}
+	if env == core.EnvProd {
+		return fmt.Sprintf("%s-%s.vercel.app", vProjName, teamSlug)
+	}
+	return fmt.Sprintf("%s-%s-%s.vercel.app", vProjName, env, teamSlug)
+}
+
+func attachTierDomains(
+	ctx *pulumi.Context,
+	baseName, primary string,
+	extras []string,
+	customEnvID pulumi.StringPtrInput,
+	teamID string,
+	proj *vercelprov.Project,
+	res *SharedResource,
+) (*vercelprov.ProjectDomain, error) {
+	all := core.DedupeDomains([]string{primary}, extras)
+	var first *vercelprov.ProjectDomain
+	for idx, dom := range all {
+		resName := baseName
+		if idx > 0 {
+			resName = fmt.Sprintf("%s-extra-%d", baseName, idx)
+		}
+		pd, err := vercelprov.NewProjectDomain(ctx, resName, &vercelprov.ProjectDomainArgs{
+			ProjectId:           proj.ID(),
+			TeamId:              optionalVercelStr(teamID),
+			Domain:              pulumi.String(dom),
+			CustomEnvironmentId: customEnvID,
+			WaitForReady:        pulumi.Bool(strings.HasSuffix(dom, ".vercel.app")),
+		}, pulumi.Parent(res))
+		if err != nil {
+			return nil, err
+		}
+		if idx == 0 {
+			first = pd
+		} else {
+			res.ExtraProjectDomains = append(res.ExtraProjectDomains, pd)
+		}
+	}
+	return first, nil
 }
 
 func createAutomationBypass(
@@ -313,8 +389,11 @@ func registerSharedVercelOutputs(ctx *pulumi.Context, res *SharedResource) error
 		"vercelProjectName":        res.VercelProjectName,
 		"teamId":                   res.TeamID,
 		"teamSlug":                 res.TeamSlug,
+		"baseDomain":               res.BaseDomain,
+		"devCustomEnvironmentId":   res.DevCustomEnvironmentID,
 		"stageCustomEnvironmentId": res.StageCustomEnvironmentID,
 		"protectionBypassSecret":   res.ProtectionBypassSecret,
+		"devDomainName":            res.DevDomainName,
 		"prodDomainName":           res.ProdDomainName,
 		"stageDomainName":          res.StageDomainName,
 		"blobStoreId":              res.BlobStoreID,

@@ -13,7 +13,7 @@ go get github.com/cloudvoyant/openbase/libs/components@v0.1.0
 | Package | Role | Declarative Specs |
 | --- | --- | --- |
 | `libs/components/core` | Lifecycle contracts, environment validation, naming, tags, and `Links` | `Stateless`, `Stateful`, `StatelessResource`, `StatefulResource`, `ResolveLinks` |
-| `libs/components/gcp` | Google Cloud Platform compute, storage, and shared platform roots | `Shared`, `CloudRunService`, `Bucket`, `overlayfs` |
+| `libs/components/gcp` | Google Cloud Platform compute, wildcard HTTPS load balancing, storage, and shared platform roots | `Shared`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs` |
 | `libs/components/vercel` | Vercel web hosting and Blob storage | `Shared`, `WebApp`, `BlobStore` |
 | `libs/components/neon` | Branched serverless PostgreSQL | `SharedProject`, `Database` |
 | `libs/components/kinde` | Two-tenant OAuth2 / OIDC authentication | `SharedOidcApp`, `OidcApp` |

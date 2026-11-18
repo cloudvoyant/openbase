@@ -32,6 +32,9 @@ type BlobStore struct {
 	TeamID                   string
 	Access                   string
 	Region                   string
+	EnableDevEnvironment     bool
+	SkipStageEnvironment     bool
+	DevCustomEnvironmentID   pulumi.StringInput
 	StageCustomEnvironmentID pulumi.StringInput
 	BlobReadWriteToken       pulumi.StringInput
 }
@@ -43,6 +46,8 @@ type BlobStoreResource struct {
 
 	Store              *vercelprov.BlobStore
 	Connection         *vercelprov.BlobProjectConnection
+	DevTokenEnvVar     *vercelprov.ProjectEnvironmentVariable
+	DevBaseURLEnvVar   *vercelprov.ProjectEnvironmentVariable
 	StageTokenEnvVar   *vercelprov.ProjectEnvironmentVariable
 	StageBaseURLEnvVar *vercelprov.ProjectEnvironmentVariable
 	StoreID            pulumi.StringOutput
@@ -84,6 +89,7 @@ func (b BlobStore) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) 
 type resolvedBlobRefs struct {
 	storeID    pulumi.StringOutput
 	projectID  pulumi.StringOutput
+	devEnvID   pulumi.StringOutput
 	stageEnvID pulumi.StringOutput
 }
 
@@ -107,6 +113,9 @@ func provisionBlobStore(
 	}
 	res.StoreID = refs.storeID
 	res.BlobBaseURL = DeriveBlobBaseURL(refs.storeID)
+	if err := propagateDevBlobEnv(ctx, name, meta, spec, refs, res); err != nil {
+		return err
+	}
 	return propagateStageBlobEnv(ctx, name, meta, spec, refs, res)
 }
 
@@ -117,6 +126,9 @@ func resolveBlobRefs(ctx *pulumi.Context, name string, spec BlobStore) (resolved
 	}
 	if spec.VercelProjectID != nil {
 		refs.projectID = spec.VercelProjectID.ToStringOutput()
+	}
+	if spec.DevCustomEnvironmentID != nil {
+		refs.devEnvID = spec.DevCustomEnvironmentID.ToStringOutput()
 	}
 	if spec.StageCustomEnvironmentID != nil {
 		refs.stageEnvID = spec.StageCustomEnvironmentID.ToStringOutput()
@@ -138,7 +150,10 @@ func applySharedBlobStruct(refs *resolvedBlobRefs, shared *SharedResource) {
 	if !isOutSet(refs.projectID) {
 		refs.projectID = shared.ProjectID
 	}
-	if !isOutSet(refs.stageEnvID) {
+	if !isOutSet(refs.devEnvID) && shared.DevEnvironment != nil {
+		refs.devEnvID = shared.DevCustomEnvironmentID
+	}
+	if !isOutSet(refs.stageEnvID) && shared.StageEnvironment != nil {
 		refs.stageEnvID = shared.StageCustomEnvironmentID
 	}
 }
@@ -157,6 +172,9 @@ func loadSharedBlobStackRef(
 	}
 	if !isOutSet(refs.projectID) {
 		refs.projectID = preferVercelStackOutput(sr, "vercelProjectId", "projectId")
+	}
+	if !isOutSet(refs.devEnvID) {
+		refs.devEnvID = optionalVercelStackOutput(sr, "devCustomEnvironmentId")
 	}
 	if !isOutSet(refs.stageEnvID) {
 		refs.stageEnvID = optionalVercelStackOutput(sr, "stageCustomEnvironmentId")
@@ -202,6 +220,27 @@ func ensureUnderlyingBlobStore(
 	return nil
 }
 
+func propagateDevBlobEnv(
+	ctx *pulumi.Context,
+	name string,
+	meta core.ResourceMeta,
+	spec BlobStore,
+	refs resolvedBlobRefs,
+	res *BlobStoreResource,
+) error {
+	hasDevCustom := spec.EnableDevEnvironment || (spec.Shared != nil && spec.Shared.DevEnvironment != nil)
+	if meta.Environment != core.EnvDev || !hasDevCustom || !isOutSet(refs.projectID) || !isOutSet(refs.devEnvID) {
+		return nil
+	}
+	baseVar, tokVar, err := createCustomEnvBlobVars(ctx, name+"-dev", refs.projectID, refs.devEnvID, spec, res)
+	if err != nil {
+		return err
+	}
+	res.DevBaseURLEnvVar = baseVar
+	res.DevTokenEnvVar = tokVar
+	return nil
+}
+
 func propagateStageBlobEnv(
 	ctx *pulumi.Context,
 	name string,
@@ -210,37 +249,45 @@ func propagateStageBlobEnv(
 	refs resolvedBlobRefs,
 	res *BlobStoreResource,
 ) error {
-	if meta.Environment != core.EnvStage || !isOutSet(refs.projectID) || !isOutSet(refs.stageEnvID) {
+	if meta.Environment != core.EnvStage || spec.SkipStageEnvironment || !isOutSet(refs.projectID) || !isOutSet(refs.stageEnvID) {
 		return nil
 	}
-	baseVar, err := vercelprov.NewProjectEnvironmentVariable(ctx, name+"-stage-base-url", &vercelprov.ProjectEnvironmentVariableArgs{
-		ProjectId:            refs.projectID,
-		TeamId:               optionalVercelStr(spec.TeamID),
-		CustomEnvironmentIds: pulumi.StringArray{refs.stageEnvID},
-		Key:                  pulumi.String("BLOB_BASE_URL"),
-		Value:                res.BlobBaseURL,
-		Sensitive:            pulumi.Bool(false),
-	}, pulumi.Parent(res))
+	baseVar, tokVar, err := createCustomEnvBlobVars(ctx, name+"-stage", refs.projectID, refs.stageEnvID, spec, res)
 	if err != nil {
 		return err
 	}
 	res.StageBaseURLEnvVar = baseVar
-	if spec.BlobReadWriteToken == nil {
-		return nil
-	}
-	tokVar, err := vercelprov.NewProjectEnvironmentVariable(ctx, name+"-stage-rw-token", &vercelprov.ProjectEnvironmentVariableArgs{
-		ProjectId:            refs.projectID,
+	res.StageTokenEnvVar = tokVar
+	return nil
+}
+
+func createCustomEnvBlobVars(
+	ctx *pulumi.Context,
+	prefix string,
+	projectID, customEnvID pulumi.StringOutput,
+	spec BlobStore,
+	res *BlobStoreResource,
+) (*vercelprov.ProjectEnvironmentVariable, *vercelprov.ProjectEnvironmentVariable, error) {
+	baseVar, err := vercelprov.NewProjectEnvironmentVariable(ctx, prefix+"-base-url", &vercelprov.ProjectEnvironmentVariableArgs{
+		ProjectId:            projectID,
 		TeamId:               optionalVercelStr(spec.TeamID),
-		CustomEnvironmentIds: pulumi.StringArray{refs.stageEnvID},
+		CustomEnvironmentIds: pulumi.StringArray{customEnvID},
+		Key:                  pulumi.String("BLOB_BASE_URL"),
+		Value:                res.BlobBaseURL,
+		Sensitive:            pulumi.Bool(false),
+	}, pulumi.Parent(res))
+	if err != nil || spec.BlobReadWriteToken == nil {
+		return baseVar, nil, err
+	}
+	tokVar, err := vercelprov.NewProjectEnvironmentVariable(ctx, prefix+"-rw-token", &vercelprov.ProjectEnvironmentVariableArgs{
+		ProjectId:            projectID,
+		TeamId:               optionalVercelStr(spec.TeamID),
+		CustomEnvironmentIds: pulumi.StringArray{customEnvID},
 		Key:                  pulumi.String("BLOB_READ_WRITE_TOKEN"),
 		Value:                pulumi.ToSecret(spec.BlobReadWriteToken.ToStringOutput()).(pulumi.StringOutput),
 		Sensitive:            pulumi.Bool(true),
 	}, pulumi.Parent(res))
-	if err != nil {
-		return err
-	}
-	res.StageTokenEnvVar = tokVar
-	return nil
+	return baseVar, tokVar, err
 }
 
 func buildBlobStoreLink(meta core.ResourceMeta, spec BlobStore, res *BlobStoreResource) core.LinkDescriptor {

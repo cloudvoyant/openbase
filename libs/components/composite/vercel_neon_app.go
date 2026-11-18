@@ -15,30 +15,35 @@ var _ core.StatelessResource = (*VercelNeonAppResource)(nil)
 
 // VercelNeonApp declares a per-environment Vercel web application (dev, stage, prod, preview-*) wired to VercelNeonShared via StackReference.
 type VercelNeonApp struct {
-	Name               string
-	Project            string
-	Repo               string
-	Environment        string
-	Links              []core.Resource
-	Env                map[string]pulumi.StringInput
-	Secrets            map[string]pulumi.StringInput
-	SharedStackRef     string
-	VercelProjectName  string
-	TeamID             string
-	TeamSlug           string
-	SourceDir          string
-	PathPrefix         string
-	Framework          string
-	RootDirectory      string
-	ProdDomain         string
-	StageDomain        string
-	PreviewAlias       string
-	DisableBlobStore   bool
-	BlobReadWriteToken pulumi.StringInput
-	DatabaseName       string
-	RoleName           string
-	Auth               *KindeAppConfig
-	SkipStackExports   bool
+	Name                 string
+	Project              string
+	Repo                 string
+	Environment          string
+	Links                []core.Resource
+	Env                  map[string]pulumi.StringInput
+	Secrets              map[string]pulumi.StringInput
+	SharedStackRef       string
+	VercelProjectName    string
+	TeamID               string
+	TeamSlug             string
+	BaseDomain           string
+	EnableDevEnvironment bool
+	SkipStageEnvironment bool
+	SourceDir            string
+	PathPrefix           string
+	Framework            string
+	RootDirectory        string
+	DevDomain            string
+	ProdDomain           string
+	StageDomain          string
+	PreviewAlias         string
+	ExtraDomains         []string
+	DisableBlobStore     bool
+	BlobReadWriteToken   pulumi.StringInput
+	DatabaseName         string
+	RoleName             string
+	Auth                 *KindeAppConfig
+	SkipStackExports     bool
 }
 
 // VercelNeonAppResource holds the environment-scoped Neon branch, Blob overlay, Kinde binding, and Vercel WebApp.
@@ -100,24 +105,29 @@ func provisionVercelEnvStack(
 	}
 	links = append(links, spec.Links...)
 	web, err := vercel.WebApp{
-		Name:              spec.Name,
-		Project:           meta.Project,
-		Repo:              meta.Repo,
-		Environment:       string(meta.Environment),
-		Links:             links,
-		Env:               spec.Env,
-		Secrets:           spec.Secrets,
-		SharedStackRef:    sharedRef,
-		VercelProjectName: spec.VercelProjectName,
-		TeamID:            spec.TeamID,
-		TeamSlug:          spec.TeamSlug,
-		SourceDir:         spec.SourceDir,
-		PathPrefix:        spec.PathPrefix,
-		Framework:         spec.Framework,
-		RootDirectory:     spec.RootDirectory,
-		ProdDomain:        spec.ProdDomain,
-		StageDomain:       spec.StageDomain,
-		PreviewAlias:      spec.PreviewAlias,
+		Name:                 spec.Name,
+		Project:              meta.Project,
+		Repo:                 meta.Repo,
+		Environment:          string(meta.Environment),
+		Links:                links,
+		Env:                  spec.Env,
+		Secrets:              spec.Secrets,
+		SharedStackRef:       sharedRef,
+		VercelProjectName:    spec.VercelProjectName,
+		TeamID:               spec.TeamID,
+		TeamSlug:             spec.TeamSlug,
+		BaseDomain:           spec.BaseDomain,
+		EnableDevEnvironment: spec.EnableDevEnvironment,
+		SkipStageEnvironment: spec.SkipStageEnvironment,
+		SourceDir:            spec.SourceDir,
+		PathPrefix:           spec.PathPrefix,
+		Framework:            spec.Framework,
+		RootDirectory:        spec.RootDirectory,
+		DevDomain:            spec.DevDomain,
+		ProdDomain:           spec.ProdDomain,
+		StageDomain:          spec.StageDomain,
+		PreviewAlias:         spec.PreviewAlias,
+		ExtraDomains:         spec.ExtraDomains,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -177,14 +187,16 @@ func attachOptionalVercelBlob(
 	}
 	blobBranch, _ := resolvePreviewStorageBranch(ctx, meta.Environment)
 	blobs, err := vercel.BlobStore{
-		Name:               "uploads",
-		Project:            meta.Project,
-		Repo:               meta.Repo,
-		Environment:        string(meta.Environment),
-		BranchFrom:         blobBranch,
-		SharedStackRef:     sharedRef,
-		TeamID:             spec.TeamID,
-		BlobReadWriteToken: spec.BlobReadWriteToken,
+		Name:                 "uploads",
+		Project:              meta.Project,
+		Repo:                 meta.Repo,
+		Environment:          string(meta.Environment),
+		BranchFrom:           blobBranch,
+		SharedStackRef:       sharedRef,
+		TeamID:               spec.TeamID,
+		EnableDevEnvironment: spec.EnableDevEnvironment,
+		SkipStageEnvironment: spec.SkipStageEnvironment,
+		BlobReadWriteToken:   spec.BlobReadWriteToken,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -213,6 +225,8 @@ func attachOptionalVercelKinde(
 		SharedStackRef:    sharedRef,
 		VercelProjectName: spec.VercelProjectName,
 		VercelTeamSlug:    spec.TeamSlug,
+		BaseDomain:        spec.BaseDomain,
+		DevDomain:         spec.DevDomain,
 		ProdDomain:        spec.ProdDomain,
 		StageDomain:       spec.StageDomain,
 		CallbackPath:      spec.Auth.CallbackPath,
@@ -230,6 +244,7 @@ func exportVercelEnvOutputs(ctx *pulumi.Context, skip bool, res *VercelNeonAppRe
 		return
 	}
 	ctx.Export("url", res.WebApp.URL)
+	ctx.Export("urls", res.WebApp.URLs)
 	ctx.Export("aliasHost", res.WebApp.AliasHost)
 	ctx.Export("deploymentId", res.WebApp.DeploymentID)
 	ctx.Export("branchId", res.Database.BranchID)

@@ -25,7 +25,7 @@ go get github.com/cloudvoyant/openbase/libs/components@latest
 | Import Path | Purpose | Declarative Specs |
 | :--- | :--- | :--- |
 | `github.com/cloudvoyant/openbase/libs/components/core` | Environment validation (`shared`, `dev`, `stage`, `prod`, `preview-<slug>`), naming, `openbase.io/*` tags, escape hatches, and typed `Links` | `Stateless`, `Stateful`, `StatelessResource`, `StatefulResource`, `ResolveLinks` |
-| `github.com/cloudvoyant/openbase/libs/components/gcp` | Cloud Run v2 services, GCS buckets with zero-copy preview overlays, and shared WIF/Artifact Registry/KMS roots | `Shared`, `CloudRunService`, `Bucket`, `overlayfs.Store` |
+| `github.com/cloudvoyant/openbase/libs/components/gcp` | Cloud Run v2 services, shared wildcard HTTPS Load Balancers (`*.gcp.cloudvoyant.io`), GCS buckets with zero-copy preview overlays, and shared WIF/Artifact Registry/KMS roots | `Shared`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs.Store` |
 | `github.com/cloudvoyant/openbase/libs/components/vercel` | Team-safe Vercel web apps, Blob stores, custom `staging` environments, and keyless GCP OIDC federation | `Shared`, `WebApp`, `BlobStore`, `BlobOverlayClient` |
 | `github.com/cloudvoyant/openbase/libs/components/neon` | Copy-on-write branched serverless PostgreSQL over `kislerdm/neon` | `SharedProject`, `Database` |
 | `github.com/cloudvoyant/openbase/libs/components/kinde` | Two-tenant (`dev` + `prod`) OAuth2/OIDC applications over `kinde-oss/kinde` | `SharedOidcApp`, `OidcApp` |

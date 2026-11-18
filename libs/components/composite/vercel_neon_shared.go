@@ -16,20 +16,27 @@ var _ core.StatelessResource = (*VercelNeonSharedResource)(nil)
 
 // VercelNeonShared declares cross-environment Vercel, Neon, and Kinde platform roots in Premise's infra/shared program.
 type VercelNeonShared struct {
-	Name              string
-	Project           string
-	Repo              string
-	Environment       string
-	VercelProjectName string
-	TeamID            string
-	TeamSlug          string
-	ProdDomain        string
-	StageDomain       string
-	DisableBlobStore  bool
-	NeonOrgID         string
-	NeonRegionID      string
-	Auth              *KindeSharedConfig
-	SkipStackExports  bool
+	Name                 string
+	Project              string
+	Repo                 string
+	Environment          string
+	VercelProjectName    string
+	TeamID               string
+	TeamSlug             string
+	BaseDomain           string
+	EnableDevEnvironment bool
+	SkipStageEnvironment bool
+	DevDomain            string
+	ProdDomain           string
+	StageDomain          string
+	ExtraDevDomains      []string
+	ExtraStageDomains    []string
+	ExtraProdDomains     []string
+	DisableBlobStore     bool
+	NeonOrgID            string
+	NeonRegionID         string
+	Auth                 *KindeSharedConfig
+	SkipStackExports     bool
 }
 
 // VercelNeonSharedResource holds the shared Vercel Project, Neon Project, and Kinde OIDC roots exported for environment stacks.
@@ -80,16 +87,23 @@ func provisionVercelSharedStack(
 ) error {
 	vProjName := defaultCompStr(spec.VercelProjectName, "openbase-"+meta.Project)
 	vShared, err := vercel.Shared{
-		Name:              "vercel",
-		Project:           meta.Project,
-		Repo:              meta.Repo,
-		Environment:       string(meta.Environment),
-		VercelProjectName: vProjName,
-		TeamID:            spec.TeamID,
-		TeamSlug:          spec.TeamSlug,
-		ProdDomain:        spec.ProdDomain,
-		StageDomain:       spec.StageDomain,
-		EnableBlobStore:   !spec.DisableBlobStore,
+		Name:                 "vercel",
+		Project:              meta.Project,
+		Repo:                 meta.Repo,
+		Environment:          string(meta.Environment),
+		VercelProjectName:    vProjName,
+		TeamID:               spec.TeamID,
+		TeamSlug:             spec.TeamSlug,
+		BaseDomain:           spec.BaseDomain,
+		EnableDevEnvironment: spec.EnableDevEnvironment,
+		SkipStageEnvironment: spec.SkipStageEnvironment,
+		DevDomain:            spec.DevDomain,
+		ProdDomain:           spec.ProdDomain,
+		StageDomain:          spec.StageDomain,
+		ExtraDevDomains:      spec.ExtraDevDomains,
+		ExtraStageDomains:    spec.ExtraStageDomains,
+		ExtraProdDomains:     spec.ExtraProdDomains,
+		EnableBlobStore:      !spec.DisableBlobStore,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -141,8 +155,13 @@ func registerOptionalVercelSharedKinde(
 		AppName:                    defaultCompStr(cfg.AppName, vProjName),
 		VercelProjectName:          vProjName,
 		VercelTeamSlug:             spec.TeamSlug,
+		BaseDomain:                 spec.BaseDomain,
+		DevDomain:                  spec.DevDomain,
 		ProdDomain:                 spec.ProdDomain,
 		StageDomain:                spec.StageDomain,
+		ExtraDevDomains:            spec.ExtraDevDomains,
+		ExtraStageDomains:          spec.ExtraStageDomains,
+		ExtraProdDomains:           spec.ExtraProdDomains,
 		CallbackPath:               cfg.CallbackPath,
 		ExtraDevRedirectURIs:       cfg.ExtraDevRedirectURIs,
 		ExtraDevLogoutURIs:         cfg.ExtraDevLogoutURIs,
@@ -217,8 +236,11 @@ func exportVercelSharedOutputs(
 	ctx.Export("vercelProjectId", v.ProjectID)
 	ctx.Export("vercelProjectName", v.VercelProjectName)
 	ctx.Export("teamSlug", v.TeamSlug)
+	ctx.Export("baseDomain", v.BaseDomain)
+	ctx.Export("devCustomEnvironmentId", v.DevCustomEnvironmentID)
 	ctx.Export("stageCustomEnvironmentId", v.StageCustomEnvironmentID)
 	ctx.Export("protectionBypassSecret", v.ProtectionBypassSecret)
+	ctx.Export("devDomainName", v.DevDomainName)
 	ctx.Export("prodDomainName", v.ProdDomainName)
 	ctx.Export("stageDomainName", v.StageDomainName)
 	ctx.Export("blobStoreId", v.BlobStoreID)

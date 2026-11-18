@@ -15,7 +15,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestCompositeApps(t *testing.T) {
+func TestVercelComposite(t *testing.T) {
 	t.Run("given composite.VercelNeonShared and composite.VercelNeonApp specs", func(t *testing.T) {
 		t.Run("when VercelNeonShared is registered on shared, then it provisions Vercel Shared, Neon SharedProject, Kinde SharedOidcApp, and shared preview env vars", func(t *testing.T) {
 			// Arrange.
@@ -84,8 +84,37 @@ func TestCompositeApps(t *testing.T) {
 			mocks.assertCount(t, "vercel:index/deployment:Deployment", 1)
 			mocks.assertCount(t, "vercel:index/alias:Alias", 1)
 		})
-	})
 
+		t.Run("when VercelNeonApp uses BaseDomain and ExtraDomains, then it binds {project}-{previewId}.{baseDomain} and extra vanity aliases", func(t *testing.T) {
+			// Arrange.
+			mocks := newCompositeMocks()
+			urlCh := make(chan string, 1)
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				spec := sampleVercelApp("preview-pr-20")
+				spec.BaseDomain = "vercel.cloudvoyant.io"
+				spec.ExtraDomains = []string{"pr20.storefront.io"}
+				app, e := spec.Register(ctx)
+				if e != nil {
+					return e
+				}
+				app.URL.ApplyT(func(v string) string { urlCh <- v; return v })
+				return nil
+			}, pulumi.WithMocks("storefront", "preview-pr-20", mocks))
+
+			// Assert.
+			requireCompNoErr(t, err)
+			if got := <-urlCh; got != "https://storefront-pr-20.vercel.cloudvoyant.io" {
+				t.Fatalf("BaseDomain preview URL = %q", got)
+			}
+			mocks.assertCount(t, "vercel:index/alias:Alias", 2)
+			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
+		})
+	})
+}
+
+func TestGCPComposite(t *testing.T) {
 	t.Run("given composite.GcpCloudRunNeonShared and composite.GcpCloudRunNeonApp specs", func(t *testing.T) {
 		t.Run("when GcpCloudRunNeonShared is registered on shared, then it provisions GCP Shared, Neon SharedProject, and Kinde SharedOidcApp", func(t *testing.T) {
 			// Arrange.
@@ -128,6 +157,42 @@ func TestCompositeApps(t *testing.T) {
 			mocks.assertCount(t, "gcp:storage/bucket:Bucket", 1)
 			mocks.assertCount(t, "neon:index/branch:Branch", 1)
 			mocks.assertCount(t, "gcp:cloudrunv2/service:Service", 1)
+		})
+
+		t.Run("when GcpCloudRunNeonShared enables BaseDomain + LoadBalancer and GcpCloudRunNeonApp sets BaseDomain + Domains, then both wire gcp.cloudvoyant.io and extra DomainMappings", func(t *testing.T) {
+			// Arrange.
+			sharedMocks := newCompositeMocks()
+			appMocks := newCompositeMocks()
+			urlCh := make(chan string, 1)
+
+			// Act.
+			sharedErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				spec := sampleGCPShared("")
+				spec.BaseDomain = "gcp.cloudvoyant.io"
+				spec.EnableLoadBalancer = true
+				_, e := spec.Register(ctx)
+				return e
+			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
+			appErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				spec := sampleGCPApp("stage")
+				spec.BaseDomain = "gcp.cloudvoyant.io"
+				spec.Domains = []string{"stage.storefront.io"}
+				app, e := spec.Register(ctx)
+				if e != nil {
+					return e
+				}
+				app.URL.ApplyT(func(v string) string { urlCh <- v; return v })
+				return nil
+			}, pulumi.WithMocks("storefront", "stage", appMocks))
+
+			// Assert.
+			requireCompNoErr(t, sharedErr)
+			requireCompNoErr(t, appErr)
+			if got := <-urlCh; got != "https://storefront-stage.gcp.cloudvoyant.io" {
+				t.Fatalf("BaseDomain stage URL = %q", got)
+			}
+			sharedMocks.assertCount(t, "gcp:compute/globalForwardingRule:GlobalForwardingRule", 1)
+			appMocks.assertCount(t, "gcp:cloudrun/domainMapping:DomainMapping", 1)
 		})
 	})
 }

@@ -142,6 +142,10 @@ func TestCloudRunService(t *testing.T) {
 				t.Fatalf("unexpected CloudRunURL %q", url)
 			}
 		})
+
+		t.Run("when BaseDomain and multiple Domains are configured, then it names the service {project}-{envLabel} for NEG URL mask routing and creates all DomainMappings", func(t *testing.T) {
+			assertCloudRunBaseDomainAndMappings(t)
+		})
 	})
 }
 
@@ -156,4 +160,39 @@ func assertBoundedSAAndServiceName(t *testing.T, mocks *gcpMocks, saID string) {
 	if !ok || len(svcRec.inputs["name"].StringValue()) > 49 {
 		t.Fatalf("Cloud Run service name must be <= 49 chars, got %+v", svcRec.inputs["name"])
 	}
+}
+
+func assertCloudRunBaseDomainAndMappings(t *testing.T) {
+	t.Helper()
+	// Arrange.
+	mocks := newGCPMocks()
+	urlCh := make(chan string, 1)
+
+	// Act.
+	err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		svc, err := gcp.CloudRunService{
+			Name:        "web",
+			Project:     "storefront",
+			Environment: "prod",
+			Image:       pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
+			BaseDomain:  "gcp.cloudvoyant.io",
+			Domains:     []string{"storefront.io", "www.storefront.io"},
+		}.Register(ctx)
+		if err != nil {
+			return err
+		}
+		svc.URL.ApplyT(func(v string) string { urlCh <- v; return v })
+		return nil
+	}, pulumi.WithMocks("storefront", "prod", mocks))
+
+	// Assert.
+	requireGCPNoErr(t, err)
+	if got := <-urlCh; got != "https://storefront-prod.gcp.cloudvoyant.io" {
+		t.Fatalf("BaseDomain URL = %q", got)
+	}
+	svcRec, ok := mocks.findFirst("gcp:cloudrunv2/service:Service")
+	if !ok || svcRec.inputs["name"].StringValue() != "storefront-prod" {
+		t.Fatalf("expected service name storefront-prod for URL mask, got %+v", svcRec.inputs["name"])
+	}
+	mocks.assertCount(t, "gcp:cloudrun/domainMapping:DomainMapping", 2)
 }

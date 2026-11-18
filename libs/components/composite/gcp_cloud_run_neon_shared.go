@@ -18,22 +18,27 @@ var _ core.StatelessResource = (*GcpCloudRunNeonSharedResource)(nil)
 
 // GcpCloudRunNeonShared declares cross-environment GCP, Neon, and Kinde platform roots in Premise's infra/shared program.
 type GcpCloudRunNeonShared struct {
-	Name             string
-	ServiceName      string
-	Project          string
-	Repo             string
-	Environment      string
-	GCPProject       string
-	GCPProjectNumber string
-	Location         string
-	PoolSuffix       string
-	GitHubOrg        string
-	GitHubRepo       string
-	SkipKeyRing      bool
-	NeonOrgID        string
-	NeonRegionID     string
-	Auth             *KindeSharedConfig
-	SkipStackExports bool
+	Name               string
+	ServiceName        string
+	Project            string
+	Repo               string
+	Environment        string
+	GCPProject         string
+	GCPProjectNumber   string
+	Location           string
+	BaseDomain         string
+	EnableLoadBalancer bool
+	ExtraDevDomains    []string
+	ExtraStageDomains  []string
+	ExtraProdDomains   []string
+	PoolSuffix         string
+	GitHubOrg          string
+	GitHubRepo         string
+	SkipKeyRing        bool
+	NeonOrgID          string
+	NeonRegionID       string
+	Auth               *KindeSharedConfig
+	SkipStackExports   bool
 }
 
 // GcpCloudRunNeonSharedResource holds the shared GCP Artifact Registry/WIF, Neon Project, and Kinde OIDC roots.
@@ -84,16 +89,18 @@ func provisionGCPSharedStack(
 	res *GcpCloudRunNeonSharedResource,
 ) error {
 	gShared, err := gcp.Shared{
-		Name:        "gcp",
-		Project:     meta.Project,
-		Repo:        meta.Repo,
-		Environment: string(meta.Environment),
-		GCPProject:  optionalGCPProjectPtr(spec.GCPProject),
-		Location:    spec.Location,
-		PoolSuffix:  spec.PoolSuffix,
-		GitHubOrg:   spec.GitHubOrg,
-		GitHubRepo:  spec.GitHubRepo,
-		SkipKeyRing: spec.SkipKeyRing,
+		Name:               "gcp",
+		Project:            meta.Project,
+		Repo:               meta.Repo,
+		Environment:        string(meta.Environment),
+		GCPProject:         optionalGCPProjectPtr(spec.GCPProject),
+		Location:           spec.Location,
+		BaseDomain:         spec.BaseDomain,
+		EnableLoadBalancer: spec.EnableLoadBalancer,
+		PoolSuffix:         spec.PoolSuffix,
+		GitHubOrg:          spec.GitHubOrg,
+		GitHubRepo:         spec.GitHubRepo,
+		SkipKeyRing:        spec.SkipKeyRing,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -146,8 +153,12 @@ func registerOptionalGCPSharedKinde(
 		Repo:                       meta.Repo,
 		Environment:                string(meta.Environment),
 		AppName:                    defaultCompStr(cfg.AppName, "openbase-"+meta.Project),
+		BaseDomain:                 spec.BaseDomain,
 		StageDomain:                stageHost,
 		ProdDomain:                 prodHost,
+		ExtraDevDomains:            spec.ExtraDevDomains,
+		ExtraStageDomains:          spec.ExtraStageDomains,
+		ExtraProdDomains:           spec.ExtraProdDomains,
 		CallbackPath:               cb,
 		ExtraDevRedirectURIs:       append(devRedirects, cfg.ExtraDevRedirectURIs...),
 		ExtraDevLogoutURIs:         append(devLogouts, cfg.ExtraDevLogoutURIs...),
@@ -167,11 +178,11 @@ func computeGCPKindeURLs(
 	spec GcpCloudRunNeonShared,
 	cb string,
 ) (string, string, []string, []string, []string, []string, error) {
-	stageURL, err := gcp.CloudRunURL(project, core.EnvStage, spec.ServiceName, spec.GCPProjectNumber, spec.Location)
+	stageURL, err := gcp.CloudRunRegionalURL(project, core.EnvStage, spec.ServiceName, spec.GCPProjectNumber, spec.Location, spec.BaseDomain)
 	if err != nil {
 		return "", "", nil, nil, nil, nil, err
 	}
-	prodURL, err := gcp.CloudRunURL(project, core.EnvProd, spec.ServiceName, spec.GCPProjectNumber, spec.Location)
+	prodURL, err := gcp.CloudRunRegionalURL(project, core.EnvProd, spec.ServiceName, spec.GCPProjectNumber, spec.Location, spec.BaseDomain)
 	if err != nil {
 		return "", "", nil, nil, nil, nil, err
 	}
@@ -187,6 +198,11 @@ func computeGCPKindeURLs(
 	prodHash := fmt.Sprintf("https://%s-prod-*-uc.a.run.app", project)
 	prodExtrasR := []string{stageHash + cb, prodHash + cb}
 	prodExtrasL := []string{stageHash + "/", prodHash + "/"}
+	if core.NormalizeDomain(spec.BaseDomain) != "" {
+		prodExtrasR = append(prodExtrasR, stageURL+cb, prodURL+cb)
+		prodExtrasL = append(prodExtrasL, stageURL+"/", prodURL+"/")
+		return "", "", devRedirects, devLogouts, prodExtrasR, prodExtrasL, nil
+	}
 	return strings.TrimPrefix(stageURL, "https://"), strings.TrimPrefix(prodURL, "https://"), devRedirects, devLogouts, prodExtrasR, prodExtrasL, nil
 }
 
@@ -200,9 +216,15 @@ func exportGCPSharedOutputs(
 	if skip {
 		return
 	}
+	ctx.Export("baseDomain", g.BaseDomain)
 	ctx.Export("repositoryId", g.RepositoryID)
 	ctx.Export("repositoryUrl", g.RepositoryURL)
 	ctx.Export("workloadIdentityPoolName", g.WorkloadIdentityPoolName)
+	if g.LoadBalancer != nil {
+		ctx.Export("loadBalancerIp", g.LoadBalancer.IPAddress)
+		ctx.Export("dnsAuthRecordName", g.LoadBalancer.DnsAuthRecordName)
+		ctx.Export("dnsAuthRecordData", g.LoadBalancer.DnsAuthRecordData)
+	}
 	ctx.Export("neonProjectId", n.ProjectID)
 	ctx.Export("neonDefaultBranchId", n.DefaultBranchID)
 	exportKindeSharedOutputs(ctx, k)
