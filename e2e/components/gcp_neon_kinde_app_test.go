@@ -54,7 +54,7 @@ func TestGCPNeonKindeApp(t *testing.T) {
 		)
 	})
 
-	t.Run("given a Premise-structured composite.GcpCloudRunNeonShared (infra/shared) and composite.GcpCloudRunNeonApp (infra) workspace", func(t *testing.T) {
+	t.Run("given a Premise-structured composite.GcpCloudRunNeonProject (infra/shared) and composite.GcpCloudRunNeonApp (infra) workspace", func(t *testing.T) {
 		for _, stack := range []string{"shared", "dev", "prod", "stage", "preview-pr-12"} {
 			h.InitStack(t, stack)
 		}

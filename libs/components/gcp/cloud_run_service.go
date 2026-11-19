@@ -57,7 +57,8 @@ type CloudRunService struct {
 	Secrets                  map[string]pulumi.StringInput
 	GCPProject               pulumi.StringPtrInput
 	GCPProjectNumber         pulumi.StringInput
-	SharedStackRef           string
+	GCPProjectRef            *ProjectResource
+	ProjectStackRef          string
 	ArtifactRegistryRepo     pulumi.StringInput
 	ArtifactRegistryLocation string
 	WorkloadIdentityPoolName pulumi.StringInput
@@ -188,7 +189,7 @@ func buildCloudRunResources(
 	res.ServiceAccountID = saID
 	res.ServiceAccountEmail = sa.Email
 
-	refs, err := resolveSharedRefs(ctx, name, spec)
+	refs, err := resolveProjectRefs(ctx, name, spec)
 	if err != nil {
 		return err
 	}
@@ -244,19 +245,13 @@ func createServiceAccount(
 	return sa, saID, selfGrant, nil
 }
 
-func resolveSharedRefs(ctx *pulumi.Context, name string, spec CloudRunService) (sharedRefs, error) {
-	var refs sharedRefs
-	if spec.ArtifactRegistryRepo != nil {
-		refs.repoID = spec.ArtifactRegistryRepo.ToStringOutput()
-	}
-	if spec.WorkloadIdentityPoolName != nil {
-		refs.poolName = spec.WorkloadIdentityPoolName.ToStringOutput()
-	}
-	if spec.SharedStackRef == "" {
+func resolveProjectRefs(ctx *pulumi.Context, name string, spec CloudRunService) (sharedRefs, error) {
+	refs := initDirectCloudRunRefs(spec)
+	if spec.ProjectStackRef == "" {
 		return refs, nil
 	}
-	sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{
-		Name: pulumi.String(spec.SharedStackRef),
+	sr, err := pulumi.NewStackReference(ctx, name+"-project-ref", &pulumi.StackReferenceArgs{
+		Name: pulumi.String(spec.ProjectStackRef),
 	})
 	if err != nil {
 		return sharedRefs{}, err
@@ -268,6 +263,21 @@ func resolveSharedRefs(ctx *pulumi.Context, name string, spec CloudRunService) (
 		refs.poolName = sr.GetStringOutput(pulumi.String("workloadIdentityPoolName"))
 	}
 	return refs, nil
+}
+
+func initDirectCloudRunRefs(spec CloudRunService) sharedRefs {
+	var refs sharedRefs
+	if spec.GCPProjectRef != nil {
+		refs.repoID = spec.GCPProjectRef.RepositoryID
+		refs.poolName = spec.GCPProjectRef.WorkloadIdentityPoolName
+	}
+	if spec.ArtifactRegistryRepo != nil {
+		refs.repoID = spec.ArtifactRegistryRepo.ToStringOutput()
+	}
+	if spec.WorkloadIdentityPoolName != nil {
+		refs.poolName = spec.WorkloadIdentityPoolName.ToStringOutput()
+	}
+	return refs
 }
 
 func grantArtifactRegistryAccess(

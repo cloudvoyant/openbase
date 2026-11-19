@@ -12,45 +12,62 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestSharedWithProvidersAndKeyRing(t *testing.T) {
-	t.Run("given gcp.Shared specs in the shared stack", func(t *testing.T) {
-		t.Run("when GitHub and Vercel OIDC providers are configured, then it registers APIs, Artifact Registry, WIF providers, and KeyRing", func(t *testing.T) {
+func TestPlatformAndProject(t *testing.T) {
+	t.Run("given gcp.Platform and gcp.Project specs", func(t *testing.T) {
+		t.Run("when two gcp.Project apps share one gcp.Platform, then APIs, WIF pool, and KeyRing are created once while each app gets its own Artifact Registry", func(t *testing.T) {
 			// Arrange.
 			mocks := newGCPMocks()
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				shared, err := gcp.Shared{
-					Project:        "storefront",
-					Repo:           "cloudvoyant/storefront",
+				plat, err := gcp.Platform{
+					Project:        "cloudvoyant",
 					GCPProject:     pulumi.String("cloudvoyant-openbase"),
 					GitHubOrg:      "cloudvoyant",
-					GitHubRepo:     "cloudvoyant/storefront",
 					VercelTeamSlug: "cloudvoyant",
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
-				assertSharedNotNil(t, shared)
+				appA, err := gcp.Project{
+					Name:       "gcp-a",
+					Project:    "storefront",
+					GCPProject: pulumi.String("cloudvoyant-openbase"),
+					Platform:   plat,
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				appB, err := gcp.Project{
+					Name:       "gcp-b",
+					Project:    "billing",
+					GCPProject: pulumi.String("cloudvoyant-openbase"),
+					Platform:   plat,
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				assertProjectNotNil(t, appA)
+				assertProjectNotNil(t, appB)
 				return nil
-			}, pulumi.WithMocks("storefront", "shared", mocks))
+			}, pulumi.WithMocks("cloudvoyant", "shared", mocks))
 
 			// Assert.
 			requireGCPNoErr(t, err)
 			mocks.assertCount(t, "gcp:projects/service:Service", 8)
-			mocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 1)
+			mocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 2)
 			mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
 			mocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 2)
 			mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 1)
 		})
 
-		t.Run("when SkipKeyRing is set and VercelIssuerMode is global, then it omits KeyRing and binds only the Vercel OIDC provider", func(t *testing.T) {
+		t.Run("when standalone gcp.Project sets SkipKeyRing and VercelIssuerMode global, then it provisions inline Platform without KeyRing", func(t *testing.T) {
 			// Arrange.
 			mocks := newGCPMocks()
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := gcp.Shared{
+				_, err := gcp.Project{
 					Project:          "storefront",
 					GCPProject:       pulumi.String("cloudvoyant-openbase"),
 					VercelTeamSlug:   "cloudvoyant",
@@ -143,7 +160,7 @@ func (m *gcpMocks) findFirst(typeToken string) (gcpMockRecord, bool) {
 	return gcpMockRecord{}, false
 }
 
-func assertSharedNotNil(t *testing.T, s *gcp.SharedResource) {
+func assertProjectNotNil(t *testing.T, s *gcp.ProjectResource) {
 	t.Helper()
 	if s.Repository == nil || s.WorkloadIdentityPool == nil || s.GitHubOIDCProvider == nil || s.VercelOIDCProvider == nil || s.KeyRing == nil {
 		t.Fatal("expected Repository, WorkloadIdentityPool, GitHubOIDCProvider, VercelOIDCProvider, and KeyRing to be non-nil")

@@ -1,3 +1,3 @@
 name: openbase-neon-db-fixture
 runtime: go
-description: Standalone Go consumer fixture for OpenBase neon.SharedProject and neon.Database E2E tests
+description: Standalone Go consumer fixture for OpenBase neon.Project and neon.Database E2E tests

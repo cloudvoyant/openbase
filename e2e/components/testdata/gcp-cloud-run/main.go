@@ -108,16 +108,16 @@ func main() {
 			return err
 		}
 		if env == core.EnvShared {
-			return deployShared(ctx)
+			return deployProject(ctx)
 		}
 		return deployEnvironment(ctx, env)
 	})
 }
 
-func deployShared(ctx *pulumi.Context) error {
+func deployProject(ctx *pulumi.Context) error {
 	gcpProject := os.Getenv("OPENBASE_TEST_GCP_PROJECT")
 	appProject := defaultEnv("OPENBASE_TEST_APP_PROJECT", "obe2ecr")
-	shared, err := gcp.Shared{
+	proj, err := gcp.Project{
 		Project:        appProject,
 		Repo:           "cloudvoyant/openbase",
 		GCPProject:     pulumi.String(gcpProject),
@@ -128,8 +128,8 @@ func deployShared(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	ctx.Export("repositoryId", shared.RepositoryID)
-	ctx.Export("workloadIdentityPoolName", shared.WorkloadIdentityPoolName)
+	ctx.Export("repositoryId", proj.RepositoryID)
+	ctx.Export("workloadIdentityPoolName", proj.WorkloadIdentityPoolName)
 	return nil
 }
 

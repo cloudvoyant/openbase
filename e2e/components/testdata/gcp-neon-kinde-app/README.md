@@ -1,6 +1,6 @@
 # Premise Cloud Run + GCS + Neon + Kinde Workspace (`gcp-neon-kinde-app`)
 
-Premise-structured consumer workspace splitting platform roots (`infra/shared` -> `composite.GcpCloudRunNeonShared`) from per-environment deployments (`infra` -> `composite.GcpCloudRunNeonApp` across `dev`, `prod`, `stage`, and `preview-<slug>`).
+Premise-structured consumer workspace splitting shared project assets (`infra/shared` -> `composite.GcpCloudRunNeonProject`) from per-environment deployments (`infra` -> `composite.GcpCloudRunNeonApp` across `dev`, `prod`, `stage`, and `preview-<slug>`).
 
 ## Layout
 

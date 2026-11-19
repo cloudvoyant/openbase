@@ -44,20 +44,20 @@ func main() {
 			return err
 		}
 		if env == core.EnvShared {
-			return deploySharedFullstack(ctx)
+			return deployFullstackProject(ctx)
 		}
 		return deployAppStack(ctx, env)
 	})
 }
 
-func deploySharedFullstack(ctx *pulumi.Context) error {
+func deployFullstackProject(ctx *pulumi.Context) error {
 	appProject := os.Getenv("OPENBASE_TEST_APP_PROJECT")
 	gcpProject := os.Getenv("OPENBASE_TEST_GCP_PROJECT")
 	teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 	teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
 
-	gcpShared, err := gcp.Shared{
-		Name:           "gcp-shared",
+	gcpProj, err := gcp.Project{
+		Name:           "gcp-project",
 		Project:        appProject,
 		GCPProject:     pulumi.String(gcpProject),
 		PoolSuffix:     os.Getenv("OPENBASE_TEST_RUN_ID"),
@@ -67,8 +67,8 @@ func deploySharedFullstack(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	vercelShared, err := vercel.Shared{
-		Name:                 "vercel-shared",
+	vercelProj, err := vercel.Project{
+		Name:                 "vercel-project",
 		Project:              appProject,
 		VercelProjectName:    "openbase-e2e-" + appProject,
 		TeamID:               teamID,
@@ -78,8 +78,8 @@ func deploySharedFullstack(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	neonShared, err := neon.SharedProject{
-		Name:     "neon-shared",
+	neonProj, err := neon.Project{
+		Name:     "neon-project",
 		Project:  appProject,
 		OrgID:    os.Getenv("NEON_ORG_ID"),
 		RegionID: "aws-us-east-1",
@@ -87,17 +87,17 @@ func deploySharedFullstack(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	kindeShared, err := createSharedKindeOidc(ctx, appProject, teamSlug)
+	kindeProj, err := createKindeOidcProject(ctx, appProject, teamSlug)
 	if err != nil {
 		return err
 	}
-	exportSharedOutputs(ctx, gcpShared, vercelShared, neonShared, kindeShared)
+	exportProjectOutputs(ctx, gcpProj, vercelProj, neonProj, kindeProj)
 	return nil
 }
 
-func createSharedKindeOidc(ctx *pulumi.Context, appProject, teamSlug string) (*kinde.SharedOidcAppResource, error) {
-	return kinde.SharedOidcApp{
-		Name:                       "kinde-shared",
+func createKindeOidcProject(ctx *pulumi.Context, appProject, teamSlug string) (*kinde.ProjectResource, error) {
+	return kinde.Project{
+		Name:                       "kinde-project",
 		Project:                    appProject,
 		AppName:                    os.Getenv("OPENBASE_TEST_KINDE_APP_NAME"),
 		VercelProjectName:          "openbase-e2e-" + appProject,
@@ -118,12 +118,12 @@ func createSharedKindeOidc(ctx *pulumi.Context, appProject, teamSlug string) (*k
 	}.Register(ctx)
 }
 
-func exportSharedOutputs(
+func exportProjectOutputs(
 	ctx *pulumi.Context,
-	g *gcp.SharedResource,
-	v *vercel.SharedResource,
-	n *neon.SharedProjectResource,
-	k *kinde.SharedOidcAppResource,
+	g *gcp.ProjectResource,
+	v *vercel.ProjectResource,
+	n *neon.ProjectResource,
+	k *kinde.ProjectResource,
 ) {
 	ctx.Export("wifPoolName", g.WorkloadIdentityPoolName)
 	ctx.Export("vercelOidcProviderName", g.VercelOIDCProviderName)

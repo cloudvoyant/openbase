@@ -24,7 +24,7 @@ func main() {
 			appProject = "obneon"
 		}
 		if env == core.EnvShared {
-			shared, err := neon.SharedProject{
+			proj, err := neon.Project{
 				Project:  appProject,
 				OrgID:    os.Getenv("NEON_ORG_ID"),
 				RegionID: "aws-us-east-1",
@@ -32,8 +32,8 @@ func main() {
 			if err != nil {
 				return err
 			}
-			ctx.Export("projectId", shared.ProjectID)
-			ctx.Export("defaultBranchId", shared.DefaultBranchID)
+			ctx.Export("projectId", proj.ProjectID)
+			ctx.Export("defaultBranchId", proj.DefaultBranchID)
 			return nil
 		}
 		branchFrom := ""

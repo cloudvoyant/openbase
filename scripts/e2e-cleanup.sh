@@ -139,8 +139,8 @@ for manifest in "$OUTPUTS_ROOT"/*/run-manifest.json; do
           gcloud storage rm --all-versions -r "gs://${BKT}/**" >/dev/null 2>&1 || true
         fi
         pulumi state unprotect --all --yes --stack "$stack" >/dev/null 2>&1 || true
-        pulumi destroy --stack "$stack" --yes --non-interactive --skip-preview
-        pulumi stack rm "$stack" --yes --non-interactive >/dev/null 2>&1 || true
+        pulumi destroy --stack "$stack" --yes --non-interactive --skip-preview &&
+          pulumi stack rm "$stack" --yes --non-interactive >/dev/null 2>&1
       fi
     ); then
       echo "  !! Failed to destroy stack '$stack' in $TEST_NAME" >&2

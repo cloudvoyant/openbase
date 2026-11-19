@@ -12,30 +12,38 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestVercelShared(t *testing.T) {
-	t.Run("given a vercel.Shared spec with EnableBlobStore", func(t *testing.T) {
-		t.Run("when registered in the shared stack, then it creates Project, CustomEnvironment, ProjectDomains, Bypass, and BlobStore", func(t *testing.T) {
+func TestVercelProjectAndPlatform(t *testing.T) {
+	t.Run("given vercel.Platform and vercel.Project specs", func(t *testing.T) {
+		t.Run("when Platform + Project are registered with EnableBlobStore, then Project inherits team/baseDomain and creates Project, CustomEnvironment, ProjectDomains, Bypass, and BlobStore", func(t *testing.T) {
 			// Arrange.
 			mocks := newVercelMocks()
 			baseURLCh := make(chan string, 1)
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				shared, err := vercel.Shared{
+				plat, err := vercel.Platform{
+					TeamID:        "team_123",
+					TeamSlug:      "cloudvoyant",
+					SharedSecrets: map[string]pulumi.StringInput{"ORG_SENTRY_DSN": pulumi.String("https://sentry.example")},
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				proj, err := vercel.Project{
 					Project:         "storefront",
-					TeamID:          "team_123",
-					TeamSlug:        "cloudvoyant",
+					Platform:        plat,
 					EnableBlobStore: true,
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
-				shared.BlobBaseURL.ApplyT(func(v string) string { baseURLCh <- v; return v })
+				proj.BlobBaseURL.ApplyT(func(v string) string { baseURLCh <- v; return v })
 				return nil
 			}, pulumi.WithMocks("storefront", "shared", mocks))
 
 			// Assert.
 			requireVercelNoErr(t, err)
+			mocks.assertCount(t, "vercel:index/sharedEnvironmentVariable:SharedEnvironmentVariable", 1)
 			mocks.assertCount(t, "vercel:index/project:Project", 1)
 			mocks.assertCount(t, "vercel:index/customEnvironment:CustomEnvironment", 1)
 			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
@@ -53,7 +61,7 @@ func TestVercelShared(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				shared, err := vercel.Shared{
+				proj, err := vercel.Project{
 					Project:              "storefront",
 					TeamID:               "team_123",
 					TeamSlug:             "cloudvoyant",
@@ -64,8 +72,8 @@ func TestVercelShared(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				shared.ProdDomainName.ApplyT(func(v string) string { prodDomCh <- v; return v })
-				shared.DevDomainName.ApplyT(func(v string) string { devDomCh <- v; return v })
+				proj.ProdDomainName.ApplyT(func(v string) string { prodDomCh <- v; return v })
+				proj.DevDomainName.ApplyT(func(v string) string { devDomCh <- v; return v })
 				return nil
 			}, pulumi.WithMocks("storefront", "shared", mocks))
 
@@ -83,7 +91,7 @@ func TestVercelShared(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := vercel.Shared{
+				_, err := vercel.Project{
 					Project:              "storefront",
 					TeamID:               "team_123",
 					TeamSlug:             "cloudvoyant",

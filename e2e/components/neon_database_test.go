@@ -37,7 +37,7 @@ func TestNeonDatabase(t *testing.T) {
 		}
 	})
 
-	t.Run("given a neon.SharedProject and neon.Database consumer program", func(t *testing.T) {
+	t.Run("given a neon.Project and neon.Database consumer program", func(t *testing.T) {
 		for _, stack := range []string{"shared", "dev", "prod", "stage"} {
 			h.InitStack(t, stack)
 		}

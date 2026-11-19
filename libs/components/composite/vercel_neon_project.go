@@ -12,14 +12,16 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*VercelNeonSharedResource)(nil)
+var _ core.StatelessResource = (*VercelNeonProjectResource)(nil)
 
-// VercelNeonShared declares cross-environment Vercel, Neon, and Kinde platform roots in Premise's infra/shared program.
-type VercelNeonShared struct {
+// VercelNeonProject declares cross-environment Vercel, Neon, and Kinde project assets in Premise's infra/shared program.
+type VercelNeonProject struct {
 	Name                 string
 	Project              string
 	Repo                 string
 	Environment          string
+	Platform             *PlatformResource
+	PlatformStackRef     string
 	VercelProjectName    string
 	TeamID               string
 	TeamSlug             string
@@ -35,28 +37,28 @@ type VercelNeonShared struct {
 	DisableBlobStore     bool
 	NeonOrgID            string
 	NeonRegionID         string
-	Auth                 *KindeSharedConfig
+	Auth                 *KindeProjectConfig
 	SkipStackExports     bool
 }
 
-// VercelNeonSharedResource holds the shared Vercel Project, Neon Project, and Kinde OIDC roots exported for environment stacks.
-type VercelNeonSharedResource struct {
+// VercelNeonProjectResource holds the application's Vercel Project, Neon Project, and Kinde OIDC applications exported for environment stacks.
+type VercelNeonProjectResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
-	Vercel      *vercel.SharedResource
-	Neon        *neon.SharedProjectResource
-	Kinde       *kinde.SharedOidcAppResource
+	Vercel      *vercel.ProjectResource
+	Neon        *neon.ProjectResource
+	Kinde       *kinde.ProjectResource
 	ProdURL     pulumi.StringOutput
 	BlobBaseURL pulumi.StringOutput
 }
 
-// Register provisions cross-environment Vercel, Neon, and Kinde roots on the "shared" stack.
-func (v VercelNeonShared) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*VercelNeonSharedResource, error) {
-	v.Name = defaultCompStr(v.Name, "platform")
+// Register provisions cross-environment Vercel, Neon, and Kinde project assets on Premise's "shared" stack.
+func (v VercelNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*VercelNeonProjectResource, error) {
+	v.Name = defaultCompStr(v.Name, "project")
 	env := defaultCompStr(v.Environment, string(core.EnvShared))
-	res := &VercelNeonSharedResource{}
-	meta, err := core.InitStateless(ctx, "openbase:composite:VercelNeonShared", "composite-vercel-neon-shared", res, &res.StatelessMeta, core.StatelessSpec{
+	res := &VercelNeonProjectResource{}
+	meta, err := core.InitStateless(ctx, "openbase:composite:VercelNeonProject", "composite-vercel-neon-project", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        v.Name,
 		Project:     v.Project,
 		Repo:        v.Repo,
@@ -68,7 +70,7 @@ func (v VercelNeonShared) Register(ctx *pulumi.Context, opts ...pulumi.ResourceO
 	if err := requireSharedEnv(meta); err != nil {
 		return nil, err
 	}
-	if err := provisionVercelSharedStack(ctx, meta, v, res); err != nil {
+	if err := provisionVercelProjectStack(ctx, meta, v, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
@@ -79,18 +81,20 @@ func (v VercelNeonShared) Register(ctx *pulumi.Context, opts ...pulumi.ResourceO
 
 // Private helpers ------------------------------------------------------------
 
-func provisionVercelSharedStack(
+func provisionVercelProjectStack(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	spec VercelNeonShared,
-	res *VercelNeonSharedResource,
+	spec VercelNeonProject,
+	res *VercelNeonProjectResource,
 ) error {
 	vProjName := defaultCompStr(spec.VercelProjectName, "openbase-"+meta.Project)
-	vShared, err := vercel.Shared{
+	vProj, err := vercel.Project{
 		Name:                 "vercel",
 		Project:              meta.Project,
 		Repo:                 meta.Repo,
 		Environment:          string(meta.Environment),
+		Platform:             vercelPlatformFromComposite(spec.Platform),
+		PlatformStackRef:     spec.PlatformStackRef,
 		VercelProjectName:    vProjName,
 		TeamID:               spec.TeamID,
 		TeamSlug:             spec.TeamSlug,
@@ -108,50 +112,68 @@ func provisionVercelSharedStack(
 	if err != nil {
 		return err
 	}
-	nShared, err := neon.SharedProject{
-		Name:        "neon",
-		Project:     meta.Project,
-		Repo:        meta.Repo,
-		Environment: string(meta.Environment),
-		OrgID:       spec.NeonOrgID,
-		RegionID:    defaultCompStr(spec.NeonRegionID, "aws-us-east-1"),
+	nProj, err := neon.Project{
+		Name:             "neon",
+		Project:          meta.Project,
+		Repo:             meta.Repo,
+		Environment:      string(meta.Environment),
+		Platform:         neonPlatformFromComposite(spec.Platform),
+		PlatformStackRef: spec.PlatformStackRef,
+		OrgID:            spec.NeonOrgID,
+		RegionID:         spec.NeonRegionID,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
 	}
-	kShared, err := registerOptionalVercelSharedKinde(ctx, meta, vProjName, spec, res)
+	kProj, err := registerOptionalVercelProjectKinde(ctx, meta, vProjName, spec, res)
 	if err != nil {
 		return err
 	}
-	if err := registerSharedPreviewEnvVars(ctx, spec, vShared, kShared, res); err != nil {
+	if err := registerProjectPreviewEnvVars(ctx, spec, vProj, kProj, res); err != nil {
 		return err
 	}
-	res.Vercel = vShared
-	res.Neon = nShared
-	res.Kinde = kShared
-	res.ProdURL = pulumi.Sprintf("https://%s", vShared.ProdDomainName)
-	res.BlobBaseURL = vShared.BlobBaseURL
-	res.SetLink(vShared.Link())
-	exportVercelSharedOutputs(ctx, spec.SkipStackExports, vShared, nShared, kShared)
+	res.Vercel = vProj
+	res.Neon = nProj
+	res.Kinde = kProj
+	res.ProdURL = pulumi.Sprintf("https://%s", vProj.ProdDomainName)
+	res.BlobBaseURL = vProj.BlobBaseURL
+	res.SetLink(vProj.Link())
+	exportVercelProjectOutputs(ctx, spec.SkipStackExports, vProj, nProj, kProj)
 	return nil
 }
 
-func registerOptionalVercelSharedKinde(
+func vercelPlatformFromComposite(p *PlatformResource) *vercel.PlatformResource {
+	if p == nil {
+		return nil
+	}
+	return p.Vercel
+}
+
+func neonPlatformFromComposite(p *PlatformResource) *neon.PlatformResource {
+	if p == nil {
+		return nil
+	}
+	return p.Neon
+}
+
+func registerOptionalVercelProjectKinde(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
 	vProjName string,
-	spec VercelNeonShared,
+	spec VercelNeonProject,
 	parent pulumi.Resource,
-) (*kinde.SharedOidcAppResource, error) {
+) (*kinde.ProjectResource, error) {
 	if spec.Auth == nil {
 		return nil, nil
 	}
 	cfg := spec.Auth
-	return kinde.SharedOidcApp{
+	return kinde.Project{
 		Name:                       "kinde",
 		Project:                    meta.Project,
 		Repo:                       meta.Repo,
 		Environment:                string(meta.Environment),
+		Platform:                   resolveKindePlatform(spec.Platform, cfg),
+		PlatformStackRef:           spec.PlatformStackRef,
 		AppName:                    defaultCompStr(cfg.AppName, vProjName),
 		VercelProjectName:          vProjName,
 		VercelTeamSlug:             spec.TeamSlug,
@@ -176,11 +198,11 @@ func registerOptionalVercelSharedKinde(
 	}.Register(ctx, pulumi.Parent(parent))
 }
 
-func registerSharedPreviewEnvVars(
+func registerProjectPreviewEnvVars(
 	ctx *pulumi.Context,
-	spec VercelNeonShared,
-	v *vercel.SharedResource,
-	k *kinde.SharedOidcAppResource,
+	spec VercelNeonProject,
+	v *vercel.ProjectResource,
+	k *kinde.ProjectResource,
 	parent pulumi.Resource,
 ) error {
 	type previewEntry struct {
@@ -203,12 +225,9 @@ func registerSharedPreviewEnvVars(
 			previewEntry{slug: "kinde-csec", key: "KINDE_CLIENT_SECRET", val: k.DevClientSecret, sensitive: true},
 		)
 	}
-	var teamPtr pulumi.StringPtrInput
-	if spec.TeamID != "" {
-		teamPtr = pulumi.String(spec.TeamID)
-	}
+	teamPtr := optionalTeamPtr(v.TeamID)
 	for _, e := range entries {
-		_, err := vercelprov.NewProjectEnvironmentVariable(ctx, "shared-preview-"+e.slug, &vercelprov.ProjectEnvironmentVariableArgs{
+		_, err := vercelprov.NewProjectEnvironmentVariable(ctx, "project-preview-"+e.slug, &vercelprov.ProjectEnvironmentVariableArgs{
 			ProjectId: v.ProjectID,
 			TeamId:    teamPtr,
 			Targets:   pulumi.ToStringArray([]string{"preview"}),
@@ -223,12 +242,21 @@ func registerSharedPreviewEnvVars(
 	return nil
 }
 
-func exportVercelSharedOutputs(
+func optionalTeamPtr(teamID pulumi.StringOutput) pulumi.StringPtrOutput {
+	return teamID.ApplyT(func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}).(pulumi.StringPtrOutput)
+}
+
+func exportVercelProjectOutputs(
 	ctx *pulumi.Context,
 	skip bool,
-	v *vercel.SharedResource,
-	n *neon.SharedProjectResource,
-	k *kinde.SharedOidcAppResource,
+	v *vercel.ProjectResource,
+	n *neon.ProjectResource,
+	k *kinde.ProjectResource,
 ) {
 	if skip {
 		return
@@ -247,5 +275,5 @@ func exportVercelSharedOutputs(
 	ctx.Export("blobBaseUrl", v.BlobBaseURL)
 	ctx.Export("neonProjectId", n.ProjectID)
 	ctx.Export("neonDefaultBranchId", n.DefaultBranchID)
-	exportKindeSharedOutputs(ctx, k)
+	exportKindeProjectOutputs(ctx, k)
 }

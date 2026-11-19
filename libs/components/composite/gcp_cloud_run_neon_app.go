@@ -15,7 +15,7 @@ var _ core.StatelessResource = (*GcpCloudRunNeonAppResource)(nil)
 
 const defaultGCPLocation = "us-central1"
 
-// GcpCloudRunNeonApp declares a per-environment Cloud Run v2 web application (dev, stage, prod, preview-*) wired to GcpCloudRunNeonShared via StackReference.
+// GcpCloudRunNeonApp declares a per-environment Cloud Run v2 web application (dev, stage, prod, preview-*) wired to GcpCloudRunNeonProject via StackReference.
 type GcpCloudRunNeonApp struct {
 	Name             string
 	Project          string
@@ -24,7 +24,7 @@ type GcpCloudRunNeonApp struct {
 	Links            []core.Resource
 	Env              map[string]pulumi.StringInput
 	Secrets          map[string]pulumi.StringInput
-	SharedStackRef   string
+	ProjectStackRef  string
 	GCPProject       string
 	GCPProjectNumber string
 	Location         string
@@ -75,7 +75,7 @@ func (g GcpCloudRunNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.Resourc
 	if err != nil {
 		return nil, err
 	}
-	if err := requireNonSharedEnv(meta, "composite.GcpCloudRunNeonShared"); err != nil {
+	if err := requireNonSharedEnv(meta, "composite.GcpCloudRunNeonProject"); err != nil {
 		return nil, err
 	}
 	if err := provisionGCPEnvStack(ctx, meta, g, res); err != nil {
@@ -96,12 +96,12 @@ func provisionGCPEnvStack(
 	spec GcpCloudRunNeonApp,
 	res *GcpCloudRunNeonAppResource,
 ) error {
-	sharedRef := resolveSharedStackRef(ctx, spec.SharedStackRef)
+	projectRef := resolveProjectStackRef(ctx, spec.ProjectStackRef)
 	regionalURL, siteURL, err := resolveGCPEnvSiteURLs(meta, spec)
 	if err != nil {
 		return err
 	}
-	links, err := registerGCPBackingResources(ctx, meta, sharedRef, siteURL, spec, res)
+	links, err := registerGCPBackingResources(ctx, meta, projectRef, siteURL, spec, res)
 	if err != nil {
 		return err
 	}
@@ -118,7 +118,7 @@ func provisionGCPEnvStack(
 		Secrets:          spec.Secrets,
 		GCPProject:       optionalGCPProjectPtr(spec.GCPProject),
 		GCPProjectNumber: optionalStringInput(spec.GCPProjectNumber),
-		SharedStackRef:   sharedRef,
+		ProjectStackRef:  projectRef,
 		Location:         spec.Location,
 		Image:            spec.Image,
 		Command:          spec.Command,
@@ -155,21 +155,21 @@ func resolveGCPEnvSiteURLs(meta core.ResourceMeta, spec GcpCloudRunNeonApp) (str
 func registerGCPBackingResources(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	sharedRef, regionalURL string,
+	projectRef, siteURL string,
 	spec GcpCloudRunNeonApp,
 	res *GcpCloudRunNeonAppResource,
 ) ([]core.Resource, error) {
 	dbBranch, dbBranchRef := resolveDBBranch(ctx, meta.Environment)
 	db, err := neon.Database{
-		Name:           "db",
-		Project:        meta.Project,
-		Repo:           meta.Repo,
-		Environment:    string(meta.Environment),
-		BranchFrom:     dbBranch,
-		SharedStackRef: sharedRef,
-		BranchStackRef: dbBranchRef,
-		DatabaseName:   spec.DatabaseName,
-		RoleName:       spec.RoleName,
+		Name:            "db",
+		Project:         meta.Project,
+		Repo:            meta.Repo,
+		Environment:     string(meta.Environment),
+		BranchFrom:      dbBranch,
+		ProjectStackRef: projectRef,
+		BranchStackRef:  dbBranchRef,
+		DatabaseName:    spec.DatabaseName,
+		RoleName:        spec.RoleName,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return nil, err
@@ -180,7 +180,7 @@ func registerGCPBackingResources(
 	if err := attachOptionalGCPBucket(ctx, meta, spec, res, &links); err != nil {
 		return nil, err
 	}
-	if err := attachOptionalGCPKinde(ctx, meta, sharedRef, regionalURL, spec, res, &links); err != nil {
+	if err := attachOptionalGCPKinde(ctx, meta, projectRef, siteURL, spec, res, &links); err != nil {
 		return nil, err
 	}
 	return links, nil
@@ -219,7 +219,7 @@ func attachOptionalGCPBucket(
 func attachOptionalGCPKinde(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	sharedRef, regionalURL string,
+	projectRef, siteURL string,
 	spec GcpCloudRunNeonApp,
 	res *GcpCloudRunNeonAppResource,
 	links *[]core.Resource,
@@ -228,13 +228,13 @@ func attachOptionalGCPKinde(
 		return nil
 	}
 	auth, err := kinde.OidcApp{
-		Name:           "auth",
-		Project:        meta.Project,
-		Repo:           meta.Repo,
-		Environment:    string(meta.Environment),
-		SharedStackRef: sharedRef,
-		SiteURL:        pulumi.String(regionalURL),
-		CallbackPath:   spec.Auth.CallbackPath,
+		Name:            "auth",
+		Project:         meta.Project,
+		Repo:            meta.Repo,
+		Environment:     string(meta.Environment),
+		ProjectStackRef: projectRef,
+		SiteURL:         pulumi.String(siteURL),
+		CallbackPath:    spec.Auth.CallbackPath,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err

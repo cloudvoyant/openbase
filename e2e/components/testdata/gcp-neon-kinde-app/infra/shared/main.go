@@ -15,23 +15,24 @@ func main() {
 		gcpProject := envOrDefault("OPENBASE_GCP_PROJECT", "OPENBASE_TEST_GCP_PROJECT", "cloudvoyant-openbase")
 		projectNum := envOrDefault("OPENBASE_GCP_PROJECT_NUMBER", "OPENBASE_TEST_GCP_PROJECT_NUMBER", "785485436615")
 
-		_, err := composite.GcpCloudRunNeonShared{
+		_, err := composite.GcpCloudRunNeonProject{
 			ServiceName:      "web",
 			Project:          appProject,
+			PlatformStackRef: os.Getenv("OPENBASE_PLATFORM_STACK_REF"),
 			GCPProject:       gcpProject,
 			GCPProjectNumber: projectNum,
 			BaseDomain:       os.Getenv("OPENBASE_BASE_DOMAIN"),
 			PoolSuffix:       os.Getenv("OPENBASE_TEST_RUN_ID"),
 			SkipKeyRing:      true,
 			NeonOrgID:        os.Getenv("NEON_ORG_ID"),
-			Auth:             sharedKindeConfig("openbase-e2e-" + appProject),
+			Auth:             projectKindeConfig("openbase-e2e-" + appProject),
 		}.Register(ctx)
 		return err
 	})
 }
 
-func sharedKindeConfig(defaultAppName string) *composite.KindeSharedConfig {
-	return &composite.KindeSharedConfig{
+func projectKindeConfig(defaultAppName string) *composite.KindeProjectConfig {
+	return &composite.KindeProjectConfig{
 		AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", defaultAppName),
 		ImportDevAppID:             envOrDefault("OPENBASE_IMPORT_DEV_APP_ID", "OPENBASE_TEST_IMPORT_DEV_APP_ID", ""),
 		ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),

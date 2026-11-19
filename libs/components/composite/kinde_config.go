@@ -1,4 +1,4 @@
-// Package composite provides opinionated Premise-aligned shared and per-environment OpenBase application blueprints.
+// Package composite provides opinionated OpenBase blueprints across Platform (org), Project (repo infra/shared), and App (per-environment infra/) tiers.
 package composite
 
 import (
@@ -12,8 +12,9 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// KindeSharedConfig configures optional two-tenant Kinde OIDC applications on a shared platform stack (infra/shared).
-type KindeSharedConfig struct {
+// KindeProjectConfig configures optional two-tenant Kinde OIDC applications on a project stack (infra/shared).
+type KindeProjectConfig struct {
+	Platform                   *kinde.PlatformResource
 	AppName                    string
 	Dev                        kinde.TenantCredentials
 	Prod                       kinde.TenantCredentials
@@ -28,7 +29,7 @@ type KindeSharedConfig struct {
 	SkipEmailPasswordConn      bool
 }
 
-// KindeAppConfig configures optional per-environment Kinde OIDC wiring from SharedStackRef on an environment stack (infra/).
+// KindeAppConfig configures optional per-environment Kinde OIDC wiring from ProjectStackRef on an environment stack (infra/).
 type KindeAppConfig struct {
 	CallbackPath string
 }
@@ -42,7 +43,7 @@ func defaultCompStr(val, fallback string) string {
 	return fallback
 }
 
-func resolveSharedStackRef(ctx *pulumi.Context, explicit string) string {
+func resolveProjectStackRef(ctx *pulumi.Context, explicit string) string {
 	if explicit != "" {
 		return explicit
 	}
@@ -56,9 +57,9 @@ func requireSharedEnv(meta core.ResourceMeta) error {
 	return nil
 }
 
-func requireNonSharedEnv(meta core.ResourceMeta, sharedComponent string) error {
+func requireNonSharedEnv(meta core.ResourceMeta, projectComponent string) error {
 	if meta.Environment == core.EnvShared {
-		return fmt.Errorf("%w: %q is per-environment; declare %s in infra/shared for the shared stack", core.ErrInvalidEnvironment, meta.Kind, sharedComponent)
+		return fmt.Errorf("%w: %q is per-environment; declare %s in infra/shared for the shared stack", core.ErrInvalidEnvironment, meta.Kind, projectComponent)
 	}
 	return nil
 }
@@ -80,7 +81,17 @@ func resolvePreviewStorageBranch(ctx *pulumi.Context, env core.Environment) (str
 	return "", ""
 }
 
-func exportKindeSharedOutputs(ctx *pulumi.Context, k *kinde.SharedOidcAppResource) {
+func resolveKindePlatform(plat *PlatformResource, cfg *KindeProjectConfig) *kinde.PlatformResource {
+	if cfg != nil && cfg.Platform != nil {
+		return cfg.Platform
+	}
+	if plat != nil {
+		return plat.Kinde
+	}
+	return nil
+}
+
+func exportKindeProjectOutputs(ctx *pulumi.Context, k *kinde.ProjectResource) {
 	if k == nil {
 		return
 	}

@@ -23,7 +23,7 @@
 
 ### Go
 
-- Expose declarative struct-literal specs named after concrete cloud products (`gcp.CloudRunService`, `gcp.Bucket`, `vercel.WebApp`, `vercel.BlobStore`, `neon.Database`, `kinde.OidcApp`) with flat lifecycle fields (`Name`, `Project`, `Environment`, `BranchFrom`, `Links`) and `.Register(ctx, opts...)` returning `*<Type>Resource`.
+- Expose declarative struct-literal specs across three tiers — organization-level `Platform` (`<provider>.Platform`, `composite.Platform`), per-application `Project` in `infra/shared` (`<provider>.Project`, `composite.VercelNeonProject`, `composite.GcpCloudRunNeonProject`), and per-environment products in `infra/` (`gcp.CloudRunService`, `gcp.Bucket`, `vercel.WebApp`, `vercel.BlobStore`, `neon.Database`, `kinde.OidcApp`, `composite.VercelNeonApp`, `composite.GcpCloudRunNeonApp`) — with flat lifecycle fields (`Name`, `Project`, `Environment`, `BranchFrom`, `Links`) and `.Register(ctx, opts...)` returning `*<Type>Resource`.
 - [Proposed] Keep every handwritten function at or below cyclomatic complexity `10` as enforced by [.golangci.yml](./.golangci.yml).
 
 ### Pulumi

@@ -50,17 +50,17 @@ func TestVercelWebApp(t *testing.T) {
 			mocks.assertCount(t, "vercel:index/alias:Alias", 1)
 		})
 
-		t.Run("when resolving projectName and teamSlug from SharedStackRef, then stage computes the team-scoped alias URL", func(t *testing.T) {
+		t.Run("when resolving projectName and teamSlug from ProjectStackRef, then stage computes the team-scoped alias URL", func(t *testing.T) {
 			// Arrange.
 			urlCh := make(chan string, 1)
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				app, err := vercel.WebApp{
-					Name:           "web",
-					Project:        "storefront",
-					Environment:    "stage",
-					SharedStackRef: "org/storefront/shared",
+					Name:            "web",
+					Project:         "storefront",
+					Environment:     "stage",
+					ProjectStackRef: "org/storefront-shared/shared",
 				}.Register(ctx)
 				if err != nil {
 					return err
@@ -74,7 +74,7 @@ func TestVercelWebApp(t *testing.T) {
 			assertVercelEq(t, "stage alias URL from StackReference", <-urlCh, "https://openbase-storefront-stage-cloudvoyant.vercel.app")
 		})
 
-		t.Run("when Shared, SharedStackRef, and VercelProjectID are all omitted, then Register returns ErrProjectSourceRequired", func(t *testing.T) {
+		t.Run("when VercelProject, ProjectStackRef, and VercelProjectID are all omitted, then Register returns ErrProjectSourceRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				_, e := vercel.WebApp{
@@ -101,18 +101,18 @@ func TestVercelWebApp(t *testing.T) {
 					Name:               "uploads",
 					Project:            "storefront",
 					Environment:        "dev",
-					SharedStackRef:     "org/storefront/shared",
+					ProjectStackRef:    "org/storefront-shared/shared",
 					BlobReadWriteToken: pulumi.String("vercel_blob_rw_tok"),
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
 				_, err = vercel.WebApp{
-					Name:           "web",
-					Project:        "storefront",
-					Environment:    "dev",
-					Links:          []core.Resource{blobs},
-					SharedStackRef: "org/storefront/shared",
+					Name:            "web",
+					Project:         "storefront",
+					Environment:     "dev",
+					Links:           []core.Resource{blobs},
+					ProjectStackRef: "org/storefront-shared/shared",
 				}.Register(ctx)
 				return err
 			}, pulumi.WithMocks("storefront", "dev", mocks))
@@ -163,7 +163,7 @@ func TestVercelWebApp(t *testing.T) {
 					Project:              "storefront",
 					Environment:          "stage",
 					Env:                  map[string]pulumi.StringInput{"KINDE_ISSUER_URL": pulumi.String("https://prod.kinde.com")},
-					SharedStackRef:       "org/storefront/shared",
+					ProjectStackRef:      "org/storefront-shared/shared",
 					SkipStageEnvironment: true,
 					SourceDir:            ".",
 				}.Register(ctx)

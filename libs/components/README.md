@@ -1,6 +1,6 @@
 # OpenBase Go Pulumi components (`libs/components`)
 
-Declarative Go Pulumi components for provisioning services, object storage, serverless PostgreSQL, and OIDC authentication across GCP, Vercel, Neon, and Kinde from one shared infrastructure program.
+Declarative Go Pulumi components for provisioning organization platforms, shared application projects, and per-environment services, object storage, serverless PostgreSQL, and OIDC authentication across GCP, Vercel, Neon, and Kinde.
 
 ## Install
 
@@ -12,12 +12,12 @@ go get github.com/cloudvoyant/openbase/libs/components@v0.1.0
 
 | Package | Role | Declarative Specs |
 | --- | --- | --- |
-| `libs/components/core` | Lifecycle contracts, environment validation, naming, tags, and `Links` | `Stateless`, `Stateful`, `StatelessResource`, `StatefulResource`, `ResolveLinks` |
-| `libs/components/gcp` | Google Cloud Platform compute, wildcard HTTPS load balancing, storage, and shared platform roots | `Shared`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs` |
-| `libs/components/vercel` | Vercel web hosting and Blob storage | `Shared`, `WebApp`, `BlobStore` |
-| `libs/components/neon` | Branched serverless PostgreSQL | `SharedProject`, `Database` |
-| `libs/components/kinde` | Two-tenant OAuth2 / OIDC authentication | `SharedOidcApp`, `OidcApp` |
-| `libs/components/composite` | Premise-aligned `infra/shared` platform roots and `infra/` per-environment application blueprints | `VercelNeonShared`, `VercelNeonApp`, `GcpCloudRunNeonShared`, `GcpCloudRunNeonApp` |
+| `libs/components/core` | Lifecycle contracts, environment validation, domain conventions, naming, tags, and `Links` | `Stateless`, `Stateful`, `StatelessResource`, `StatefulResource`, `ResolveLinks` |
+| `libs/components/gcp` | GCP org platform, per-app Artifact Registry project, wildcard HTTPS load balancing, Cloud Run v2, and GCS storage | `Platform`, `Project`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs` |
+| `libs/components/vercel` | Vercel team platform, per-app project (`staging` CustomEnvironment + domains + bypass), WebApp, and Blob storage | `Platform`, `Project`, `WebApp`, `BlobStore` |
+| `libs/components/neon` | Neon org defaults, per-app Neon Project cluster, and branched serverless PostgreSQL | `Platform`, `Project`, `Database` |
+| `libs/components/kinde` | Two-tenant Kinde org connections, per-app OIDC `Application` pairs, and environment routing | `Platform`, `Project`, `OidcApp` |
+| `libs/components/composite` | Turnkey org `Platform`, Premise `infra/shared` `*Project`, and `infra/` per-environment `*App` blueprints | `Platform`, `VercelNeonProject`, `VercelNeonApp`, `GcpCloudRunNeonProject`, `GcpCloudRunNeonApp` |
 | `libs/components/synthetic` | Deterministic offline doubles for fast unit tests | `Service`, `Storage` |
 
 Standalone consumer fixtures and live cloud end-to-end suites live in [e2e/components](../../e2e/README.md).

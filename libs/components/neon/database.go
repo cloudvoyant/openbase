@@ -17,8 +17,8 @@ import (
 
 var _ core.StatefulResource = (*DatabaseResource)(nil)
 
-// ErrProjectIDRequired reports a missing Neon ProjectID and SharedStackRef on Database.
-var ErrProjectIDRequired = errors.New("neon: projectId or sharedStackRef is required")
+// ErrProjectIDRequired reports a missing NeonProject, ProjectID, and ProjectStackRef on Database.
+var ErrProjectIDRequired = errors.New("neon: neonProject, projectId, or projectStackRef is required")
 
 // Database declares a per-environment Neon branch, compute endpoint, role, and database spec.
 type Database struct {
@@ -32,10 +32,11 @@ type Database struct {
 	Links           []core.Resource
 	Env             map[string]pulumi.StringInput
 	Secrets         map[string]pulumi.StringInput
+	NeonProject     *ProjectResource
 	ProjectID       pulumi.StringInput
 	DefaultBranchID pulumi.StringInput
 	ParentBranchID  pulumi.StringInput
-	SharedStackRef  string
+	ProjectStackRef string
 	BranchStackRef  string
 	DatabaseName    string
 	RoleName        string
@@ -61,7 +62,7 @@ type DatabaseResource struct {
 
 // Register provisions a Neon PostgreSQL branch satisfying core.StatefulResource.
 func (d Database) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*DatabaseResource, error) {
-	if d.ProjectID == nil && d.SharedStackRef == "" {
+	if d.NeonProject == nil && d.ProjectID == nil && d.ProjectStackRef == "" {
 		return nil, ErrProjectIDRequired
 	}
 	res := &DatabaseResource{}
@@ -130,16 +131,9 @@ func provisionNeonBranch(
 }
 
 func resolveNeonRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Database) (neonParentRefs, error) {
-	var refs neonParentRefs
-	var defaultBranch pulumi.StringOutput
-	if spec.ProjectID != nil {
-		refs.projectID = spec.ProjectID.ToStringOutput()
-	}
-	if spec.DefaultBranchID != nil {
-		defaultBranch = spec.DefaultBranchID.ToStringOutput()
-	}
-	if spec.SharedStackRef != "" {
-		sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.SharedStackRef)})
+	refs, defaultBranch := initDirectNeonRefs(spec)
+	if spec.ProjectStackRef != "" {
+		sr, err := pulumi.NewStackReference(ctx, name+"-project-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.ProjectStackRef)})
 		if err != nil {
 			return neonParentRefs{}, err
 		}
@@ -156,6 +150,22 @@ func resolveNeonRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, s
 	}
 	refs.parentBranchID = parentBranch
 	return refs, nil
+}
+
+func initDirectNeonRefs(spec Database) (neonParentRefs, pulumi.StringOutput) {
+	var refs neonParentRefs
+	var defaultBranch pulumi.StringOutput
+	if spec.NeonProject != nil {
+		refs.projectID = spec.NeonProject.ProjectID
+		defaultBranch = spec.NeonProject.DefaultBranchID
+	}
+	if spec.ProjectID != nil {
+		refs.projectID = spec.ProjectID.ToStringOutput()
+	}
+	if spec.DefaultBranchID != nil {
+		defaultBranch = spec.DefaultBranchID.ToStringOutput()
+	}
+	return refs, defaultBranch
 }
 
 func resolveParentBranch(

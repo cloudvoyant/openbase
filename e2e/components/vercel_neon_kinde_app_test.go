@@ -58,7 +58,7 @@ func TestVercelNeonKindeApp(t *testing.T) {
 		assertVercelNeonKindeCleanup(t, teamID, vercelProjectID, blobStoreID, neonProjectID)
 	})
 
-	t.Run("given a Premise-structured composite.VercelNeonShared (infra/shared) and composite.VercelNeonApp (infra) workspace", func(t *testing.T) {
+	t.Run("given a Premise-structured composite.VercelNeonProject (infra/shared) and composite.VercelNeonApp (infra) workspace", func(t *testing.T) {
 		for _, stack := range []string{"shared", "dev", "prod", "stage", "preview-pr-11"} {
 			h.InitStack(t, stack)
 		}

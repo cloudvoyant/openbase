@@ -20,7 +20,7 @@ func main() {
 		teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
 		if env == core.EnvShared {
-			shared, err := vercel.Shared{
+			proj, err := vercel.Project{
 				Project:           appProject,
 				VercelProjectName: vProjName,
 				TeamID:            teamID,
@@ -29,11 +29,11 @@ func main() {
 			if err != nil {
 				return err
 			}
-			ctx.Export("projectId", shared.ProjectID)
-			ctx.Export("stageCustomEnvironmentId", shared.StageCustomEnvironmentID)
-			ctx.Export("protectionBypassSecret", shared.ProtectionBypassSecret)
-			ctx.Export("prodDomainName", shared.ProdDomainName)
-			ctx.Export("stageDomainName", shared.StageDomainName)
+			ctx.Export("projectId", proj.ProjectID)
+			ctx.Export("stageCustomEnvironmentId", proj.StageCustomEnvironmentID)
+			ctx.Export("protectionBypassSecret", proj.ProtectionBypassSecret)
+			ctx.Export("prodDomainName", proj.ProdDomainName)
+			ctx.Export("stageDomainName", proj.StageDomainName)
 			return nil
 		}
 		revision := os.Getenv("OPENBASE_TEST_REVISION")

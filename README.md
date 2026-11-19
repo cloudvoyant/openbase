@@ -1,17 +1,20 @@
 # OpenBase
 
-OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs/components`) for declaring stateless and stateful cloud infrastructure across **Google Cloud Platform**, **Vercel**, **Neon**, and **Kinde** following Premise's `infra/shared` (`--shared`) and `infra` (`--env dev|stage|prod|preview`) layout.
+OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs/components`) for declaring stateless and stateful cloud infrastructure across **Google Cloud Platform**, **Vercel**, **Neon**, and **Kinde** using a three-tier **Platform -> Project -> Environment** convention aligned with Premise (`infra/shared` + `infra`).
 
 ```mermaid
 flowchart TD
-    SharedProg["Shared Program (infra/shared/main.go)"] --> SharedComp["composite.*Shared (VercelNeonShared, GcpCloudRunNeonShared)"]
-    EnvProg["Environment Program (infra/main.go)"] --> AppComp["composite.*App (VercelNeonApp, GcpCloudRunNeonApp)"]
-    SharedComp --> Core["libs/components/core (StatelessResource & StatefulResource)"]
+    OrgProg["Org Platform Repo (composite.Platform)"] --> OrgBlocks["gcp.Platform, vercel.Platform, neon.Platform, kinde.Platform"]
+    ProjProg["App Project Program (infra/shared/main.go)"] --> ProjComp["composite.VercelNeonProject / GcpCloudRunNeonProject"]
+    EnvProg["App Environment Program (infra/main.go)"] --> AppComp["composite.VercelNeonApp / GcpCloudRunNeonApp"]
+    OrgBlocks -->|"PlatformStackRef"| ProjComp
+    ProjComp -->|"ProjectStackRef"| AppComp
+    ProjComp --> Core["libs/components/core (StatelessResource & StatefulResource)"]
     AppComp --> Core
-    Core --> GCP["libs/components/gcp (Shared, CloudRunService, Bucket, overlayfs)"]
-    Core --> Vercel["libs/components/vercel (Shared, WebApp, BlobStore)"]
-    Core --> Neon["libs/components/neon (SharedProject, Database)"]
-    Core --> Kinde["libs/components/kinde (SharedOidcApp, OidcApp)"]
+    Core --> GCP["libs/components/gcp (Platform, Project, CloudLoadBalancer, CloudRunService, Bucket, overlayfs)"]
+    Core --> Vercel["libs/components/vercel (Platform, Project, WebApp, BlobStore)"]
+    Core --> Neon["libs/components/neon (Platform, Project, Database)"]
+    Core --> Kinde["libs/components/kinde (Platform, Project, OidcApp)"]
 ```
 
 ## Install
@@ -24,12 +27,12 @@ go get github.com/cloudvoyant/openbase/libs/components@latest
 
 | Import Path | Purpose | Declarative Specs |
 | :--- | :--- | :--- |
-| `github.com/cloudvoyant/openbase/libs/components/core` | Environment validation (`shared`, `dev`, `stage`, `prod`, `preview-<slug>`), naming, `openbase.io/*` tags, escape hatches, and typed `Links` | `Stateless`, `Stateful`, `StatelessResource`, `StatefulResource`, `ResolveLinks` |
-| `github.com/cloudvoyant/openbase/libs/components/gcp` | Cloud Run v2 services, shared wildcard HTTPS Load Balancers (`*.gcp.cloudvoyant.io`), GCS buckets with zero-copy preview overlays, and shared WIF/Artifact Registry/KMS roots | `Shared`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs.Store` |
-| `github.com/cloudvoyant/openbase/libs/components/vercel` | Team-safe Vercel web apps, Blob stores, custom `staging` environments, and keyless GCP OIDC federation | `Shared`, `WebApp`, `BlobStore`, `BlobOverlayClient` |
-| `github.com/cloudvoyant/openbase/libs/components/neon` | Copy-on-write branched serverless PostgreSQL over `kislerdm/neon` | `SharedProject`, `Database` |
-| `github.com/cloudvoyant/openbase/libs/components/kinde` | Two-tenant (`dev` + `prod`) OAuth2/OIDC applications over `kinde-oss/kinde` | `SharedOidcApp`, `OidcApp` |
-| `github.com/cloudvoyant/openbase/libs/components/composite` | Premise-aligned `infra/shared` platform roots and `infra/` per-environment app blueprints wired via `StackReference` | `VercelNeonShared`, `VercelNeonApp`, `GcpCloudRunNeonShared`, `GcpCloudRunNeonApp` |
+| `github.com/cloudvoyant/openbase/libs/components/core` | Environment validation (`shared`, `dev`, `stage`, `prod`, `preview-<slug>`), domain conventions, naming, `openbase.io/*` tags, escape hatches, and typed `Links` | `Stateless`, `Stateful`, `StatelessResource`, `StatefulResource`, `ResolveLinks` |
+| `github.com/cloudvoyant/openbase/libs/components/gcp` | Org-wide WIF/APIs/KMS/wildcard HTTPS Load Balancers (`*.gcp.cloudvoyant.io`), per-app Artifact Registry projects, Cloud Run v2 services, and GCS buckets with zero-copy preview overlays | `Platform`, `Project`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs.Store` |
+| `github.com/cloudvoyant/openbase/libs/components/vercel` | Team-level settings, per-app Vercel Projects (`staging` CustomEnvironment, domains, bypass, shared Blob store), WebApp deployments/aliases, and keyless GCP OIDC federation | `Platform`, `Project`, `WebApp`, `BlobStore`, `BlobOverlayClient` |
+| `github.com/cloudvoyant/openbase/libs/components/neon` | Org defaults, per-app Neon Project clusters, and copy-on-write branched serverless PostgreSQL over `kislerdm/neon` | `Platform`, `Project`, `Database` |
+| `github.com/cloudvoyant/openbase/libs/components/kinde` | Org two-tenant (`dev` + `prod`) connections, per-app OIDC `Application` pairs, and per-environment tier routing over `kinde-oss/kinde` | `Platform`, `Project`, `OidcApp` |
+| `github.com/cloudvoyant/openbase/libs/components/composite` | Turnkey org `Platform`, Premise `infra/shared` `*Project`, and `infra/` per-environment `*App` blueprints wired via `StackReference` | `Platform`, `VercelNeonProject`, `VercelNeonApp`, `GcpCloudRunNeonProject`, `GcpCloudRunNeonApp` |
 | `github.com/cloudvoyant/openbase/libs/components/synthetic` | Offline deterministic doubles for `< 2s` unit tests | `Service`, `Storage` |
 
 ## Development
@@ -40,17 +43,14 @@ mise run generate:check   # Verify bridged Go SDKs (internal/providers/{neon,kin
 mise run format:check     # Verify Go formatting
 mise run lint             # Run golangci-lint across libs/components and e2e/components
 mise run test             # Run fast offline WithMocks + synthetic tests
-mise run e2e              # Run offline standalone Go consumer fixture preview test
+mise run e2e -- core      # Run offline standalone Go consumer fixture preview test
 ```
 
 ### Live Cloud E2E Tests
 
-Every module is verified against live cloud sandboxes and a remote `gs://` Pulumi state backend (see [e2e/README.md](./e2e/README.md)):
+Every module is verified against dedicated OpenBase cloud sandboxes (see [e2e/README.md](./e2e/README.md)):
 
 ```sh
-export PULUMI_BACKEND_URL=gs://YOUR_STATE_BUCKET/openbase-e2e
-export OPENBASE_TEST_GCP_PROJECT=YOUR_GCP_PROJECT
-
 mise run e2e:gcp
 mise run e2e:neon
 mise run e2e:kinde

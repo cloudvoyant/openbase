@@ -16,21 +16,22 @@ func main() {
 		teamID := envOrDefault("VERCEL_TEAM_ID", "OPENBASE_TEST_VERCEL_TEAM_ID", "")
 		teamSlug := envOrDefault("VERCEL_TEAM_SLUG", "OPENBASE_TEST_VERCEL_TEAM_SLUG", "cloudvoyant")
 
-		_, err := composite.VercelNeonShared{
+		_, err := composite.VercelNeonProject{
 			Project:           appProject,
+			PlatformStackRef:  os.Getenv("OPENBASE_PLATFORM_STACK_REF"),
 			VercelProjectName: vProjName,
 			TeamID:            teamID,
 			TeamSlug:          teamSlug,
 			BaseDomain:        os.Getenv("OPENBASE_BASE_DOMAIN"),
 			NeonOrgID:         os.Getenv("NEON_ORG_ID"),
-			Auth:              sharedKindeConfig(vProjName),
+			Auth:              projectKindeConfig(vProjName),
 		}.Register(ctx)
 		return err
 	})
 }
 
-func sharedKindeConfig(defaultAppName string) *composite.KindeSharedConfig {
-	return &composite.KindeSharedConfig{
+func projectKindeConfig(defaultAppName string) *composite.KindeProjectConfig {
+	return &composite.KindeProjectConfig{
 		AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", defaultAppName),
 		ImportDevAppID:             envOrDefault("OPENBASE_IMPORT_DEV_APP_ID", "OPENBASE_TEST_IMPORT_DEV_APP_ID", ""),
 		ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),

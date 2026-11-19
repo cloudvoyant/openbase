@@ -18,7 +18,7 @@ import (
 var _ core.StatelessResource = (*WebAppResource)(nil)
 
 // ErrProjectSourceRequired reports a missing Vercel project reference on WebApp.
-var ErrProjectSourceRequired = errors.New("vercel: shared, sharedStackRef, or vercelProjectId is required")
+var ErrProjectSourceRequired = errors.New("vercel: vercelProject, projectStackRef, or vercelProjectId is required")
 
 // WebApp declares a per-environment Vercel WebApp deployment, aliases, env vars, and GCP OIDC federation.
 type WebApp struct {
@@ -30,8 +30,8 @@ type WebApp struct {
 	Links                    []core.Resource
 	Env                      map[string]pulumi.StringInput
 	Secrets                  map[string]pulumi.StringInput
-	Shared                   *SharedResource
-	SharedStackRef           string
+	VercelProject            *ProjectResource
+	ProjectStackRef          string
 	VercelProjectID          pulumi.StringInput
 	VercelProjectName        string
 	TeamID                   string
@@ -75,7 +75,7 @@ type WebAppResource struct {
 
 // Register provisions a Vercel WebApp component satisfying core.StatelessResource.
 func (w WebApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*WebAppResource, error) {
-	if w.Shared == nil && w.SharedStackRef == "" && w.VercelProjectID == nil {
+	if w.VercelProject == nil && w.ProjectStackRef == "" && w.VercelProjectID == nil {
 		return nil, ErrProjectSourceRequired
 	}
 	res := &WebAppResource{}
@@ -153,19 +153,19 @@ func provisionWebApp(
 
 func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec WebApp) (webAppRefs, error) {
 	refs := initExplicitWebRefs(meta, spec)
-	applySharedStructWebRefs(&refs, spec.Shared)
-	if spec.SharedStackRef == "" {
+	applyProjectStructWebRefs(&refs, spec.VercelProject)
+	if spec.ProjectStackRef == "" {
 		return refs, nil
 	}
-	sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.SharedStackRef)})
+	sr, err := pulumi.NewStackReference(ctx, name+"-project-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.ProjectStackRef)})
 	if err != nil {
 		return webAppRefs{}, err
 	}
-	applySharedStackRefWebRefs(&refs, sr, spec)
+	applyProjectStackRefWebRefs(&refs, sr, spec)
 	return refs, nil
 }
 
-func applySharedStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
+func applyProjectStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
 	if !isOutSet(refs.projectID) {
 		refs.projectID = preferVercelStackOutput(sr, "vercelProjectId", "projectId")
 	}
@@ -175,11 +175,11 @@ func applySharedStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spe
 	if !isOutSet(refs.stageEnvID) {
 		refs.stageEnvID = optionalVercelStackOutput(sr, "stageCustomEnvironmentId")
 	}
-	applyOptionalSharedNamingRefs(refs, sr, spec)
+	applyOptionalProjectNamingRefs(refs, sr, spec)
 }
 
-func applyOptionalSharedNamingRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
-	if spec.Shared != nil {
+func applyOptionalProjectNamingRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
+	if spec.VercelProject != nil {
 		return
 	}
 	if spec.VercelProjectName == "" {
@@ -241,21 +241,21 @@ func initExplicitWebRefs(meta core.ResourceMeta, spec WebApp) webAppRefs {
 	return refs
 }
 
-func applySharedStructWebRefs(refs *webAppRefs, shared *SharedResource) {
-	if shared == nil {
+func applyProjectStructWebRefs(refs *webAppRefs, proj *ProjectResource) {
+	if proj == nil {
 		return
 	}
 	if !isOutSet(refs.projectID) {
-		refs.projectID = shared.ProjectID
+		refs.projectID = proj.ProjectID
 	}
-	refs.projectName = shared.VercelProjectName
-	refs.teamSlug = shared.TeamSlug
-	refs.baseDomain = shared.BaseDomain
-	if !isOutSet(refs.devEnvID) && shared.DevEnvironment != nil {
-		refs.devEnvID = shared.DevCustomEnvironmentID
+	refs.projectName = proj.VercelProjectName
+	refs.teamSlug = proj.TeamSlug
+	refs.baseDomain = proj.BaseDomain
+	if !isOutSet(refs.devEnvID) && proj.DevEnvironment != nil {
+		refs.devEnvID = proj.DevCustomEnvironmentID
 	}
-	if !isOutSet(refs.stageEnvID) && shared.StageEnvironment != nil {
-		refs.stageEnvID = shared.StageCustomEnvironmentID
+	if !isOutSet(refs.stageEnvID) && proj.StageEnvironment != nil {
+		refs.stageEnvID = proj.StageCustomEnvironmentID
 	}
 }
 
@@ -361,7 +361,7 @@ func shouldSkipProjectEnvVars(env core.Environment, spec WebApp, refs webAppRefs
 }
 
 func usesDevCustomEnv(spec WebApp) bool {
-	return spec.EnableDevEnvironment || spec.DevCustomEnvironmentID != nil || (spec.Shared != nil && spec.Shared.DevEnvironment != nil)
+	return spec.EnableDevEnvironment || spec.DevCustomEnvironmentID != nil || (spec.VercelProject != nil && spec.VercelProject.DevEnvironment != nil)
 }
 
 func registerProjectEnvMap(

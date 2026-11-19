@@ -1,6 +1,6 @@
 # Premise Vercel + Neon + Kinde Workspace (`vercel-neon-kinde-app`)
 
-Premise-structured consumer workspace splitting platform roots (`infra/shared` -> `composite.VercelNeonShared`) from per-environment deployments (`infra` -> `composite.VercelNeonApp` across `dev`, `prod`, `stage`, and `preview-<slug>`), with application source in `apps/web`.
+Premise-structured consumer workspace splitting shared project assets (`infra/shared` -> `composite.VercelNeonProject`) from per-environment deployments (`infra` -> `composite.VercelNeonApp` across `dev`, `prod`, `stage`, and `preview-<slug>`), with application source in `apps/web`.
 
 ## Layout
 

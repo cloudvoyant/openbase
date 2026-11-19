@@ -15,8 +15,8 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestKindeOidcApp(t *testing.T) {
-	t.Run("given kinde.SharedOidcApp and kinde.OidcApp specs", func(t *testing.T) {
-		t.Run("when routing dev/preview and stage/prod stacks, then each tier binds the matching tenant and callback URL", func(t *testing.T) {
+	t.Run("given kinde.Platform, kinde.Project, and kinde.OidcApp specs", func(t *testing.T) {
+		t.Run("when routing dev/preview and stage/prod stacks through Platform -> Project -> OidcApp, then each tier binds the matching tenant and callback URL", func(t *testing.T) {
 			// Arrange.
 			mocks := newKindeMocks()
 			previewIssuerCh := make(chan string, 1)
@@ -25,7 +25,16 @@ func TestKindeOidcApp(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				shared, err := sampleSharedSpec().Register(ctx)
+				plat, err := sampleKindePlatformSpec().Register(ctx)
+				if err != nil {
+					return err
+				}
+				proj, err := kinde.Project{
+					Name:           "project-oidc",
+					Project:        "storefront",
+					Platform:       plat,
+					VercelTeamSlug: "cloudvoyant",
+				}.Register(ctx)
 				if err != nil {
 					return err
 				}
@@ -33,7 +42,7 @@ func TestKindeOidcApp(t *testing.T) {
 					Name:           "oidc-preview",
 					Project:        "storefront",
 					Environment:    "preview-pr-5",
-					Shared:         shared,
+					KindeProject:   proj,
 					VercelTeamSlug: "cloudvoyant",
 				}.Register(ctx)
 				if err != nil {
@@ -43,7 +52,7 @@ func TestKindeOidcApp(t *testing.T) {
 					Name:           "oidc-stage",
 					Project:        "storefront",
 					Environment:    "stage",
-					Shared:         shared,
+					KindeProject:   proj,
 					VercelTeamSlug: "cloudvoyant",
 				}.Register(ctx)
 				if err != nil {
@@ -68,7 +77,7 @@ func TestKindeOidcApp(t *testing.T) {
 		t.Run("when tenant credentials or OidcApp sources are missing, then Register rejects with sentinel errors", func(t *testing.T) {
 			// Arrange / Act.
 			errMissingCreds := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := kinde.SharedOidcApp{Project: "storefront"}.Register(ctx)
+				_, e := kinde.Project{Project: "storefront"}.Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront", "shared", newKindeMocks()))
 
@@ -90,7 +99,7 @@ func TestKindeOidcApp(t *testing.T) {
 			}
 		})
 
-		t.Run("when resolving credentials and host parts via SharedStackRef, then secret clientSecret and callback URL resolve cleanly", func(t *testing.T) {
+		t.Run("when resolving credentials and host parts via ProjectStackRef, then secret clientSecret and callback URL resolve cleanly", func(t *testing.T) {
 			// Arrange.
 			secCh := make(chan string, 1)
 			redirCh := make(chan string, 1)
@@ -98,10 +107,10 @@ func TestKindeOidcApp(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				app, e := kinde.OidcApp{
-					Name:           "oidc",
-					Project:        "storefront",
-					Environment:    "preview-pr-8",
-					SharedStackRef: "organization/storefront/shared",
+					Name:            "oidc",
+					Project:         "storefront",
+					Environment:     "preview-pr-8",
+					ProjectStackRef: "organization/storefront-shared/shared",
 				}.Register(ctx)
 				if e != nil {
 					return e
@@ -113,23 +122,23 @@ func TestKindeOidcApp(t *testing.T) {
 
 			// Assert.
 			requireKindeNoErr(t, err)
-			assertKindeEq(t, "SharedStackRef secret", <-secCh, "ref_dev_secret")
-			assertKindeEq(t, "SharedStackRef redirect", <-redirCh, "https://openbase-storefront-pr-8-cloudvoyant.vercel.app/api/auth/kinde_callback")
+			assertKindeEq(t, "ProjectStackRef secret", <-secCh, "ref_dev_secret")
+			assertKindeEq(t, "ProjectStackRef redirect", <-redirCh, "https://openbase-storefront-pr-8-cloudvoyant.vercel.app/api/auth/kinde_callback")
 		})
 
-		t.Run("when registering SharedOidcApp for Vercel, then dev includes default <project>.vercel.app, team, and wildcard callbacks", func(t *testing.T) {
+		t.Run("when registering kinde.Project for Vercel, then dev includes default <project>.vercel.app, team, and wildcard callbacks", func(t *testing.T) {
 			// Arrange.
 			mocks := newKindeMocks()
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := sampleSharedSpec().Register(ctx)
+				_, e := sampleProjectSpec().Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront", "shared", mocks))
 
 			// Assert.
 			requireKindeNoErr(t, err)
-			got := mocks.appRedirects["shared-oidc-dev-app"]
+			got := mocks.appRedirects["project-oidc-dev-app"]
 			for _, want := range []string{
 				"https://storefront.vercel.app/api/auth/kinde_callback",
 				"https://storefront-cloudvoyant.vercel.app/api/auth/kinde_callback",
@@ -145,9 +154,24 @@ func TestKindeOidcApp(t *testing.T) {
 
 // Private helpers ------------------------------------------------------------
 
-func sampleSharedSpec() kinde.SharedOidcApp {
-	return kinde.SharedOidcApp{
-		Name:    "shared-oidc",
+func sampleKindePlatformSpec() kinde.Platform {
+	return kinde.Platform{
+		Dev: kinde.TenantCredentials{
+			Domain:       "dev-test.kinde.com",
+			ClientID:     pulumi.String("dev-m2m-id"),
+			ClientSecret: pulumi.String("dev-m2m-secret"),
+		},
+		Prod: kinde.TenantCredentials{
+			Domain:       "https://prod-test.kinde.com/",
+			ClientID:     pulumi.String("prod-m2m-id"),
+			ClientSecret: pulumi.String("prod-m2m-secret"),
+		},
+	}
+}
+
+func sampleProjectSpec() kinde.Project {
+	return kinde.Project{
+		Name:    "project-oidc",
 		Project: "storefront",
 		Dev: kinde.TenantCredentials{
 			Domain:       "dev-test.kinde.com",

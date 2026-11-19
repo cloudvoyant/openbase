@@ -15,8 +15,8 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestNeonDatabase(t *testing.T) {
-	t.Run("given neon.SharedProject and neon.Database specs", func(t *testing.T) {
-		t.Run("when registering SharedProject and a root prod Database, then it creates Role/Database and exports pooled and direct URLs", func(t *testing.T) {
+	t.Run("given neon.Platform, neon.Project, and neon.Database specs", func(t *testing.T) {
+		t.Run("when registering Platform -> Project -> root prod Database, then it creates Role/Database and exports pooled and direct URLs", func(t *testing.T) {
 			// Arrange.
 			mocks := newNeonMocks()
 			pooledCh := make(chan string, 1)
@@ -24,20 +24,25 @@ func TestNeonDatabase(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				shared, err := neon.SharedProject{
-					Project:  "storefront",
+				plat, err := neon.Platform{
 					OrgID:    "org-test",
 					RegionID: "aws-us-east-1",
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
+				proj, err := neon.Project{
+					Project:  "storefront",
+					Platform: plat,
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
 				db, err := neon.Database{
-					Name:            "db",
-					Project:         "storefront",
-					Environment:     "prod",
-					ProjectID:       shared.ProjectID,
-					DefaultBranchID: shared.DefaultBranchID,
+					Name:        "db",
+					Project:     "storefront",
+					Environment: "prod",
+					NeonProject: proj,
 				}.Register(ctx)
 				if err != nil {
 					return err
@@ -95,7 +100,7 @@ func TestNeonDatabase(t *testing.T) {
 			}
 		})
 
-		t.Run("when ProjectID and SharedStackRef are omitted, then Register returns ErrProjectIDRequired", func(t *testing.T) {
+		t.Run("when NeonProject, ProjectID, and ProjectStackRef are omitted, then Register returns ErrProjectIDRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				_, e := neon.Database{

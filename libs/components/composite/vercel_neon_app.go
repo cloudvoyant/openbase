@@ -13,7 +13,7 @@ import (
 
 var _ core.StatelessResource = (*VercelNeonAppResource)(nil)
 
-// VercelNeonApp declares a per-environment Vercel web application (dev, stage, prod, preview-*) wired to VercelNeonShared via StackReference.
+// VercelNeonApp declares a per-environment Vercel web application (dev, stage, prod, preview-*) wired to VercelNeonProject via StackReference.
 type VercelNeonApp struct {
 	Name                 string
 	Project              string
@@ -22,7 +22,7 @@ type VercelNeonApp struct {
 	Links                []core.Resource
 	Env                  map[string]pulumi.StringInput
 	Secrets              map[string]pulumi.StringInput
-	SharedStackRef       string
+	ProjectStackRef      string
 	VercelProjectName    string
 	TeamID               string
 	TeamSlug             string
@@ -78,7 +78,7 @@ func (v VercelNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOpti
 	if err != nil {
 		return nil, err
 	}
-	if err := requireNonSharedEnv(meta, "composite.VercelNeonShared"); err != nil {
+	if err := requireNonSharedEnv(meta, "composite.VercelNeonProject"); err != nil {
 		return nil, err
 	}
 	if err := provisionVercelEnvStack(ctx, meta, v, res); err != nil {
@@ -98,8 +98,8 @@ func provisionVercelEnvStack(
 	spec VercelNeonApp,
 	res *VercelNeonAppResource,
 ) error {
-	sharedRef := resolveSharedStackRef(ctx, spec.SharedStackRef)
-	links, err := registerVercelBackingResources(ctx, meta, sharedRef, spec, res)
+	projectRef := resolveProjectStackRef(ctx, spec.ProjectStackRef)
+	links, err := registerVercelBackingResources(ctx, meta, projectRef, spec, res)
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func provisionVercelEnvStack(
 		Links:                links,
 		Env:                  spec.Env,
 		Secrets:              spec.Secrets,
-		SharedStackRef:       sharedRef,
+		ProjectStackRef:      projectRef,
 		VercelProjectName:    spec.VercelProjectName,
 		TeamID:               spec.TeamID,
 		TeamSlug:             spec.TeamSlug,
@@ -143,21 +143,21 @@ func provisionVercelEnvStack(
 func registerVercelBackingResources(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	sharedRef string,
+	projectRef string,
 	spec VercelNeonApp,
 	res *VercelNeonAppResource,
 ) ([]core.Resource, error) {
 	dbBranch, dbBranchRef := resolveDBBranch(ctx, meta.Environment)
 	db, err := neon.Database{
-		Name:           "db",
-		Project:        meta.Project,
-		Repo:           meta.Repo,
-		Environment:    string(meta.Environment),
-		BranchFrom:     dbBranch,
-		SharedStackRef: sharedRef,
-		BranchStackRef: dbBranchRef,
-		DatabaseName:   spec.DatabaseName,
-		RoleName:       spec.RoleName,
+		Name:            "db",
+		Project:         meta.Project,
+		Repo:            meta.Repo,
+		Environment:     string(meta.Environment),
+		BranchFrom:      dbBranch,
+		ProjectStackRef: projectRef,
+		BranchStackRef:  dbBranchRef,
+		DatabaseName:    spec.DatabaseName,
+		RoleName:        spec.RoleName,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return nil, err
@@ -165,10 +165,10 @@ func registerVercelBackingResources(
 	res.Database = db
 	links := []core.Resource{db}
 
-	if err := attachOptionalVercelBlob(ctx, meta, sharedRef, spec, res, &links); err != nil {
+	if err := attachOptionalVercelBlob(ctx, meta, projectRef, spec, res, &links); err != nil {
 		return nil, err
 	}
-	if err := attachOptionalVercelKinde(ctx, meta, sharedRef, spec, res, &links); err != nil {
+	if err := attachOptionalVercelKinde(ctx, meta, projectRef, spec, res, &links); err != nil {
 		return nil, err
 	}
 	return links, nil
@@ -177,7 +177,7 @@ func registerVercelBackingResources(
 func attachOptionalVercelBlob(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	sharedRef string,
+	projectRef string,
 	spec VercelNeonApp,
 	res *VercelNeonAppResource,
 	links *[]core.Resource,
@@ -192,7 +192,7 @@ func attachOptionalVercelBlob(
 		Repo:                 meta.Repo,
 		Environment:          string(meta.Environment),
 		BranchFrom:           blobBranch,
-		SharedStackRef:       sharedRef,
+		ProjectStackRef:      projectRef,
 		TeamID:               spec.TeamID,
 		EnableDevEnvironment: spec.EnableDevEnvironment,
 		SkipStageEnvironment: spec.SkipStageEnvironment,
@@ -209,7 +209,7 @@ func attachOptionalVercelBlob(
 func attachOptionalVercelKinde(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	sharedRef string,
+	projectRef string,
 	spec VercelNeonApp,
 	res *VercelNeonAppResource,
 	links *[]core.Resource,
@@ -222,7 +222,7 @@ func attachOptionalVercelKinde(
 		Project:           meta.Project,
 		Repo:              meta.Repo,
 		Environment:       string(meta.Environment),
-		SharedStackRef:    sharedRef,
+		ProjectStackRef:   projectRef,
 		VercelProjectName: spec.VercelProjectName,
 		VercelTeamSlug:    spec.TeamSlug,
 		BaseDomain:        spec.BaseDomain,

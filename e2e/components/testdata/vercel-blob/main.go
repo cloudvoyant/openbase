@@ -19,7 +19,7 @@ func main() {
 		teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
 		if env == core.EnvShared {
-			shared, err := vercel.Shared{
+			proj, err := vercel.Project{
 				Project:           appProject,
 				VercelProjectName: "openbase-e2e-" + appProject,
 				TeamID:            teamID,
@@ -29,10 +29,10 @@ func main() {
 			if err != nil {
 				return err
 			}
-			ctx.Export("projectId", shared.ProjectID)
-			ctx.Export("stageCustomEnvironmentId", shared.StageCustomEnvironmentID)
-			ctx.Export("blobStoreId", shared.BlobStoreID)
-			ctx.Export("blobBaseUrl", shared.BlobBaseURL)
+			ctx.Export("projectId", proj.ProjectID)
+			ctx.Export("stageCustomEnvironmentId", proj.StageCustomEnvironmentID)
+			ctx.Export("blobStoreId", proj.BlobStoreID)
+			ctx.Export("blobBaseUrl", proj.BlobBaseURL)
 			return nil
 		}
 		branchFrom := ""

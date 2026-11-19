@@ -14,8 +14,8 @@ import (
 
 var _ core.StatelessResource = (*OidcAppResource)(nil)
 
-// ErrOidcSourceRequired reports missing Shared / SharedStackRef / explicit credentials on OidcApp.
-var ErrOidcSourceRequired = errors.New("kinde: shared, sharedStackRef, or explicit tenant outputs are required")
+// ErrOidcSourceRequired reports missing KindeProject / ProjectStackRef / explicit credentials on OidcApp.
+var ErrOidcSourceRequired = errors.New("kinde: kindeProject, projectStackRef, or explicit tenant outputs are required")
 
 // OidcApp declares per-environment Kinde OIDC credentials and redirect URLs.
 type OidcApp struct {
@@ -27,8 +27,8 @@ type OidcApp struct {
 	Links             []core.Resource
 	Env               map[string]pulumi.StringInput
 	Secrets           map[string]pulumi.StringInput
-	Shared            *SharedOidcAppResource
-	SharedStackRef    string
+	KindeProject      *ProjectResource
+	ProjectStackRef   string
 	IssuerURL         pulumi.StringInput
 	ClientID          pulumi.StringInput
 	ClientSecret      pulumi.StringInput
@@ -91,7 +91,7 @@ func (o OidcApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 // Private helpers ------------------------------------------------------------
 
 func hasOidcSource(spec OidcApp) bool {
-	if spec.Shared != nil || spec.SharedStackRef != "" {
+	if spec.KindeProject != nil || spec.ProjectStackRef != "" {
 		return true
 	}
 	return spec.IssuerURL != nil && spec.ClientID != nil && spec.ClientSecret != nil
@@ -109,16 +109,16 @@ func populateOidcOutputs(
 	if useProd {
 		res.Tenant = "prod"
 	}
-	var sharedSR *pulumi.StackReference
-	if spec.SharedStackRef != "" && spec.Shared == nil {
-		sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.SharedStackRef)})
+	var projSR *pulumi.StackReference
+	if spec.ProjectStackRef != "" && spec.KindeProject == nil {
+		sr, err := pulumi.NewStackReference(ctx, name+"-project-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.ProjectStackRef)})
 		if err != nil {
 			return err
 		}
-		sharedSR = sr
+		projSR = sr
 	}
-	issuer, clientID, clientSecret := resolveTenantCredOutputs(useProd, spec, sharedSR)
-	siteURL := resolveSiteURL(meta, spec, sharedSR)
+	issuer, clientID, clientSecret := resolveTenantCredOutputs(useProd, spec, projSR)
+	siteURL := resolveSiteURL(meta, spec, projSR)
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	postLogin := ensureLeadingSlash(defaultKindeStr(spec.PostLoginPath, "/"))
 	postLogout := ensureLeadingSlash(defaultKindeStr(spec.PostLogoutPath, "/"))
@@ -141,11 +141,11 @@ func resolveTenantCredOutputs(
 	if spec.IssuerURL != nil && spec.ClientID != nil && spec.ClientSecret != nil {
 		return spec.IssuerURL.ToStringOutput(), spec.ClientID.ToStringOutput(), spec.ClientSecret.ToStringOutput()
 	}
-	if spec.Shared != nil {
+	if spec.KindeProject != nil {
 		if useProd {
-			return spec.Shared.ProdIssuerURL, spec.Shared.ProdClientID, spec.Shared.ProdClientSecret
+			return spec.KindeProject.ProdIssuerURL, spec.KindeProject.ProdClientID, spec.KindeProject.ProdClientSecret
 		}
-		return spec.Shared.DevIssuerURL, spec.Shared.DevClientID, spec.Shared.DevClientSecret
+		return spec.KindeProject.DevIssuerURL, spec.KindeProject.DevClientID, spec.KindeProject.DevClientSecret
 	}
 	prefix := "dev"
 	if useProd {

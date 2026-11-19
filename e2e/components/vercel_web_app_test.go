@@ -36,7 +36,7 @@ func TestVercelWebApp(t *testing.T) {
 		}
 	})
 
-	t.Run("given a vercel.Shared and vercel.WebApp consumer program", func(t *testing.T) {
+	t.Run("given a vercel.Project and vercel.WebApp consumer program", func(t *testing.T) {
 		for _, s := range []string{"shared", "stage", "prod", "preview-pr-7"} {
 			h.InitStack(t, s)
 		}

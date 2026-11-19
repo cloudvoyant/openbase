@@ -1,10 +1,7 @@
-// Package kinde provides OpenBase two-tenant Pulumi components for Kinde OIDC authentication.
 package kinde
 
 import (
-	"errors"
 	"slices"
-	"strings"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
@@ -15,25 +12,16 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*SharedOidcAppResource)(nil)
+var _ core.StatelessResource = (*ProjectResource)(nil)
 
-// ErrTenantCredentialsRequired reports missing dev or prod Kinde tenant M2M credentials.
-var ErrTenantCredentialsRequired = errors.New("kinde: both dev and prod tenant domain, clientId, and clientSecret are required")
-
-// TenantCredentials configures M2M management credentials for a single Kinde tenant.
-type TenantCredentials struct {
-	Domain       string
-	ClientID     pulumi.StringInput
-	ClientSecret pulumi.StringInput
-	Audience     string
-}
-
-// SharedOidcApp declares two-tenant Kinde OIDC Applications in the "shared" stack.
-type SharedOidcApp struct {
+// Project declares an application's dev and prod Kinde OIDC Applications in Premise's infra/shared stack.
+type Project struct {
 	Name                       string
 	Project                    string
 	Repo                       string
 	Environment                string
+	Platform                   *PlatformResource
+	PlatformStackRef           string
 	AppName                    string
 	Dev                        TenantCredentials
 	Prod                       TenantCredentials
@@ -57,8 +45,8 @@ type SharedOidcApp struct {
 	SkipEmailPasswordConn      bool
 }
 
-// SharedOidcAppResource is the provisioned handle for dev and prod Kinde OIDC Applications.
-type SharedOidcAppResource struct {
+// ProjectResource is the provisioned handle for an application's dev and prod Kinde OIDC Applications.
+type ProjectResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -78,24 +66,24 @@ type SharedOidcAppResource struct {
 	EmailPasswordConn string
 }
 
-// Register provisions dev and prod Kinde OIDC Applications and exports credentials for StackReference.
-func (s SharedOidcApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*SharedOidcAppResource, error) {
-	if err := validateSharedOidcApp(s); err != nil {
+// Register provisions dev and prod Kinde OIDC Applications and exports credentials for per-environment kinde.OidcApp stacks.
+func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
+	if err := validateKindeProject(p); err != nil {
 		return nil, err
 	}
-	s.Name = defaultKindeStr(s.Name, "shared")
-	env := defaultKindeStr(s.Environment, string(core.EnvShared))
-	res := &SharedOidcAppResource{}
-	meta, err := core.InitStateless(ctx, "openbase:kinde:SharedOidcApp", "kinde-shared-oidc", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        s.Name,
-		Project:     s.Project,
-		Repo:        s.Repo,
+	p.Name = defaultKindeStr(p.Name, "kinde")
+	env := defaultKindeStr(p.Environment, string(core.EnvShared))
+	res := &ProjectResource{}
+	meta, err := core.InitStateless(ctx, "openbase:kinde:Project", "kinde-project", res, &res.StatelessMeta, core.StatelessSpec{
+		Name:        p.Name,
+		Project:     p.Project,
+		Repo:        p.Repo,
 		Environment: env,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionTwoTenantApps(ctx, s.Name, meta, s, res); err != nil {
+	if err := provisionTwoTenantApps(ctx, p.Name, meta, p, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
@@ -106,59 +94,34 @@ func (s SharedOidcApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOpti
 			"KINDE_PROD_ISSUER_URL": res.ProdIssuerURL,
 		},
 	})
-	if err := registerSharedOidcOutputs(ctx, res); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-
-// NormalizeIssuerURL ensures a Kinde tenant domain starts with https:// and has no trailing slash.
-func NormalizeIssuerURL(raw string) string {
-	trimmed := strings.TrimSpace(strings.TrimRight(raw, "/"))
-	if trimmed == "" {
-		return ""
-	}
-	if !strings.HasPrefix(trimmed, "https://") && !strings.HasPrefix(trimmed, "http://") {
-		return "https://" + trimmed
-	}
-	return trimmed
+	return res, registerProjectOidcOutputs(ctx, res)
 }
 
 // Private helpers ------------------------------------------------------------
 
-func validateSharedOidcApp(spec SharedOidcApp) error {
+func validateKindeProject(spec Project) error {
+	if spec.Platform != nil {
+		return nil
+	}
 	if !hasTenantCreds(spec.Dev) || !hasTenantCreds(spec.Prod) {
 		return ErrTenantCredentialsRequired
 	}
 	return nil
 }
 
-func hasTenantCreds(c TenantCredentials) bool {
-	return strings.TrimSpace(c.Domain) != "" && c.ClientID != nil && c.ClientSecret != nil
-}
-
 func provisionTwoTenantApps(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec SharedOidcApp,
-	res *SharedOidcAppResource,
+	spec Project,
+	res *ProjectResource,
 ) error {
-	devIssuer := NormalizeIssuerURL(spec.Dev.Domain)
-	prodIssuer := NormalizeIssuerURL(spec.Prod.Domain)
-	devProv, err := createTenantProvider(ctx, name+"-dev-prov", devIssuer, spec.Dev, res)
-	if err != nil {
-		return err
-	}
-	prodProv, err := createTenantProvider(ctx, name+"-prod-prov", prodIssuer, spec.Prod, res)
+	devProv, prodProv, err := resolveProjectTenantProviders(ctx, name, spec, res)
 	if err != nil {
 		return err
 	}
 	res.DevProvider = devProv
 	res.ProdProvider = prodProv
-	res.DevIssuerURL = pulumi.String(devIssuer).ToStringOutput()
-	res.ProdIssuerURL = pulumi.String(prodIssuer).ToStringOutput()
-
 	appName := defaultKindeStr(spec.AppName, "openbase-"+meta.Project)
 	if err := createDevApplication(ctx, name, appName, meta.Project, spec, devProv, res); err != nil {
 		return err
@@ -166,27 +129,39 @@ func provisionTwoTenantApps(
 	return createProdApplication(ctx, name, appName, meta, spec, prodProv, res)
 }
 
-func createTenantProvider(
+func resolveProjectTenantProviders(
 	ctx *pulumi.Context,
-	name, issuer string,
-	creds TenantCredentials,
-	parent pulumi.Resource,
-) (*kindeprov.Provider, error) {
-	aud := defaultKindeStr(creds.Audience, issuer+"/api")
-	return kindeprov.NewProvider(ctx, name, &kindeprov.ProviderArgs{
-		Domain:       pulumi.String(issuer),
-		Audience:     pulumi.String(aud),
-		ClientId:     creds.ClientID.ToStringOutput(),
-		ClientSecret: pulumi.ToSecret(creds.ClientSecret.ToStringOutput()).(pulumi.StringOutput),
-	}, pulumi.Parent(parent))
+	name string,
+	spec Project,
+	res *ProjectResource,
+) (*kindeprov.Provider, *kindeprov.Provider, error) {
+	if spec.Platform != nil {
+		res.DevIssuerURL = spec.Platform.DevIssuerURL
+		res.ProdIssuerURL = spec.Platform.ProdIssuerURL
+		res.EmailPasswordConn = spec.Platform.EmailPasswordConn
+		return spec.Platform.DevProvider, spec.Platform.ProdProvider, nil
+	}
+	devIssuer := NormalizeIssuerURL(spec.Dev.Domain)
+	prodIssuer := NormalizeIssuerURL(spec.Prod.Domain)
+	devProv, err := createTenantProvider(ctx, name+"-dev-prov", devIssuer, spec.Dev, res)
+	if err != nil {
+		return nil, nil, err
+	}
+	prodProv, err := createTenantProvider(ctx, name+"-prod-prov", prodIssuer, spec.Prod, res)
+	if err != nil {
+		return nil, nil, err
+	}
+	res.DevIssuerURL = pulumi.String(devIssuer).ToStringOutput()
+	res.ProdIssuerURL = pulumi.String(prodIssuer).ToStringOutput()
+	return devProv, prodProv, nil
 }
 
 func createDevApplication(
 	ctx *pulumi.Context,
 	name, appName, project string,
-	spec SharedOidcApp,
+	spec Project,
 	prov *kindeprov.Provider,
-	res *SharedOidcAppResource,
+	res *ProjectResource,
 ) error {
 	redirects, logouts := buildDevCallbacks(project, spec)
 	appOpts := buildKindeAppOptions(res, prov, spec.ImportDevAppID, spec.RetainApplicationsOnDelete)
@@ -209,19 +184,22 @@ func createDevApplication(
 func attachDevEmailPassword(
 	ctx *pulumi.Context,
 	name string,
-	spec SharedOidcApp,
+	spec Project,
 	prov *kindeprov.Provider,
 	app *kindeprov.Application,
-	res *SharedOidcAppResource,
+	res *ProjectResource,
 ) error {
 	if spec.SkipEmailPasswordConn {
 		return nil
 	}
-	conns, err := kindeprov.GetConnections(ctx, nil, pulumi.Provider(prov))
-	if err != nil {
-		return err
+	connID := res.EmailPasswordConn
+	if connID == "" {
+		conns, err := kindeprov.GetConnections(ctx, nil, pulumi.Provider(prov))
+		if err != nil {
+			return err
+		}
+		connID = findEmailPasswordConn(conns.Connections)
 	}
-	connID := findEmailPasswordConn(conns.Connections)
 	if connID == "" {
 		return nil
 	}
@@ -237,22 +215,13 @@ func attachDevEmailPassword(
 	return nil
 }
 
-func findEmailPasswordConn(conns []kindeprov.GetConnectionsConnection) string {
-	for _, c := range conns {
-		if c.Strategy == "email:password" {
-			return c.Id
-		}
-	}
-	return ""
-}
-
 func createProdApplication(
 	ctx *pulumi.Context,
 	name, appName string,
 	meta core.ResourceMeta,
-	spec SharedOidcApp,
+	spec Project,
 	prov *kindeprov.Provider,
-	res *SharedOidcAppResource,
+	res *ProjectResource,
 ) error {
 	redirects, logouts := buildProdCallbacks(meta.Project, spec)
 	appOpts := buildKindeAppOptions(res, prov, spec.ImportProdAppID, spec.RetainApplicationsOnDelete)
@@ -288,7 +257,7 @@ func buildKindeAppOptions(
 	return opts
 }
 
-func buildDevCallbacks(project string, spec SharedOidcApp) ([]string, []string) {
+func buildDevCallbacks(project string, spec Project) ([]string, []string) {
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	redirects := []string{"http://localhost:5173" + cb, "http://localhost:3000" + cb}
 	logouts := []string{"http://localhost:5173/", "http://localhost:3000/"}
@@ -303,7 +272,7 @@ func buildDevCallbacks(project string, spec SharedOidcApp) ([]string, []string) 
 	return sortAndCompact(redirects), sortAndCompact(logouts)
 }
 
-func devCallbackHosts(project, vProj string, spec SharedOidcApp) []string {
+func devCallbackHosts(project, vProj string, spec Project) []string {
 	hosts := devVercelHosts(vProj, spec.VercelTeamSlug)
 	if base := core.NormalizeDomain(spec.BaseDomain); base != "" && project != "" {
 		hosts = append(hosts, "https://"+project+"-*."+base)
@@ -325,7 +294,7 @@ func devVercelHosts(vProj, teamSlug string) []string {
 	}
 }
 
-func buildProdCallbacks(project string, spec SharedOidcApp) ([]string, []string) {
+func buildProdCallbacks(project string, spec Project) ([]string, []string) {
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	vProj := defaultKindeStr(spec.VercelProjectName, project)
 	var redirects, logouts []string
@@ -339,7 +308,7 @@ func buildProdCallbacks(project string, spec SharedOidcApp) ([]string, []string)
 	return sortAndCompact(redirects), sortAndCompact(logouts)
 }
 
-func prodVercelAndCustomHosts(project, vProj string, spec SharedOidcApp) []string {
+func prodVercelAndCustomHosts(project, vProj string, spec Project) []string {
 	var hosts []string
 	if base := core.NormalizeDomain(spec.BaseDomain); base != "" && project != "" {
 		if pd, err := core.EnvironmentDomain(project, core.EnvProd, "web", base); err == nil {
@@ -353,7 +322,7 @@ func prodVercelAndCustomHosts(project, vProj string, spec SharedOidcApp) []strin
 	return core.DedupeDomains(hosts, spec.ExtraProdDomains, spec.ExtraStageDomains)
 }
 
-func appendProdFallbackOrExplicit(hosts []string, vProj string, spec SharedOidcApp) []string {
+func appendProdFallbackOrExplicit(hosts []string, vProj string, spec Project) []string {
 	if spec.ProdDomain != "" {
 		hosts = append(hosts, spec.ProdDomain)
 	} else if spec.VercelTeamSlug != "" {
@@ -372,7 +341,7 @@ func sortAndCompact(items []string) []string {
 	return slices.Compact(items)
 }
 
-func registerSharedOidcOutputs(ctx *pulumi.Context, res *SharedOidcAppResource) error {
+func registerProjectOidcOutputs(ctx *pulumi.Context, res *ProjectResource) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"devIssuerUrl":      res.DevIssuerURL,
 		"devAppId":          res.DevAppID,
@@ -384,18 +353,4 @@ func registerSharedOidcOutputs(ctx *pulumi.Context, res *SharedOidcAppResource) 
 		"prodClientSecret":  res.ProdClientSecret,
 		"emailPasswordConn": pulumi.String(res.EmailPasswordConn),
 	})
-}
-
-func defaultKindeStr(val, fallback string) string {
-	if val != "" {
-		return val
-	}
-	return fallback
-}
-
-func ensureLeadingSlash(p string) string {
-	if strings.HasPrefix(p, "/") {
-		return p
-	}
-	return "/" + p
 }

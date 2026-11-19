@@ -1,3 +1,3 @@
 name: openbase-vercel-webapp-fixture
 runtime: go
-description: Standalone Go consumer fixture for OpenBase vercel.Shared and vercel.WebApp E2E tests
+description: Standalone Go consumer fixture for OpenBase vercel.Project and vercel.WebApp E2E tests

@@ -43,7 +43,7 @@ func TestVercelBlobStore(t *testing.T) {
 		assertVercelBlobCleanup(t, teamID, vercelProjectID, blobStoreID)
 	})
 
-	t.Run("given a vercel.Shared and vercel.BlobStore consumer program", func(t *testing.T) {
+	t.Run("given a vercel.Project and vercel.BlobStore consumer program", func(t *testing.T) {
 		for _, s := range []string{"shared", "dev", "stage", "prod", "preview-pr-3"} {
 			h.InitStack(t, s)
 		}

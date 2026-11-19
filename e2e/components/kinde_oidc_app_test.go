@@ -43,7 +43,7 @@ func TestKindeOidcApp(t *testing.T) {
 		}
 	})
 
-	t.Run("given a two-tenant kinde.SharedOidcApp and kinde.OidcApp consumer program", func(t *testing.T) {
+	t.Run("given a two-tenant kinde.Project and kinde.OidcApp consumer program", func(t *testing.T) {
 		for _, s := range []string{"shared", "dev", "preview-pr-5", "stage", "prod"} {
 			h.InitStack(t, s)
 		}

@@ -14,15 +14,17 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*GcpCloudRunNeonSharedResource)(nil)
+var _ core.StatelessResource = (*GcpCloudRunNeonProjectResource)(nil)
 
-// GcpCloudRunNeonShared declares cross-environment GCP, Neon, and Kinde platform roots in Premise's infra/shared program.
-type GcpCloudRunNeonShared struct {
+// GcpCloudRunNeonProject declares cross-environment GCP, Neon, and Kinde project assets in Premise's infra/shared program.
+type GcpCloudRunNeonProject struct {
 	Name               string
 	ServiceName        string
 	Project            string
 	Repo               string
 	Environment        string
+	Platform           *PlatformResource
+	PlatformStackRef   string
 	GCPProject         string
 	GCPProjectNumber   string
 	Location           string
@@ -37,29 +39,29 @@ type GcpCloudRunNeonShared struct {
 	SkipKeyRing        bool
 	NeonOrgID          string
 	NeonRegionID       string
-	Auth               *KindeSharedConfig
+	Auth               *KindeProjectConfig
 	SkipStackExports   bool
 }
 
-// GcpCloudRunNeonSharedResource holds the shared GCP Artifact Registry/WIF, Neon Project, and Kinde OIDC roots.
-type GcpCloudRunNeonSharedResource struct {
+// GcpCloudRunNeonProjectResource holds the application's GCP Artifact Registry, Neon Project, and Kinde OIDC applications.
+type GcpCloudRunNeonProjectResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
-	GCP           *gcp.SharedResource
-	Neon          *neon.SharedProjectResource
-	Kinde         *kinde.SharedOidcAppResource
+	GCP           *gcp.ProjectResource
+	Neon          *neon.ProjectResource
+	Kinde         *kinde.ProjectResource
 	RepositoryURL pulumi.StringOutput
 }
 
-// Register provisions cross-environment GCP, Neon, and Kinde roots on the "shared" stack.
-func (g GcpCloudRunNeonShared) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*GcpCloudRunNeonSharedResource, error) {
-	g.Name = defaultCompStr(g.Name, "platform")
+// Register provisions cross-environment GCP, Neon, and Kinde project assets on Premise's "shared" stack.
+func (g GcpCloudRunNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*GcpCloudRunNeonProjectResource, error) {
+	g.Name = defaultCompStr(g.Name, "project")
 	g.ServiceName = defaultCompStr(g.ServiceName, "web")
 	g.Location = defaultCompStr(g.Location, defaultGCPLocation)
 	env := defaultCompStr(g.Environment, string(core.EnvShared))
-	res := &GcpCloudRunNeonSharedResource{}
-	meta, err := core.InitStateless(ctx, "openbase:composite:GcpCloudRunNeonShared", "composite-gcp-cloud-run-neon-shared", res, &res.StatelessMeta, core.StatelessSpec{
+	res := &GcpCloudRunNeonProjectResource{}
+	meta, err := core.InitStateless(ctx, "openbase:composite:GcpCloudRunNeonProject", "composite-gcp-cloud-run-neon-project", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        g.Name,
 		Project:     g.Project,
 		Repo:        g.Repo,
@@ -71,7 +73,7 @@ func (g GcpCloudRunNeonShared) Register(ctx *pulumi.Context, opts ...pulumi.Reso
 	if err := requireSharedEnv(meta); err != nil {
 		return nil, err
 	}
-	if err := provisionGCPSharedStack(ctx, meta, g, res); err != nil {
+	if err := provisionGCPProjectStack(ctx, meta, g, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
@@ -82,17 +84,19 @@ func (g GcpCloudRunNeonShared) Register(ctx *pulumi.Context, opts ...pulumi.Reso
 
 // Private helpers ------------------------------------------------------------
 
-func provisionGCPSharedStack(
+func provisionGCPProjectStack(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	spec GcpCloudRunNeonShared,
-	res *GcpCloudRunNeonSharedResource,
+	spec GcpCloudRunNeonProject,
+	res *GcpCloudRunNeonProjectResource,
 ) error {
-	gShared, err := gcp.Shared{
+	gProj, err := gcp.Project{
 		Name:               "gcp",
 		Project:            meta.Project,
 		Repo:               meta.Repo,
 		Environment:        string(meta.Environment),
+		Platform:           gcpPlatformFromComposite(spec.Platform),
+		PlatformStackRef:   spec.PlatformStackRef,
 		GCPProject:         optionalGCPProjectPtr(spec.GCPProject),
 		Location:           spec.Location,
 		BaseDomain:         spec.BaseDomain,
@@ -105,36 +109,45 @@ func provisionGCPSharedStack(
 	if err != nil {
 		return err
 	}
-	nShared, err := neon.SharedProject{
-		Name:        "neon",
-		Project:     meta.Project,
-		Repo:        meta.Repo,
-		Environment: string(meta.Environment),
-		OrgID:       spec.NeonOrgID,
-		RegionID:    defaultCompStr(spec.NeonRegionID, "aws-us-east-1"),
+	nProj, err := neon.Project{
+		Name:             "neon",
+		Project:          meta.Project,
+		Repo:             meta.Repo,
+		Environment:      string(meta.Environment),
+		Platform:         neonPlatformFromComposite(spec.Platform),
+		PlatformStackRef: spec.PlatformStackRef,
+		OrgID:            spec.NeonOrgID,
+		RegionID:         spec.NeonRegionID,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
 	}
-	kShared, err := registerOptionalGCPSharedKinde(ctx, meta, spec, res)
+	kProj, err := registerOptionalGCPProjectKinde(ctx, meta, spec, res)
 	if err != nil {
 		return err
 	}
-	res.GCP = gShared
-	res.Neon = nShared
-	res.Kinde = kShared
-	res.RepositoryURL = gShared.RepositoryURL
-	res.SetLink(gShared.Link())
-	exportGCPSharedOutputs(ctx, spec.SkipStackExports, gShared, nShared, kShared)
+	res.GCP = gProj
+	res.Neon = nProj
+	res.Kinde = kProj
+	res.RepositoryURL = gProj.RepositoryURL
+	res.SetLink(gProj.Link())
+	exportGCPProjectOutputs(ctx, spec.SkipStackExports, gProj, nProj, kProj)
 	return nil
 }
 
-func registerOptionalGCPSharedKinde(
+func gcpPlatformFromComposite(p *PlatformResource) *gcp.PlatformResource {
+	if p == nil {
+		return nil
+	}
+	return p.GCP
+}
+
+func registerOptionalGCPProjectKinde(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	spec GcpCloudRunNeonShared,
+	spec GcpCloudRunNeonProject,
 	parent pulumi.Resource,
-) (*kinde.SharedOidcAppResource, error) {
+) (*kinde.ProjectResource, error) {
 	if spec.Auth == nil {
 		return nil, nil
 	}
@@ -147,11 +160,13 @@ func registerOptionalGCPSharedKinde(
 	if err != nil {
 		return nil, err
 	}
-	return kinde.SharedOidcApp{
+	return kinde.Project{
 		Name:                       "kinde",
 		Project:                    meta.Project,
 		Repo:                       meta.Repo,
 		Environment:                string(meta.Environment),
+		Platform:                   resolveKindePlatform(spec.Platform, cfg),
+		PlatformStackRef:           spec.PlatformStackRef,
 		AppName:                    defaultCompStr(cfg.AppName, "openbase-"+meta.Project),
 		BaseDomain:                 spec.BaseDomain,
 		StageDomain:                stageHost,
@@ -175,7 +190,7 @@ func registerOptionalGCPSharedKinde(
 
 func computeGCPKindeURLs(
 	project string,
-	spec GcpCloudRunNeonShared,
+	spec GcpCloudRunNeonProject,
 	cb string,
 ) (string, string, []string, []string, []string, []string, error) {
 	stageURL, err := gcp.CloudRunRegionalURL(project, core.EnvStage, spec.ServiceName, spec.GCPProjectNumber, spec.Location, spec.BaseDomain)
@@ -206,12 +221,12 @@ func computeGCPKindeURLs(
 	return strings.TrimPrefix(stageURL, "https://"), strings.TrimPrefix(prodURL, "https://"), devRedirects, devLogouts, prodExtrasR, prodExtrasL, nil
 }
 
-func exportGCPSharedOutputs(
+func exportGCPProjectOutputs(
 	ctx *pulumi.Context,
 	skip bool,
-	g *gcp.SharedResource,
-	n *neon.SharedProjectResource,
-	k *kinde.SharedOidcAppResource,
+	g *gcp.ProjectResource,
+	n *neon.ProjectResource,
+	k *kinde.ProjectResource,
 ) {
 	if skip {
 		return
@@ -227,5 +242,5 @@ func exportGCPSharedOutputs(
 	}
 	ctx.Export("neonProjectId", n.ProjectID)
 	ctx.Export("neonDefaultBranchId", n.DefaultBranchID)
-	exportKindeSharedOutputs(ctx, k)
+	exportKindeProjectOutputs(ctx, k)
 }

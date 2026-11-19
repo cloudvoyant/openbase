@@ -24,13 +24,13 @@ func main() {
 			teamSlug = "cloudvoyant"
 		}
 		if env == core.EnvShared {
-			return deploySharedKinde(ctx, appProject, teamSlug)
+			return deployKindeProject(ctx, appProject, teamSlug)
 		}
 		return deployEnvKinde(ctx, env, appProject, teamSlug)
 	})
 }
 
-func deploySharedKinde(ctx *pulumi.Context, appProject, teamSlug string) error {
+func deployKindeProject(ctx *pulumi.Context, appProject, teamSlug string) error {
 	var extraDev []string
 	if os.Getenv("OPENBASE_TEST_REVISION") == "b" {
 		extraDev = []string{"http://localhost:4173/api/auth/kinde_callback"}
@@ -39,7 +39,7 @@ func deploySharedKinde(ctx *pulumi.Context, appProject, teamSlug string) error {
 	if appName == "" {
 		appName = "openbase-e2e-" + appProject
 	}
-	shared, err := kinde.SharedOidcApp{
+	proj, err := kinde.Project{
 		Project:                    appProject,
 		AppName:                    appName,
 		VercelProjectName:          "openbase-" + appProject,
@@ -62,15 +62,15 @@ func deploySharedKinde(ctx *pulumi.Context, appProject, teamSlug string) error {
 	if err != nil {
 		return err
 	}
-	ctx.Export("devIssuerUrl", shared.DevIssuerURL)
-	ctx.Export("devAppId", shared.DevAppID)
-	ctx.Export("devClientId", shared.DevClientID)
-	ctx.Export("devClientSecret", shared.DevClientSecret)
-	ctx.Export("prodIssuerUrl", shared.ProdIssuerURL)
-	ctx.Export("prodAppId", shared.ProdAppID)
-	ctx.Export("prodClientId", shared.ProdClientID)
-	ctx.Export("prodClientSecret", shared.ProdClientSecret)
-	ctx.Export("emailPasswordConn", pulumi.String(shared.EmailPasswordConn))
+	ctx.Export("devIssuerUrl", proj.DevIssuerURL)
+	ctx.Export("devAppId", proj.DevAppID)
+	ctx.Export("devClientId", proj.DevClientID)
+	ctx.Export("devClientSecret", proj.DevClientSecret)
+	ctx.Export("prodIssuerUrl", proj.ProdIssuerURL)
+	ctx.Export("prodAppId", proj.ProdAppID)
+	ctx.Export("prodClientId", proj.ProdClientID)
+	ctx.Export("prodClientSecret", proj.ProdClientSecret)
+	ctx.Export("emailPasswordConn", pulumi.String(proj.EmailPasswordConn))
 	return nil
 }
 

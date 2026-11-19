@@ -44,7 +44,7 @@ func TestGCPCloudRunService(t *testing.T) {
 		assertCloudRunServicesAbsent(t, gcpProject, previewPubSvc, devPubSvc, prodPubSvc)
 	})
 
-	t.Run("given a gcp.Shared and public/internal gcp.CloudRunService program", func(t *testing.T) {
+	t.Run("given a gcp.Project and public/internal gcp.CloudRunService program", func(t *testing.T) {
 		for _, stack := range []string{"shared", "dev", "prod", longPreviewStack} {
 			h.InitStack(t, stack)
 		}

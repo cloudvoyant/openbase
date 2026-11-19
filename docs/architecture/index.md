@@ -2,14 +2,14 @@
 
 ## Overview
 
-OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a declarative Go Pulumi component library for deploying stateless and stateful cloud resources across **GCP**, **Vercel**, **Neon**, and **Kinde** using ambient cloud credentials and upstream Pulumi or Terraform-bridged providers. Application teams write one shared Go Pulumi program (`infra/main.go`) and deploy it across `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` stacks against a `gs://` or `file://` backend.
+OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a declarative Go Pulumi component library for deploying stateless and stateful cloud resources across **GCP**, **Vercel**, **Neon**, and **Kinde** using ambient cloud credentials and upstream Pulumi or Terraform-bridged providers. Infrastructure follows a three-tier **Platform -> Project -> Environment** convention across organization foundations, Premise `infra/shared` application projects, and Premise `infra/` environment stacks (`dev`, `stage`, `prod`, and `preview-<slug>`).
 
 ## Requirements
 
 ### Functional
 
-- Application teams maintain one shared Go Pulumi program and select the target tier via stack name (`shared`, `dev`, `stage`, `prod`, or `preview-<slug>`).
-- Concrete product specs (`gcp.CloudRunService`, `vercel.WebApp`, `kinde.OidcApp`, `gcp.Bucket`, `vercel.BlobStore`, `neon.Database`) expose `.Register(ctx, opts...)` returning `*<Product>Resource` handles that implement `core.StatelessResource` or `core.StatefulResource`.
+- Organization platform teams declare once-per-org foundations (`<provider>.Platform` or `composite.Platform`), application teams declare shared per-repo project assets in `infra/shared` (`<provider>.Project`, `composite.VercelNeonProject`, `composite.GcpCloudRunNeonProject`), and per-environment stacks deploy concrete products in `infra/` (`gcp.CloudRunService`, `vercel.WebApp`, `kinde.OidcApp`, `gcp.Bucket`, `vercel.BlobStore`, `neon.Database`).
+- Every spec exposes `.Register(ctx, opts...)` returning `*<Type>Resource` handles that implement `core.StatelessResource` or `core.StatefulResource`.
 - Stateful components enforce `pulumi.Protect(true)` and retention backups in `prod` and `stage`, clean up automatically in `dev` and `preview-*`, and branch from persistent tiers (`BranchFrom`).
 - Every component validates its environment during `pulumi preview`, generates deterministic `<project>-<env>-<name>` identifiers, applies `openbase.io/*` tags (and sanitized GCP labels), and binds environment variables, secrets, and IAM/OIDC permissions through `Links`.
 
@@ -25,19 +25,22 @@ OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a declarative Go
 
 ```mermaid
 flowchart TD
-    Runner["Developer / CI (Ambient Credentials)"] --> Pulumi["Shared Go Program (infra/main.go)"]
-    Pulumi --> Core["libs/components/core (Contracts, Naming, Tags, Links)"]
-    Core --> GCP["libs/components/gcp (Shared, CloudRunService, Bucket)"]
-    Core --> Vercel["libs/components/vercel (Shared, WebApp, BlobStore)"]
-    Core --> Neon["libs/components/neon (SharedProject, Database)"]
-    Core --> Kinde["libs/components/kinde (SharedOidcApp, OidcApp)"]
+    Org["Org Platform Stack (composite.Platform)"] --> Proj["App Project Stack (infra/shared -> *Project)"]
+    Proj --> Env["App Environment Stacks (infra/ -> *App)"]
+    Env --> Core["libs/components/core (Contracts, Domains, Naming, Tags, Links)"]
+    Proj --> Core
+    Org --> Core
+    Core --> GCP["libs/components/gcp (Platform, Project, CloudLoadBalancer, CloudRunService, Bucket)"]
+    Core --> Vercel["libs/components/vercel (Platform, Project, WebApp, BlobStore)"]
+    Core --> Neon["libs/components/neon (Platform, Project, Database)"]
+    Core --> Kinde["libs/components/kinde (Platform, Project, OidcApp)"]
     Core --> Syn["libs/components/synthetic (Offline Doubles)"]
-    Pulumi --> State[("Pulumi Backend (gs://<bucket>/<project> or file://)")]
 ```
 
-- **Premise Two-Program Stack Topology (`infra/shared` + `infra`)**:
-  - **`infra/shared` (`pm infra apply --shared`, stack `shared`)**: Provisions cross-environment roots once (`composite.VercelNeonShared` / `composite.GcpCloudRunNeonShared` or direct `gcp.Shared`, `vercel.Shared`, `neon.SharedProject`, `kinde.SharedOidcApp`).
-  - **`infra` (`pm infra apply --env dev|stage|prod|preview`, stacks `dev`, `stage`, `prod`, `preview-<slug>`)**: Consumes `<org>/<project>-shared/shared` outputs via `pulumi.StackReference`, isolates stateful data per tier (`stage<-prod`, `preview<-dev`), and wires workloads via `Links` (`composite.VercelNeonApp` / `composite.GcpCloudRunNeonApp`).
+- **Three-Tier Stack Topology (`Platform` -> `Project` -> `Environment`)**:
+  - **Tier 1 — Organization `Platform` (once per org)**: `gcp.Platform` (APIs, Workload Identity Pool + GitHub/Vercel OIDC providers, KMS KeyRing, optional `CloudLoadBalancer` wildcard HTTPS router), `vercel.Platform` (team ID/slug, `BaseDomain`, team `SharedEnvironmentVariable`s), `neon.Platform` (org/region/Postgres defaults + optional `OrgApiKey`), `kinde.Platform` (`dev` & `prod` tenant connections), or turnkey `composite.Platform`.
+  - **Tier 2 — Application `Project` (`infra/shared`, `pm infra apply --shared`, stack `shared`)**: Inherits `Platform` or `PlatformStackRef` (or provisions inline defaults when standalone) and creates per-app assets once (`gcp.Project` Artifact Registry, `vercel.Project` + `staging` `CustomEnvironment` + domains + bypass + shared BlobStore, `neon.Project`, `kinde.Project` `dev` & `prod` OIDC apps, or turnkey `composite.VercelNeonProject` / `composite.GcpCloudRunNeonProject`).
+  - **Tier 3 — Application `Environment` (`infra/`, `pm infra apply --env dev|stage|prod|preview`)**: Consumes `<org>/<project>-shared/shared` via `ProjectStackRef`, isolates stateful data per tier (`stage<-prod`, `preview<-dev`), and wires workloads via `Links` (`composite.VercelNeonApp` / `composite.GcpCloudRunNeonApp`).
 - **Upstream & Bridged Providers**:
   - `gcp` and `vercel` build directly on `github.com/pulumi/pulumi-gcp/sdk/v9` and `github.com/pulumiverse/pulumi-vercel/sdk/v5`.
   - `neon` (`kislerdm/neon`) and `kinde` (`kinde-oss/kinde`) compile against root-module Go bindings in `internal/providers/{neon,kinde}` generated by `scripts/generate-bridged.sh` (`pulumi-terraform-provider`), keeping a single root `go.mod` compatible with Premise's Git-tag Go release workflow.
@@ -50,9 +53,9 @@ sequenceDiagram
     participant Core as "libs/components/core"
     participant State as "gs:// State Backend"
     participant Cloud as "GCP, Vercel, Neon, Kinde"
-    CI->>Core: 1. Execute shared infra/main.go on preview-pr-42
+    CI->>Core: 1. Execute infra/main.go on preview-pr-42
     Core->>Core: 2. Validate preview-pr-42 & BranchFrom ("dev")
-    Core->>State: 3. Read shared & dev outputs via StackReference
+    Core->>State: 3. Read <project>-shared/shared & dev outputs via StackReference
     Core->>Cloud: 4. Create CoW Neon branch & GCS/Blob overlay stores
     Core->>Cloud: 5. Deploy CloudRunService & Vercel WebApp + keyless WIF IAM
     Cloud-->>State: 6. Persist preview-pr-42 stack state
@@ -60,7 +63,7 @@ sequenceDiagram
 
 | Environment | Resource Name | Protection & Backups | `BranchFrom` Default | Key `openbase.io/*` Tags |
 | :--- | :--- | :--- | :--- | :--- |
-| `shared` | `<project>-shared-<name>` | Shared roots | None | `environment=shared`, `ephemeral=false` |
+| `shared` | `<project>-shared-<name>` | Platform / Project roots | None | `environment=shared`, `ephemeral=false` |
 | `dev` | `<project>-dev-<name>` | `ForceDestroy: true` | `main` (Neon) | `environment=dev`, `ephemeral=false` |
 | `stage` | `<project>-stage-<name>` | `Protect: true` + versioning/PITR | `prod` (Neon) | `environment=stage`, `ephemeral=false` |
 | `prod` | `<project>-prod-<name>` | `Protect: true` + versioning/PITR | `main` (Neon) | `environment=prod`, `ephemeral=false` |
@@ -68,12 +71,12 @@ sequenceDiagram
 
 ## Implementation
 
-- `libs/components/core`: `Environment`, naming (`CanonicalName`, `ServiceAccountID`, `BucketName`), `StandardTags`/`GCPLabels`, `Links`, and declarative `Stateless`/`Stateful` escape hatches.
-- `libs/components/gcp` & `libs/components/gcp/overlayfs`: `Shared`, `CloudRunService`, `Bucket`, and `overlayfs.Store`.
-- `libs/components/vercel`: `Shared`, `WebApp`, `BlobStore`, and `BlobOverlayClient`.
-- `libs/components/neon`: `SharedProject` and `Database`.
-- `libs/components/kinde`: `SharedOidcApp` and `OidcApp`.
-- `libs/components/composite`: `VercelNeonShared`, `VercelNeonApp`, `GcpCloudRunNeonShared`, `GcpCloudRunNeonApp`, `KindeSharedConfig`, and `KindeAppConfig`.
+- `libs/components/core`: `Environment`, domain helpers (`EnvironmentDomain`, `DedupeDomains`), naming (`CanonicalName`, `ServiceAccountID`, `BucketName`), `StandardTags`/`GCPLabels`, `Links`, and declarative `Stateless`/`Stateful` escape hatches.
+- `libs/components/gcp` & `libs/components/gcp/overlayfs`: `Platform`, `Project`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, and `overlayfs.Store`.
+- `libs/components/vercel`: `Platform`, `Project`, `WebApp`, `BlobStore`, and `BlobOverlayClient`.
+- `libs/components/neon`: `Platform`, `Project`, and `Database`.
+- `libs/components/kinde`: `Platform`, `Project`, and `OidcApp`.
+- `libs/components/composite`: `Platform`, `VercelNeonProject`, `VercelNeonApp`, `GcpCloudRunNeonProject`, `GcpCloudRunNeonApp`, `KindeProjectConfig`, and `KindeAppConfig`.
 - `libs/components/synthetic`: `Service` and `Storage`.
 - `e2e/components`: Standalone Go consumer fixtures and live cloud E2E suites.
 

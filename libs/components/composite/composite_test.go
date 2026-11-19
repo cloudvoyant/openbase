@@ -10,20 +10,76 @@ import (
 
 	"github.com/cloudvoyant/openbase/libs/components/composite"
 	"github.com/cloudvoyant/openbase/libs/components/core"
+	"github.com/cloudvoyant/openbase/libs/components/gcp"
 	"github.com/cloudvoyant/openbase/libs/components/kinde"
+	"github.com/cloudvoyant/openbase/libs/components/neon"
+	"github.com/cloudvoyant/openbase/libs/components/vercel"
 )
 
 // Public API -----------------------------------------------------------------
 
-func TestVercelComposite(t *testing.T) {
-	t.Run("given composite.VercelNeonShared and composite.VercelNeonApp specs", func(t *testing.T) {
-		t.Run("when VercelNeonShared is registered on shared, then it provisions Vercel Shared, Neon SharedProject, Kinde SharedOidcApp, and shared preview env vars", func(t *testing.T) {
+func TestPlatformComposite(t *testing.T) {
+	t.Run("given composite.Platform and downstream Project specs", func(t *testing.T) {
+		t.Run("when composite.Platform is registered on shared, then it provisions org-wide GCP, Vercel, Neon, and Kinde foundations once", func(t *testing.T) {
 			// Arrange.
 			mocks := newCompositeMocks()
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := sampleVercelShared("").Register(ctx)
+				_, e := sampleOrgPlatform().Register(ctx)
+				return e
+			}, pulumi.WithMocks("platform", "shared", mocks))
+
+			// Assert.
+			requireCompNoErr(t, err)
+			mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
+			mocks.assertCount(t, "gcp:compute/globalForwardingRule:GlobalForwardingRule", 1)
+			mocks.assertCount(t, "vercel:index/sharedEnvironmentVariable:SharedEnvironmentVariable", 1)
+			mocks.assertCount(t, "neon:index/orgApiKey:OrgApiKey", 1)
+			mocks.assertCount(t, "pulumi:providers:kinde", 2)
+		})
+
+		t.Run("when GcpCloudRunNeonProject and VercelNeonProject inherit composite.Platform, then they reuse org WIF/tenants without duplicating pools", func(t *testing.T) {
+			// Arrange.
+			mocks := newCompositeMocks()
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				plat, e := sampleOrgPlatform().Register(ctx)
+				if e != nil {
+					return e
+				}
+				vSpec := sampleVercelProject("")
+				vSpec.Platform = plat
+				if _, e := vSpec.Register(ctx); e != nil {
+					return e
+				}
+				gSpec := sampleGCPProject("")
+				gSpec.Platform = plat
+				_, e = gSpec.Register(ctx)
+				return e
+			}, pulumi.WithMocks("storefront-shared", "shared", mocks))
+
+			// Assert.
+			requireCompNoErr(t, err)
+			mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
+			mocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 1)
+			mocks.assertCount(t, "vercel:index/project:Project", 1)
+			mocks.assertCount(t, "neon:index/project:Project", 2)
+			mocks.assertCount(t, "kinde:index/application:Application", 4)
+		})
+	})
+}
+
+func TestVercelComposite(t *testing.T) {
+	t.Run("given composite.VercelNeonProject and composite.VercelNeonApp specs", func(t *testing.T) {
+		t.Run("when VercelNeonProject is registered on shared, then it provisions vercel.Project, neon.Project, kinde.Project, and preview env vars", func(t *testing.T) {
+			// Arrange.
+			mocks := newCompositeMocks()
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, e := sampleVercelProject("").Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront-shared", "shared", mocks))
 
@@ -36,13 +92,13 @@ func TestVercelComposite(t *testing.T) {
 			mocks.assertCount(t, "kinde:index/application:Application", 2)
 		})
 
-		t.Run("when VercelNeonShared is registered on dev or VercelNeonApp on shared, then both reject mismatched stacks with ErrInvalidEnvironment", func(t *testing.T) {
+		t.Run("when VercelNeonProject is registered on dev or VercelNeonApp on shared, then both reject mismatched stacks with ErrInvalidEnvironment", func(t *testing.T) {
 			// Arrange.
 			mocks := newCompositeMocks()
 
 			// Act.
-			sharedOnDevErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := sampleVercelShared("dev").Register(ctx)
+			projectOnDevErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, e := sampleVercelProject("dev").Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront-shared", "dev", mocks))
 			appOnSharedErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
@@ -51,8 +107,8 @@ func TestVercelComposite(t *testing.T) {
 			}, pulumi.WithMocks("storefront", "shared", mocks))
 
 			// Assert.
-			if !errors.Is(sharedOnDevErr, core.ErrInvalidEnvironment) {
-				t.Fatalf("expected ErrInvalidEnvironment for VercelNeonShared on dev, got %v", sharedOnDevErr)
+			if !errors.Is(projectOnDevErr, core.ErrInvalidEnvironment) {
+				t.Fatalf("expected ErrInvalidEnvironment for VercelNeonProject on dev, got %v", projectOnDevErr)
 			}
 			if !errors.Is(appOnSharedErr, core.ErrInvalidEnvironment) {
 				t.Fatalf("expected ErrInvalidEnvironment for VercelNeonApp on shared, got %v", appOnSharedErr)
@@ -115,14 +171,14 @@ func TestVercelComposite(t *testing.T) {
 }
 
 func TestGCPComposite(t *testing.T) {
-	t.Run("given composite.GcpCloudRunNeonShared and composite.GcpCloudRunNeonApp specs", func(t *testing.T) {
-		t.Run("when GcpCloudRunNeonShared is registered on shared, then it provisions GCP Shared, Neon SharedProject, and Kinde SharedOidcApp", func(t *testing.T) {
+	t.Run("given composite.GcpCloudRunNeonProject and composite.GcpCloudRunNeonApp specs", func(t *testing.T) {
+		t.Run("when GcpCloudRunNeonProject is registered on shared, then it provisions gcp.Project, neon.Project, and kinde.Project", func(t *testing.T) {
 			// Arrange.
 			mocks := newCompositeMocks()
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := sampleGCPShared("").Register(ctx)
+				_, e := sampleGCPProject("").Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront-shared", "shared", mocks))
 
@@ -159,20 +215,20 @@ func TestGCPComposite(t *testing.T) {
 			mocks.assertCount(t, "gcp:cloudrunv2/service:Service", 1)
 		})
 
-		t.Run("when GcpCloudRunNeonShared enables BaseDomain + LoadBalancer and GcpCloudRunNeonApp sets BaseDomain + Domains, then both wire gcp.cloudvoyant.io and extra DomainMappings", func(t *testing.T) {
+		t.Run("when GcpCloudRunNeonProject enables BaseDomain + LoadBalancer and GcpCloudRunNeonApp sets BaseDomain + Domains, then both wire gcp.cloudvoyant.io and extra DomainMappings", func(t *testing.T) {
 			// Arrange.
-			sharedMocks := newCompositeMocks()
+			projectMocks := newCompositeMocks()
 			appMocks := newCompositeMocks()
 			urlCh := make(chan string, 1)
 
 			// Act.
-			sharedErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				spec := sampleGCPShared("")
+			projErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				spec := sampleGCPProject("")
 				spec.BaseDomain = "gcp.cloudvoyant.io"
 				spec.EnableLoadBalancer = true
 				_, e := spec.Register(ctx)
 				return e
-			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
+			}, pulumi.WithMocks("storefront-shared", "shared", projectMocks))
 			appErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				spec := sampleGCPApp("stage")
 				spec.BaseDomain = "gcp.cloudvoyant.io"
@@ -186,12 +242,12 @@ func TestGCPComposite(t *testing.T) {
 			}, pulumi.WithMocks("storefront", "stage", appMocks))
 
 			// Assert.
-			requireCompNoErr(t, sharedErr)
+			requireCompNoErr(t, projErr)
 			requireCompNoErr(t, appErr)
 			if got := <-urlCh; got != "https://storefront-stage.gcp.cloudvoyant.io" {
 				t.Fatalf("BaseDomain stage URL = %q", got)
 			}
-			sharedMocks.assertCount(t, "gcp:compute/globalForwardingRule:GlobalForwardingRule", 1)
+			projectMocks.assertCount(t, "gcp:compute/globalForwardingRule:GlobalForwardingRule", 1)
 			appMocks.assertCount(t, "gcp:cloudrun/domainMapping:DomainMapping", 1)
 		})
 	})
@@ -199,8 +255,46 @@ func TestGCPComposite(t *testing.T) {
 
 // Private helpers ------------------------------------------------------------
 
-func sampleKindeSharedConfig() *composite.KindeSharedConfig {
-	return &composite.KindeSharedConfig{
+func sampleOrgPlatform() composite.Platform {
+	return composite.Platform{
+		Project: "platform",
+		GCP: &gcp.Platform{
+			GCPProject:         pulumi.String("cloudvoyant-openbase"),
+			GCPProjectNumber:   "785485436615",
+			GitHubOrg:          "cloudvoyant",
+			VercelTeamSlug:     "cloudvoyant",
+			BaseDomain:         "gcp.cloudvoyant.io",
+			EnableLoadBalancer: true,
+			SkipKeyRing:        true,
+		},
+		Vercel: &vercel.Platform{
+			TeamID:     "team_123",
+			TeamSlug:   "cloudvoyant",
+			BaseDomain: "vercel.cloudvoyant.io",
+			SharedEnv:  map[string]pulumi.StringInput{"ORG_ENV": pulumi.String("cloudvoyant")},
+		},
+		Neon: &neon.Platform{
+			OrgID:           "org_123",
+			RegionID:        "aws-us-east-1",
+			CreateOrgAPIKey: true,
+		},
+		Kinde: &kinde.Platform{
+			Dev: kinde.TenantCredentials{
+				Domain:       "dev-test.kinde.com",
+				ClientID:     pulumi.String("dev-cid"),
+				ClientSecret: pulumi.String("dev-csec"),
+			},
+			Prod: kinde.TenantCredentials{
+				Domain:       "prod-test.kinde.com",
+				ClientID:     pulumi.String("prod-cid"),
+				ClientSecret: pulumi.String("prod-csec"),
+			},
+		},
+	}
+}
+
+func sampleKindeProjectConfig() *composite.KindeProjectConfig {
+	return &composite.KindeProjectConfig{
 		Dev: kinde.TenantCredentials{
 			Domain:       "dev-test.kinde.com",
 			ClientID:     pulumi.String("dev-cid"),
@@ -214,14 +308,14 @@ func sampleKindeSharedConfig() *composite.KindeSharedConfig {
 	}
 }
 
-func sampleVercelShared(env string) composite.VercelNeonShared {
-	return composite.VercelNeonShared{
+func sampleVercelProject(env string) composite.VercelNeonProject {
+	return composite.VercelNeonProject{
 		Project:           "storefront",
 		Environment:       env,
 		VercelProjectName: "openbase-storefront",
 		TeamID:            "team_123",
 		TeamSlug:          "cloudvoyant",
-		Auth:              sampleKindeSharedConfig(),
+		Auth:              sampleKindeProjectConfig(),
 	}
 }
 
@@ -239,14 +333,14 @@ func sampleVercelApp(env string) composite.VercelNeonApp {
 	}
 }
 
-func sampleGCPShared(env string) composite.GcpCloudRunNeonShared {
-	return composite.GcpCloudRunNeonShared{
+func sampleGCPProject(env string) composite.GcpCloudRunNeonProject {
+	return composite.GcpCloudRunNeonProject{
 		Project:          "storefront",
 		Environment:      env,
 		GCPProject:       "cloudvoyant-openbase",
 		GCPProjectNumber: "785485436615",
 		SkipKeyRing:      true,
-		Auth:             sampleKindeSharedConfig(),
+		Auth:             sampleKindeProjectConfig(),
 	}
 }
 
@@ -297,6 +391,8 @@ func populateMockOutputs(a pulumi.MockResourceArgs) resource.PropertyMap {
 		outs["secret"] = resource.NewStringProperty("bypass_secret_32_chars_000000000")
 	case "neon:index/project:Project":
 		outs["defaultBranchId"] = resource.NewStringProperty("br_main_123")
+	case "neon:index/orgApiKey:OrgApiKey":
+		outs["key"] = resource.NewStringProperty("napi_org_mock_123")
 	case "neon:index/endpoint:Endpoint":
 		outs["host"] = resource.NewStringProperty("ep-test.us-east-1.aws.neon.tech")
 		outs["hostPooling"] = resource.NewStringProperty("ep-test-pooler.us-east-1.aws.neon.tech")

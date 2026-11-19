@@ -25,8 +25,8 @@ type BlobStore struct {
 	Links                    []core.Resource
 	Env                      map[string]pulumi.StringInput
 	Secrets                  map[string]pulumi.StringInput
-	Shared                   *SharedResource
-	SharedStackRef           string
+	VercelProject            *ProjectResource
+	ProjectStackRef          string
 	StoreID                  pulumi.StringInput
 	VercelProjectID          pulumi.StringInput
 	TeamID                   string
@@ -133,37 +133,37 @@ func resolveBlobRefs(ctx *pulumi.Context, name string, spec BlobStore) (resolved
 	if spec.StageCustomEnvironmentID != nil {
 		refs.stageEnvID = spec.StageCustomEnvironmentID.ToStringOutput()
 	}
-	applySharedBlobStruct(&refs, spec.Shared)
-	if spec.SharedStackRef == "" {
+	applyVercelProjectBlobStruct(&refs, spec.VercelProject)
+	if spec.ProjectStackRef == "" {
 		return refs, nil
 	}
-	return loadSharedBlobStackRef(ctx, name, spec.SharedStackRef, refs)
+	return loadProjectBlobStackRef(ctx, name, spec.ProjectStackRef, refs)
 }
 
-func applySharedBlobStruct(refs *resolvedBlobRefs, shared *SharedResource) {
-	if shared == nil {
+func applyVercelProjectBlobStruct(refs *resolvedBlobRefs, proj *ProjectResource) {
+	if proj == nil {
 		return
 	}
-	if !isOutSet(refs.storeID) && shared.BlobStore != nil {
-		refs.storeID = shared.BlobStoreID
+	if !isOutSet(refs.storeID) && proj.BlobStore != nil {
+		refs.storeID = proj.BlobStoreID
 	}
 	if !isOutSet(refs.projectID) {
-		refs.projectID = shared.ProjectID
+		refs.projectID = proj.ProjectID
 	}
-	if !isOutSet(refs.devEnvID) && shared.DevEnvironment != nil {
-		refs.devEnvID = shared.DevCustomEnvironmentID
+	if !isOutSet(refs.devEnvID) && proj.DevEnvironment != nil {
+		refs.devEnvID = proj.DevCustomEnvironmentID
 	}
-	if !isOutSet(refs.stageEnvID) && shared.StageEnvironment != nil {
-		refs.stageEnvID = shared.StageCustomEnvironmentID
+	if !isOutSet(refs.stageEnvID) && proj.StageEnvironment != nil {
+		refs.stageEnvID = proj.StageCustomEnvironmentID
 	}
 }
 
-func loadSharedBlobStackRef(
+func loadProjectBlobStackRef(
 	ctx *pulumi.Context,
 	name, refName string,
 	refs resolvedBlobRefs,
 ) (resolvedBlobRefs, error) {
-	sr, err := pulumi.NewStackReference(ctx, name+"-shared-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(refName)})
+	sr, err := pulumi.NewStackReference(ctx, name+"-project-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(refName)})
 	if err != nil {
 		return resolvedBlobRefs{}, err
 	}
@@ -228,7 +228,7 @@ func propagateDevBlobEnv(
 	refs resolvedBlobRefs,
 	res *BlobStoreResource,
 ) error {
-	hasDevCustom := spec.EnableDevEnvironment || (spec.Shared != nil && spec.Shared.DevEnvironment != nil)
+	hasDevCustom := spec.EnableDevEnvironment || (spec.VercelProject != nil && spec.VercelProject.DevEnvironment != nil)
 	if meta.Environment != core.EnvDev || !hasDevCustom || !isOutSet(refs.projectID) || !isOutSet(refs.devEnvID) {
 		return nil
 	}
