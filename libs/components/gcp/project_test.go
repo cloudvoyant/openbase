@@ -21,7 +21,7 @@ func TestPlatformAndProject(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				plat, err := gcp.Platform{
-					Project:        "cloudvoyant",
+					Org:            "cloudvoyant",
 					GCPProject:     pulumi.String("cloudvoyant-openbase"),
 					GitHubOrg:      "cloudvoyant",
 					VercelTeamSlug: "cloudvoyant",

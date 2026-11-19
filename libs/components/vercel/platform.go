@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-	vercelprov "github.com/pulumiverse/pulumi-vercel/sdk/v5/go/vercel"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
 )
@@ -15,37 +14,29 @@ import (
 
 var _ core.StatelessResource = (*PlatformResource)(nil)
 
-// Platform declares organization/team-level Vercel settings and team-shared environment variables provisioned once per organization.
+// Platform declares organization/team-level Vercel settings provisioned once per organization.
 type Platform struct {
-	Name             string
-	Project          string
-	Repo             string
-	Environment      string
-	TeamID           string
-	TeamSlug         string
-	BaseDomain       string
-	SharedEnv        map[string]pulumi.StringInput
-	SharedSecrets    map[string]pulumi.StringInput
-	SharedTargets    []string
-	SharedProjectIDs []string
+	Name       string
+	Org        string
+	TeamID     string
+	TeamSlug   string
+	BaseDomain string
 }
 
-// PlatformResource holds team-level Vercel configuration and team-shared environment variables exported for vercel.Project stacks.
+// PlatformResource holds team-level Vercel configuration exported for downstream vercel.Project stacks.
 type PlatformResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
-	SharedEnvVars []*vercelprov.SharedEnvironmentVariable
-	TeamID        pulumi.StringOutput
-	TeamSlug      pulumi.StringOutput
-	BaseDomain    pulumi.StringOutput
+	TeamID     pulumi.StringOutput
+	TeamSlug   pulumi.StringOutput
+	BaseDomain pulumi.StringOutput
 }
 
-// Register provisions team-level Vercel settings and optional SharedEnvironmentVariables.
+// Register exports team-level Vercel settings for consumption by vercel.Project stacks.
 func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	p.Name = defaultVercelStr(p.Name, "vercel-platform")
-	p.Project = defaultVercelStr(p.Project, "platform")
-	env := defaultVercelStr(p.Environment, string(core.EnvShared))
+	orgScope := core.OrgScope(p.Org, p.TeamSlug, ctx.Organization())
 	res := &PlatformResource{
 		TeamID:     pulumi.String(p.TeamID).ToStringOutput(),
 		TeamSlug:   pulumi.String(p.TeamSlug).ToStringOutput(),
@@ -53,14 +44,10 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 	}
 	meta, err := core.InitStateless(ctx, "openbase:vercel:Platform", "vercel-platform", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
-		Environment: env,
+		Project:     orgScope,
+		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
-		return nil, err
-	}
-	if err := registerTeamSharedEnvVars(ctx, p.Name, p, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
@@ -92,45 +79,6 @@ func DeriveBlobBaseURL(storeID pulumi.StringInput) pulumi.StringOutput {
 }
 
 // Private helpers ------------------------------------------------------------
-
-func registerTeamSharedEnvVars(ctx *pulumi.Context, name string, spec Platform, res *PlatformResource) error {
-	targets := spec.SharedTargets
-	if len(targets) == 0 {
-		targets = []string{"production", "preview"}
-	}
-	if err := createTeamEnvSlice(ctx, name, spec.SharedEnv, false, targets, spec.SharedProjectIDs, spec.TeamID, res); err != nil {
-		return err
-	}
-	return createTeamEnvSlice(ctx, name, spec.SharedSecrets, true, targets, spec.SharedProjectIDs, spec.TeamID, res)
-}
-
-func createTeamEnvSlice(
-	ctx *pulumi.Context,
-	name string,
-	entries map[string]pulumi.StringInput,
-	sensitive bool,
-	targets, projectIDs []string,
-	teamID string,
-	res *PlatformResource,
-) error {
-	for k, v := range entries {
-		slug := core.BoundedName(strings.ToLower(k), 28)
-		sev, err := vercelprov.NewSharedEnvironmentVariable(ctx, fmt.Sprintf("%s-senv-%s", name, slug), &vercelprov.SharedEnvironmentVariableArgs{
-			TeamId:                       optionalVercelStr(teamID),
-			ProjectIds:                   pulumi.ToStringArray(projectIDs),
-			Key:                          pulumi.String(k),
-			Value:                        v.ToStringOutput(),
-			Sensitive:                    pulumi.Bool(sensitive),
-			Targets:                      pulumi.ToStringArray(targets),
-			ApplyToAllCustomEnvironments: pulumi.Bool(true),
-		}, pulumi.Parent(res))
-		if err != nil {
-			return err
-		}
-		res.SharedEnvVars = append(res.SharedEnvVars, sev)
-	}
-	return nil
-}
 
 func defaultVercelStr(val, fallback string) string {
 	if val != "" {

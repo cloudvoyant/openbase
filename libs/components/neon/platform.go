@@ -18,9 +18,7 @@ var _ core.StatelessResource = (*PlatformResource)(nil)
 // Platform declares organization-level Neon settings and optional org API keys provisioned once per organization.
 type Platform struct {
 	Name                    string
-	Project                 string
-	Repo                    string
-	Environment             string
+	Org                     string
 	OrgID                   string
 	RegionID                string
 	PostgresVersion         int
@@ -44,14 +42,12 @@ type PlatformResource struct {
 // Register provisions org-level Neon configuration on a central platform stack.
 func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	p.Name = defaultIdentifier(p.Name, "neon-platform")
-	p.Project = defaultIdentifier(p.Project, "platform")
-	env := defaultIdentifier(p.Environment, string(core.EnvShared))
+	orgScope := core.OrgScope(p.Org, ctx.Organization())
 	res := &PlatformResource{}
 	meta, err := core.InitStateless(ctx, "openbase:neon:Platform", "neon-platform", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
-		Environment: env,
+		Project:     orgScope,
+		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err

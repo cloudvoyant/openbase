@@ -30,9 +30,7 @@ type TenantCredentials struct {
 // Platform declares organization-level Kinde dev and prod tenant connections provisioned once per organization.
 type Platform struct {
 	Name                  string
-	Project               string
-	Repo                  string
-	Environment           string
+	Org                   string
 	Dev                   TenantCredentials
 	Prod                  TenantCredentials
 	BaseDomain            string
@@ -58,14 +56,12 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 		return nil, ErrTenantCredentialsRequired
 	}
 	p.Name = defaultKindeStr(p.Name, "kinde-platform")
-	p.Project = defaultKindeStr(p.Project, "platform")
-	env := defaultKindeStr(p.Environment, string(core.EnvShared))
+	orgScope := core.OrgScope(p.Org, ctx.Organization())
 	res := &PlatformResource{}
 	meta, err := core.InitStateless(ctx, "openbase:kinde:Platform", "kinde-platform", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
-		Environment: env,
+		Project:     orgScope,
+		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err

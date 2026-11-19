@@ -35,7 +35,6 @@ type GcpCloudRunNeonProject struct {
 	ExtraProdDomains   []string
 	PoolSuffix         string
 	GitHubOrg          string
-	GitHubRepo         string
 	SkipKeyRing        bool
 	NeonOrgID          string
 	NeonRegionID       string
@@ -103,7 +102,6 @@ func provisionGCPProjectStack(
 		EnableLoadBalancer: spec.EnableLoadBalancer,
 		PoolSuffix:         spec.PoolSuffix,
 		GitHubOrg:          spec.GitHubOrg,
-		GitHubRepo:         spec.GitHubRepo,
 		SkipKeyRing:        spec.SkipKeyRing,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {

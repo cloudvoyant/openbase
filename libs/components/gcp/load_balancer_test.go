@@ -21,7 +21,7 @@ func TestCloudLoadBalancer(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				lb, err := gcp.CloudLoadBalancer{
-					Project:    "platform",
+					Org:        "cloudvoyant",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
 					BaseDomain: "gcp.cloudvoyant.io",
 				}.Register(ctx)
@@ -52,7 +52,7 @@ func TestCloudLoadBalancer(t *testing.T) {
 		t.Run("when BaseDomain is empty, then Register rejects with ErrBaseDomainRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := gcp.CloudLoadBalancer{Project: "platform"}.Register(ctx)
+				_, e := gcp.CloudLoadBalancer{Org: "cloudvoyant"}.Register(ctx)
 				return e
 			}, pulumi.WithMocks("platform", "shared", newGCPMocks()))
 

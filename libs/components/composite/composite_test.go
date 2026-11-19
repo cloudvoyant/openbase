@@ -34,7 +34,6 @@ func TestPlatformComposite(t *testing.T) {
 			requireCompNoErr(t, err)
 			mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
 			mocks.assertCount(t, "gcp:compute/globalForwardingRule:GlobalForwardingRule", 1)
-			mocks.assertCount(t, "vercel:index/sharedEnvironmentVariable:SharedEnvironmentVariable", 1)
 			mocks.assertCount(t, "neon:index/orgApiKey:OrgApiKey", 1)
 			mocks.assertCount(t, "pulumi:providers:kinde", 2)
 		})
@@ -257,7 +256,7 @@ func TestGCPComposite(t *testing.T) {
 
 func sampleOrgPlatform() composite.Platform {
 	return composite.Platform{
-		Project: "platform",
+		Org: "cloudvoyant",
 		GCP: &gcp.Platform{
 			GCPProject:         pulumi.String("cloudvoyant-openbase"),
 			GCPProjectNumber:   "785485436615",
@@ -271,7 +270,6 @@ func sampleOrgPlatform() composite.Platform {
 			TeamID:     "team_123",
 			TeamSlug:   "cloudvoyant",
 			BaseDomain: "vercel.cloudvoyant.io",
-			SharedEnv:  map[string]pulumi.StringInput{"ORG_ENV": pulumi.String("cloudvoyant")},
 		},
 		Neon: &neon.Platform{
 			OrgID:           "org_123",

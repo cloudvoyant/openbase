@@ -20,15 +20,12 @@ var _ core.StatelessResource = (*PlatformResource)(nil)
 // Platform declares organization-level GCP prerequisites (APIs, Workload Identity Federation, KMS, and wildcard Load Balancer) provisioned once per org.
 type Platform struct {
 	Name               string
-	Project            string
-	Repo               string
-	Environment        string
+	Org                string
 	GCPProject         pulumi.StringPtrInput
 	GCPProjectNumber   string
 	Location           string
 	PoolSuffix         string
 	GitHubOrg          string
-	GitHubRepo         string
 	VercelTeamSlug     string
 	VercelIssuerMode   string
 	BaseDomain         string
@@ -59,19 +56,17 @@ type PlatformResource struct {
 // Register provisions org-level GCP prerequisites for consumption by per-repo gcp.Project stacks.
 func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	p.Name = defaultStr(p.Name, "gcp-platform")
-	p.Project = defaultStr(p.Project, "platform")
-	env := defaultStr(p.Environment, string(core.EnvShared))
+	orgScope := core.OrgScope(p.Org, p.GitHubOrg, p.VercelTeamSlug, ctx.Organization())
 	res := &PlatformResource{}
 	meta, err := core.InitStateless(ctx, "openbase:gcp:Platform", "gcp-platform", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
-		Environment: env,
+		Project:     orgScope,
+		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionGCPPlatform(ctx, p.Name, meta, p, res); err != nil {
+	if err := provisionGCPPlatform(ctx, p.Name, orgScope, meta, p, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
@@ -98,7 +93,13 @@ var defaultPlatformServices = []string{
 	"cloudkms.googleapis.com",
 }
 
-func provisionGCPPlatform(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Platform, res *PlatformResource) error {
+func provisionGCPPlatform(
+	ctx *pulumi.Context,
+	name, orgScope string,
+	meta core.ResourceMeta,
+	spec Platform,
+	res *PlatformResource,
+) error {
 	location := defaultStr(spec.Location, "us-central1")
 	res.Location = pulumi.String(location).ToStringOutput()
 	res.BaseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
@@ -108,13 +109,13 @@ func provisionGCPPlatform(ctx *pulumi.Context, name string, meta core.ResourceMe
 		return err
 	}
 	res.EnabledServices = svcs
-	if err := createIdentityFederation(ctx, name, meta, spec, res); err != nil {
+	if err := createIdentityFederation(ctx, name, orgScope, spec, res); err != nil {
 		return err
 	}
 	if err := createOptionalKeyRing(ctx, name, location, meta, spec, res); err != nil {
 		return err
 	}
-	return createOptionalPlatformLB(ctx, name, location, meta, spec, res)
+	return createOptionalPlatformLB(ctx, name, orgScope, location, spec, res)
 }
 
 func enableProjectServices(ctx *pulumi.Context, name string, spec Platform, parent pulumi.Resource) ([]*projects.Service, error) {
@@ -141,20 +142,19 @@ func enableProjectServices(ctx *pulumi.Context, name string, spec Platform, pare
 
 func createIdentityFederation(
 	ctx *pulumi.Context,
-	name string,
-	meta core.ResourceMeta,
+	name, orgScope string,
 	spec Platform,
 	res *PlatformResource,
 ) error {
-	rawPool := "ob-" + meta.Project + "-pool"
+	rawPool := "ob-" + orgScope + "-pool"
 	if spec.PoolSuffix != "" {
-		rawPool = fmt.Sprintf("ob-%s-%s", meta.Project, spec.PoolSuffix)
+		rawPool = fmt.Sprintf("ob-%s-%s", orgScope, spec.PoolSuffix)
 	}
 	poolID := core.BoundedName(rawPool, 32)
 	pool, err := iam.NewWorkloadIdentityPool(ctx, name+"-wif-pool", &iam.WorkloadIdentityPoolArgs{
 		Project:                spec.GCPProject,
 		WorkloadIdentityPoolId: pulumi.String(poolID),
-		DisplayName:            pulumi.String(core.BoundedName(meta.Project+" OIDC Pool", 32)),
+		DisplayName:            pulumi.String(core.BoundedName(orgScope+" OIDC Pool", 32)),
 	}, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -174,19 +174,15 @@ func attachGitHubWIFProvider(
 	pool *iam.WorkloadIdentityPool,
 	res *PlatformResource,
 ) error {
-	if spec.GitHubOrg == "" && spec.GitHubRepo == "" {
+	if spec.GitHubOrg == "" {
 		return nil
-	}
-	cond := fmt.Sprintf("assertion.repository_owner == '%s'", spec.GitHubOrg)
-	if spec.GitHubRepo != "" {
-		cond = fmt.Sprintf("assertion.repository == '%s'", spec.GitHubRepo)
 	}
 	prov, err := iam.NewWorkloadIdentityPoolProvider(ctx, name+"-github-oidc", &iam.WorkloadIdentityPoolProviderArgs{
 		Project:                        spec.GCPProject,
 		WorkloadIdentityPoolId:         pool.WorkloadIdentityPoolId,
 		WorkloadIdentityPoolProviderId: pulumi.String("github-oidc"),
 		DisplayName:                    pulumi.String("GitHub Actions OIDC"),
-		AttributeCondition:             pulumi.String(cond),
+		AttributeCondition:             pulumi.String(fmt.Sprintf("assertion.repository_owner == '%s'", spec.GitHubOrg)),
 		AttributeMapping: pulumi.StringMap{
 			"google.subject":       pulumi.String("assertion.sub"),
 			"attribute.actor":      pulumi.String("assertion.actor"),
@@ -272,8 +268,7 @@ func createOptionalKeyRing(
 
 func createOptionalPlatformLB(
 	ctx *pulumi.Context,
-	name, location string,
-	meta core.ResourceMeta,
+	name, orgScope, location string,
 	spec Platform,
 	res *PlatformResource,
 ) error {
@@ -282,9 +277,7 @@ func createOptionalPlatformLB(
 	}
 	lb, err := CloudLoadBalancer{
 		Name:        name + "-lb",
-		Project:     meta.Project,
-		Repo:        meta.Repo,
-		Environment: string(meta.Environment),
+		Org:         orgScope,
 		GCPProject:  spec.GCPProject,
 		Location:    location,
 		BaseDomain:  spec.BaseDomain,

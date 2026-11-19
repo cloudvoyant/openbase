@@ -2,7 +2,7 @@
 
 OpenBase organizes cloud infrastructure into three clean tiers using declarative Go specs (`<pkg>.<Spec>{...}.Register(ctx)`):
 
-1. **`Platform` (once per organization, e.g. a central `platform` repo)**: Enables GCP APIs, provisions one org-wide Workload Identity Pool, optional KMS KeyRing, and wildcard HTTPS Load Balancer (`*.gcp.acme.io`), sets Vercel team/domain defaults (`*.vercel.acme.io`) and team-shared env vars, sets Neon org/region defaults, and validates `dev` & `prod` Kinde tenants (`composite.Platform` or `<provider>.Platform`).
+1. **`Platform` (once per organization, e.g. a central `platform` repo)**: Enables GCP APIs, provisions one org-wide Workload Identity Pool, optional KMS KeyRing, and wildcard HTTPS Load Balancer (`*.gcp.acme.io`), sets Vercel team/domain defaults (`*.vercel.acme.io`), sets Neon org/region defaults, and validates `dev` & `prod` Kinde tenants (`composite.Platform` or `<provider>.Platform`).
 2. **`Project` (once per application repo in `infra/shared/main.go`, deployed via `pm infra apply --shared`)**: Provisions the app's Artifact Registry repository, Vercel Project (`staging` CustomEnvironment, `prod` & `staging` domains, automation bypass, shared Blob store), Neon Project cluster, and `dev` & `prod` Kinde OIDC `Application`s (`composite.VercelNeonProject` / `composite.GcpCloudRunNeonProject` or `<provider>.Project`).
 3. **`Environment` (per `dev`, `stage`, `prod`, and `preview-<slug>` stack in `infra/main.go`, deployed via `pm infra apply --env ...`)**: Deploys isolated compute, copy-on-write Neon branches, storage overlays, and Kinde callbacks wired from `ProjectStackRef` (`composite.VercelNeonApp` / `composite.GcpCloudRunNeonApp` or concrete product specs).
 
@@ -48,7 +48,7 @@ import (
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		_, err := composite.Platform{
-			Project: "platform",
+			Org: "acme",
 			GCP: &gcp.Platform{
 				GCPProject:         pulumi.String(os.Getenv("GCP_PROJECT")),
 				GCPProjectNumber:   os.Getenv("GCP_PROJECT_NUMBER"),

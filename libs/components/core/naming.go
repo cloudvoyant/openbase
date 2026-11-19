@@ -80,6 +80,17 @@ func BucketName(project string, env Environment, name, namespace string) (string
 	return BoundedName(raw, 63), nil
 }
 
+// OrgScope returns a sanitized lowercase organization identifier for org-level Platform specs, defaulting to "platform".
+func OrgScope(candidates ...string) string {
+	for _, c := range candidates {
+		trimmed := strings.TrimSpace(c)
+		if trimmed != "" && trimmed != "organization" {
+			return BoundedName(trimmed, 32)
+		}
+	}
+	return "platform"
+}
+
 // Private helpers ------------------------------------------------------------
 
 var (

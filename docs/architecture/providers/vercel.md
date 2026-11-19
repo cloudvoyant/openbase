@@ -8,7 +8,7 @@ The `libs/components/vercel` package implements OpenBase's declarative Vercel co
 
 ### Functional
 
-- Provision `vercel.Platform` once per organization/team: `TeamID`, `TeamSlug`, `BaseDomain` (e.g. `vercel.cloudvoyant.io`), and optional team-wide `SharedEnvironmentVariable`s.
+- Provision `vercel.Platform` once per organization/team: `TeamID`, `TeamSlug`, and `BaseDomain` (e.g. `vercel.cloudvoyant.io`).
 - Provision `vercel.Project` once per application in `infra/shared`: `vercel.Project` (team OIDC issuer mode, `standard_protection_new` deployment protection, `IgnoreCommand: "exit 0"`), `vercel.CustomEnvironment` (`staging`), attached `prod` & `staging` `ProjectDomain`s, `vercel.ProjectProtectionBypass`, and optional shared `vercel.BlobStore` + `BlobProjectConnection`.
 - Provision `vercel.BlobStore` across `dev`, `stage`, `prod`, and `preview-*` stacks, deriving `BLOB_BASE_URL`, propagating `BLOB_READ_WRITE_TOKEN` into Custom Environments, and exporting `BLOB_PREFIX=<env>/` plus `BLOB_FALLBACK_PREFIX=<branchFrom>/`.
 - Deploy `vercel.WebApp` with deterministic aliases, target-scoped `ProjectEnvironmentVariable` bindings, and keyless GCP Workload Identity Federation.
@@ -24,7 +24,7 @@ The `libs/components/vercel` package implements OpenBase's declarative Vercel co
 
 ```mermaid
 flowchart TD
-    Org["vercel.Platform (once per org)"] --> TeamVars["TeamID / TeamSlug / BaseDomain / SharedEnvironmentVariable"]
+    Org["vercel.Platform (once per org)"] --> TeamVars["TeamID / TeamSlug / BaseDomain"]
     Proj["vercel.Project (infra/shared per app)"] --> VProj["Project (team OIDC + ProtectionBypass)"]
     Proj --> StageEnv["CustomEnvironment (staging) + Prod/Stage ProjectDomains"]
     Proj --> BlobRoot["BlobStore + BlobProjectConnection"]
@@ -37,7 +37,7 @@ flowchart TD
     App -->|"Keyless OIDC WIF"| GCP["gcp.CloudRunService & gcp.Bucket"]
 ```
 
-- **`vercel.Platform` (once per org)**: Exports `teamId`, `teamSlug`, and `vercelBaseDomain` and manages optional team-level `SharedEnvironmentVariable`s.
+- **`vercel.Platform` (once per org)**: Exports `teamId`, `teamSlug`, and `vercelBaseDomain` for downstream `vercel.Project` stacks without coupling the platform to downstream project IDs.
 - **`vercel.Project` (once per app in `infra/shared`)**: Configures `OidcTokenConfig` (`IssuerMode: "team"` -> `https://oidc.vercel.com/<teamSlug>`), `IgnoreCommand: "exit 0"`, `ProjectProtectionBypass` (`x-vercel-protection-bypass`), and Custom Environment + Domain tiers:
   - **Custom Environments by plan quota**:
     - **Pro default (`1` included slot, `$0/mo`)**: Built-in `Production` (`prod`) + `staging` `CustomEnvironment` (`stage`), while persistent `dev` and ephemeral `preview-*` remain nameless in Vercel environments and bind URL conventions via `vercel.Alias`.
@@ -88,7 +88,7 @@ web, err := vercel.WebApp{
 
 | OpenBase Spec | Tier | Synthesized `pulumiverse/pulumi-vercel` v5 Resources |
 | :--- | :--- | :--- |
-| `vercel.Platform` | Org (`shared`) | Optional `SharedEnvironmentVariable`s + exported team/domain outputs |
+| `vercel.Platform` | Org (`shared`) | Exported team/domain outputs (`teamId`, `teamSlug`, `vercelBaseDomain`) |
 | `vercel.Project` | App (`infra/shared`) | `Project`, `CustomEnvironment`, `ProjectDomain`, `ProjectProtectionBypass`, optional `BlobStore` + `BlobProjectConnection` |
 | `vercel.BlobStore` | Env (`dev`, `stage`, `prod`, `preview-*`) | `BlobStore` + `BlobProjectConnection` (or project store ref), CustomEnvironment `ProjectEnvironmentVariable`s |
 | `vercel.WebApp` | Env (`dev`, `stage`, `prod`, `preview-*`) | `ProjectEnvironmentVariable`, `Deployment`, `Alias`, optional GCP `serviceaccount.Account` + `serviceaccount.IAMMember` |

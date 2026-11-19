@@ -26,7 +26,6 @@ type Project struct {
 	Location           string
 	PoolSuffix         string
 	GitHubOrg          string
-	GitHubRepo         string
 	VercelTeamSlug     string
 	VercelIssuerMode   string
 	BaseDomain         string
@@ -118,14 +117,11 @@ func attachOrProvisionPlatform(
 	}
 	plat, err := Platform{
 		Name:               name + "-platform",
-		Project:            meta.Project,
-		Repo:               meta.Repo,
-		Environment:        string(meta.Environment),
+		Org:                meta.Project,
 		GCPProject:         spec.GCPProject,
 		Location:           location,
 		PoolSuffix:         spec.PoolSuffix,
 		GitHubOrg:          spec.GitHubOrg,
-		GitHubRepo:         spec.GitHubRepo,
 		VercelTeamSlug:     spec.VercelTeamSlug,
 		VercelIssuerMode:   spec.VercelIssuerMode,
 		BaseDomain:         spec.BaseDomain,

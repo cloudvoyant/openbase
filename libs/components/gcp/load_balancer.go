@@ -19,12 +19,10 @@ var _ core.StatelessResource = (*CloudLoadBalancerResource)(nil)
 // ErrBaseDomainRequired reports a missing BaseDomain on CloudLoadBalancer.
 var ErrBaseDomainRequired = errors.New("gcp: baseDomain is required for CloudLoadBalancer")
 
-// CloudLoadBalancer declares a shared GCP Global External Application Load Balancer routing *.{BaseDomain} to Cloud Run via Serverless NEG URL mask.
+// CloudLoadBalancer declares an org-wide GCP Global External Application Load Balancer routing *.{BaseDomain} to Cloud Run via Serverless NEG URL mask.
 type CloudLoadBalancer struct {
 	Name        string
-	Project     string
-	Repo        string
-	Environment string
+	Org         string
 	GCPProject  pulumi.StringPtrInput
 	Location    string
 	BaseDomain  string
@@ -64,13 +62,12 @@ func (lb CloudLoadBalancer) Register(
 	}
 	lb.Name = defaultStr(lb.Name, "lb")
 	lb.Location = defaultStr(lb.Location, "us-central1")
-	env := defaultStr(lb.Environment, string(core.EnvShared))
+	orgScope := core.OrgScope(lb.Org, ctx.Organization())
 	res := &CloudLoadBalancerResource{BaseDomain: base, URLMask: "<service>." + base}
 	meta, err := core.InitStateless(ctx, "openbase:gcp:CloudLoadBalancer", "gcp-cloud-load-balancer", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        lb.Name,
-		Project:     lb.Project,
-		Repo:        lb.Repo,
-		Environment: env,
+		Project:     orgScope,
+		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err

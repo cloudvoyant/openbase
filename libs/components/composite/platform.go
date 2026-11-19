@@ -17,9 +17,7 @@ var _ core.StatelessResource = (*PlatformResource)(nil)
 // Platform declares organization-wide GCP, Vercel, Neon, and Kinde foundations provisioned once per organization.
 type Platform struct {
 	Name             string
-	Project          string
-	Repo             string
-	Environment      string
+	Org              string
 	GCP              *gcp.Platform
 	Vercel           *vercel.Platform
 	Neon             *neon.Platform
@@ -41,22 +39,17 @@ type PlatformResource struct {
 // Register provisions non-nil organization-wide provider platforms on the central platform stack.
 func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	p.Name = defaultCompStr(p.Name, "platform")
-	p.Project = defaultCompStr(p.Project, "platform")
-	env := defaultCompStr(p.Environment, string(core.EnvShared))
+	orgScope := core.OrgScope(p.Org, ctx.Organization())
 	res := &PlatformResource{}
 	meta, err := core.InitStateless(ctx, "openbase:composite:Platform", "composite-platform", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
-		Environment: env,
+		Project:     orgScope,
+		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := requireSharedEnv(meta); err != nil {
-		return nil, err
-	}
-	if err := provisionOrgPlatform(ctx, meta, p, res); err != nil {
+	if err := provisionOrgPlatform(ctx, orgScope, p, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
@@ -66,31 +59,29 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 
 // Private helpers ------------------------------------------------------------
 
-func provisionOrgPlatform(ctx *pulumi.Context, meta core.ResourceMeta, spec Platform, res *PlatformResource) error {
-	if err := registerOptionalGCPPlatform(ctx, meta, spec.GCP, res); err != nil {
+func provisionOrgPlatform(ctx *pulumi.Context, orgScope string, spec Platform, res *PlatformResource) error {
+	if err := registerOptionalGCPPlatform(ctx, orgScope, spec.GCP, res); err != nil {
 		return err
 	}
-	if err := registerOptionalVercelPlatform(ctx, meta, spec.Vercel, res); err != nil {
+	if err := registerOptionalVercelPlatform(ctx, orgScope, spec.Vercel, res); err != nil {
 		return err
 	}
-	if err := registerOptionalNeonPlatform(ctx, meta, spec.Neon, res); err != nil {
+	if err := registerOptionalNeonPlatform(ctx, orgScope, spec.Neon, res); err != nil {
 		return err
 	}
-	if err := registerOptionalKindePlatform(ctx, meta, spec.Kinde, res); err != nil {
+	if err := registerOptionalKindePlatform(ctx, orgScope, spec.Kinde, res); err != nil {
 		return err
 	}
 	exportOrgPlatformOutputs(ctx, spec.SkipStackExports, res)
 	return nil
 }
 
-func registerOptionalGCPPlatform(ctx *pulumi.Context, meta core.ResourceMeta, cfg *gcp.Platform, res *PlatformResource) error {
+func registerOptionalGCPPlatform(ctx *pulumi.Context, orgScope string, cfg *gcp.Platform, res *PlatformResource) error {
 	if cfg == nil {
 		return nil
 	}
 	cp := *cfg
-	cp.Project = defaultCompStr(cp.Project, meta.Project)
-	cp.Repo = defaultCompStr(cp.Repo, meta.Repo)
-	cp.Environment = defaultCompStr(cp.Environment, string(meta.Environment))
+	cp.Org = defaultCompStr(cp.Org, orgScope)
 	out, err := cp.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -99,14 +90,12 @@ func registerOptionalGCPPlatform(ctx *pulumi.Context, meta core.ResourceMeta, cf
 	return nil
 }
 
-func registerOptionalVercelPlatform(ctx *pulumi.Context, meta core.ResourceMeta, cfg *vercel.Platform, res *PlatformResource) error {
+func registerOptionalVercelPlatform(ctx *pulumi.Context, orgScope string, cfg *vercel.Platform, res *PlatformResource) error {
 	if cfg == nil {
 		return nil
 	}
 	cp := *cfg
-	cp.Project = defaultCompStr(cp.Project, meta.Project)
-	cp.Repo = defaultCompStr(cp.Repo, meta.Repo)
-	cp.Environment = defaultCompStr(cp.Environment, string(meta.Environment))
+	cp.Org = defaultCompStr(cp.Org, orgScope)
 	out, err := cp.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -115,14 +104,12 @@ func registerOptionalVercelPlatform(ctx *pulumi.Context, meta core.ResourceMeta,
 	return nil
 }
 
-func registerOptionalNeonPlatform(ctx *pulumi.Context, meta core.ResourceMeta, cfg *neon.Platform, res *PlatformResource) error {
+func registerOptionalNeonPlatform(ctx *pulumi.Context, orgScope string, cfg *neon.Platform, res *PlatformResource) error {
 	if cfg == nil {
 		return nil
 	}
 	cp := *cfg
-	cp.Project = defaultCompStr(cp.Project, meta.Project)
-	cp.Repo = defaultCompStr(cp.Repo, meta.Repo)
-	cp.Environment = defaultCompStr(cp.Environment, string(meta.Environment))
+	cp.Org = defaultCompStr(cp.Org, orgScope)
 	out, err := cp.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
@@ -131,14 +118,12 @@ func registerOptionalNeonPlatform(ctx *pulumi.Context, meta core.ResourceMeta, c
 	return nil
 }
 
-func registerOptionalKindePlatform(ctx *pulumi.Context, meta core.ResourceMeta, cfg *kinde.Platform, res *PlatformResource) error {
+func registerOptionalKindePlatform(ctx *pulumi.Context, orgScope string, cfg *kinde.Platform, res *PlatformResource) error {
 	if cfg == nil {
 		return nil
 	}
 	cp := *cfg
-	cp.Project = defaultCompStr(cp.Project, meta.Project)
-	cp.Repo = defaultCompStr(cp.Repo, meta.Repo)
-	cp.Environment = defaultCompStr(cp.Environment, string(meta.Environment))
+	cp.Org = defaultCompStr(cp.Org, orgScope)
 	out, err := cp.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err

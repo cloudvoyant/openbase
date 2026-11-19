@@ -22,9 +22,9 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				plat, err := vercel.Platform{
-					TeamID:        "team_123",
-					TeamSlug:      "cloudvoyant",
-					SharedSecrets: map[string]pulumi.StringInput{"ORG_SENTRY_DSN": pulumi.String("https://sentry.example")},
+					TeamID:     "team_123",
+					TeamSlug:   "cloudvoyant",
+					BaseDomain: "vercel.cloudvoyant.io",
 				}.Register(ctx)
 				if err != nil {
 					return err
@@ -43,7 +43,6 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 
 			// Assert.
 			requireVercelNoErr(t, err)
-			mocks.assertCount(t, "vercel:index/sharedEnvironmentVariable:SharedEnvironmentVariable", 1)
 			mocks.assertCount(t, "vercel:index/project:Project", 1)
 			mocks.assertCount(t, "vercel:index/customEnvironment:CustomEnvironment", 1)
 			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
