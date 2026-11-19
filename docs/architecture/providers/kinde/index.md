@@ -8,14 +8,15 @@
 
 ### Functional
 
-- FR1: Validate `dev` and `prod` Kinde M2M credentials in `kinde.Platform`, create explicit `kinde.Provider` instances, and discover the `email:password` connection ID once.
-- FR2: Provision `reg` backend OIDC `Application` pairs (`dev` and `prod`) in `kinde.Project` (`infra/shared`).
-- FR3: Populate localhost and wildcard preview redirect URIs (`https://<project>-*.{baseDomain}/...` or `https://<vProjName>-*-<teamSlug>.vercel.app/...`) on the `dev` application, and `stage` plus `prod` domain callbacks on the `prod` application.
+- Connect to separate `dev` and `prod` Kinde tenants and discover shared authentication strategies once per organization.
+- Register paired `dev` and `prod` OAuth2/OIDC applications per repository.
+- Allow localhost and wildcard preview callback URLs on the `dev` tenant while restricting the `prod` tenant to `stage` and `prod` domains.
 
 ### Non-Functional
 
-- NFR1: Never destroy shared `dev` or `prod` Kinde `Application`s when an ephemeral `preview-<slug>` stack runs `pulumi destroy`.
-- NFR2: Keep M2M secrets and `ClientSecret` outputs encrypted as Pulumi secrets.
+- Keep shared `dev` and `prod` OIDC applications intact when ephemeral pull-request previews are destroyed.
+- Avoid per-pull-request mutations to Kinde callback allowlists so concurrent previews never race.
+- Keep management M2M credentials and OIDC client secrets encrypted in Pulumi state.
 
 ## Design
 

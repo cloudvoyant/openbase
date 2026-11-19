@@ -8,15 +8,17 @@ OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi comp
 
 ### Functional
 
-- FR1: Separate organization foundations (`core.PlatformResource`) from application resources (`core.StatelessResource` and `core.StatefulResource`), where every resource either targets an environment (`dev`, `stage`, `prod`, `preview-<slug>`) or declares `shared` (omitting `env` from canonical naming).
-- FR2: Provision stateless compute (`gcp.CloudRunService`, `vercel.WebApp`), OIDC routing (`kinde.OidcApp`), and stateful data (`gcp.Bucket`, `vercel.BlobStore`, `neon.Database`) across `dev`, `stage`, `prod`, and `preview-<slug>` stacks.
-- FR3: Protect `prod` and `stage` stateful resources against deletion, branch `stage` off `prod` and `preview-<slug>` off `dev`, and bind environment variables, secrets, and IAM grants through `Links`.
+- Provision organization cloud foundations once per organization and share their outputs across repositories.
+- Provision shared project assets once per repository (`shared`) and deploy isolated application stacks across `dev`, `stage`, `prod`, and `preview-<slug>`.
+- Branch `stage` stateful data from `prod` and `preview-<slug>` stateful data from `dev`.
+- Bind environment variables, secrets, and least-privilege IAM or OIDC permissions between linked resources.
 
 ### Non-Functional
 
-- NFR1: Reject invalid environment names, invalid `BranchFrom` parents, and duplicate link keys during `pulumi preview` before cloud state changes.
-- NFR2: Run offline `pulumi.WithMocks` unit suites in under two seconds without cloud credentials.
-- NFR3: Keep a single root `go.mod` (`GOWORK=off`, no nested `go.mod`) so Premise publishes Go releases from repository Git tags.
+- Reject invalid environment names, invalid branch sources, and colliding link keys during `pulumi preview` before cloud state changes.
+- Protect `prod` and `stage` stateful data against accidental deletion while tearing down `preview-<slug>` stacks cleanly on branch close.
+- Authenticate across clouds through short-lived OIDC federation without static service-account keys.
+- Run offline unit tests in under two seconds without cloud credentials or network access.
 
 ## Design
 

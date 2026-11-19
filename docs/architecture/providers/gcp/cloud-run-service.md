@@ -8,15 +8,16 @@
 
 ### Functional
 
-- FR1: Create a dedicated `6-30` character service account per service with `roles/iam.serviceAccountTokenCreator` on itself for keyless GCS v4 URL signing.
-- FR2: Store workload and linked secrets in Secret Manager and mount them into the container via `SecretKeyRef`.
-- FR3: Support `public` (`allUsers` invoker), `internal` (IAM and federated OIDC callers only), and `worker` (`INGRESS_TRAFFIC_INTERNAL_ONLY`) modes.
-- FR4: Name services `{project}-{dev|stage|prod|previewId}` when `BaseDomain` is set so [gcp.CloudLoadBalancer](./cloud-load-balancer.md) routes traffic automatically, and attach optional `cloudrun.DomainMapping`s on persistent environments.
+- Run containerized HTTP services and background workers with an isolated service account per deployment.
+- Mount application and linked secrets from Secret Manager and grant container image pull permissions.
+- Control caller access across public internet, authenticated service-to-service, and internal-only worker modes.
+- Bind predictable environment subdomains and optional custom vanity domains.
 
 ### Non-Functional
 
-- NFR1: Scale `dev` and `preview-<slug>` containers to zero when idle (`MinInstanceCount: 0`).
-- NFR2: Never pass secret values as plain Cloud Run environment variables.
+- Scale idle development and preview containers to zero to minimize compute cost.
+- Keep secret values out of plain container environment definitions.
+- Sign Cloud Storage URLs at runtime using ambient service-account credentials instead of static JSON keys.
 
 ## Design
 

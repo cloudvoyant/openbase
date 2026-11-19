@@ -8,14 +8,16 @@
 
 ### Functional
 
-- FR1: Provide `InitPlatform` (`PlatformMeta`) for organization foundations and `InitStateless` / `InitStateful` (`StatelessMeta` / `StatefulMeta`) for resources across `shared`, `dev`, `stage`, `prod`, and `preview-<slug>`.
-- FR2: Format `<project>-<env>-<name>` canonical names on environment stacks and `<project>-<name>` canonical names (omitting `env`) when a resource declares `shared`.
-- FR3: Resolve `Links` into merged environment maps, secret maps, and least-privilege `GrantAccess` callbacks while rejecting duplicate variable keys.
+- Validate resource identifiers, deployment environments (`shared`, `dev`, `stage`, `prod`, `preview-<slug>`), and stateful branch parents.
+- Generate bounded, deterministic cloud resource names and hostnames that omit the environment token when a resource is `shared`.
+- Merge environment variables and secrets from linked producers and grant scoped access to each consumer identity.
+- Allow callers to wrap custom Pulumi resources with the same lifecycle, tagging, and linking contract as built-in components.
 
 ### Non-Functional
 
-- NFR1: Fail fast during `pulumi preview` on malformed identifiers, unsupported environments, self-referential `BranchFrom` targets, or colliding link keys.
-- NFR2: Keep every handwritten function at or below cyclomatic complexity `10`.
+- Fail during `pulumi preview` before registering cloud resources when inputs violate naming, branching, or link-uniqueness rules.
+- Keep secret link values encrypted in Pulumi state and output maps.
+- Stay free of cloud provider SDK dependencies so `core` tests run offline in milliseconds.
 
 ## Design
 

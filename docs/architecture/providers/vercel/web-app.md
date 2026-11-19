@@ -8,14 +8,16 @@
 
 ### Functional
 
-- FR1: Scope `ProjectEnvironmentVariable` entries to `production` (`prod`), `CustomEnvironmentIds` (`stage`, or `dev` when enabled), or `development` (`dev` local `vercel env pull`), while injecting per-deployment variables on nameless preview builds.
-- FR2: Bind primary and `ExtraDomains` hostnames through `vercel.Alias` on every deployment.
-- FR3: Create a `6-30` character GCP service account and bind `roles/iam.workloadIdentityUser` when `GCPProject` and `GCPWorkloadIdentityPool` are set.
+- Build and deploy web application directories to `dev`, `stage`, `prod`, and `preview-<slug>` environments.
+- Isolate environment variables and linked secrets per tier and per concurrent pull-request preview.
+- Bind deterministic environment domains and extra vanity aliases to each deployment.
+- Authenticate Vercel functions to private Google Cloud services and buckets when linked.
 
 ### Non-Functional
 
-- NFR1: Never store static GCP JSON service-account keys in Vercel environment variables.
-- NFR2: Delete preview `Deployment` and `Alias` resources cleanly on `pulumi destroy` without affecting `dev`, `stage`, or `prod`.
+- Exchange short-lived Vercel OIDC tokens at runtime instead of storing static Google Cloud keys in Vercel.
+- Keep concurrent pull-request deployments isolated so branch builds never overwrite each other's secrets or aliases.
+- Remove ephemeral preview deployments and aliases cleanly on teardown without disrupting `dev`, `stage`, or `prod`.
 
 ## Design
 

@@ -8,15 +8,16 @@
 
 ### Functional
 
-- FR1: Export `teamId`, `teamSlug`, and `vercelBaseDomain` once per organization in `vercel.Platform` without coupling to downstream project IDs.
-- FR2: Provision `vercel.Project` in `infra/shared` with team OIDC issuer mode (`https://oidc.vercel.com/<teamSlug>`), `IgnoreCommand: "exit 0"`, and `ProjectProtectionBypass`.
-- FR3: Support `0`, `1` (Pro default: `staging` Custom Environment), or `2` (`dev` + `staging`) Custom Environments per project based on plan quota.
-- FR4: Attach `prod` and `staging` `ProjectDomain`s while leaving nameless `dev` and `preview-<slug>` tiers free for deployment `Alias` binding.
+- Share Vercel team and base-domain defaults across repositories from one organization platform stack.
+- Provision a Vercel project per repository with team OIDC federation, deployment-protection bypass tokens, and optional shared Blob storage.
+- Support `staging` and optional `dev` custom environments alongside `prod` and nameless preview deployments.
+- Attach persistent custom domains to `prod` and `stage` without conflicting with `dev` or pull-request aliases.
 
 ### Non-Functional
 
-- NFR1: Never attach an un-scoped `ProjectDomain` for nameless `dev` or `preview-<slug>` tiers because Vercel marks un-scoped domains as `Production` and hijacks them on `prod` deploys.
-- NFR2: Keep `vercel.Platform` free of application `Project`, `Repo`, and `Environment` fields.
+- Fit within Vercel Pro's single included custom environment per project (`$0/month` extra) by default.
+- Prevent `prod` deployments from hijacking `dev` or pull-request custom domains.
+- Prevent uncoordinated Git pushes from overwriting production deployments outside the infrastructure pipeline.
 
 ## Design
 

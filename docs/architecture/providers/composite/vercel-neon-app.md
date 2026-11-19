@@ -8,14 +8,14 @@
 
 ### Functional
 
-- FR1: Resolve `ProjectStackRef` to `<org>/<project>-shared/shared` by default.
-- FR2: Branch `neon.Database` from `prod` on `stage` and from `dev` on `preview-<slug>`, and branch `vercel.BlobStore` prefix overlays from `dev` on `preview-<slug>`.
-- FR3: Link `Database`, `BlobStore`, `OidcApp`, and any custom `Links` into `vercel.WebApp` and export stack outputs (`url`, `urls`, `branchId`, `databaseUrl`, `blobPrefix`).
+- Deploy a full-stack Vercel web application backed by branched Neon PostgreSQL, optional Blob storage, and optional Kinde OIDC authentication across `dev`, `stage`, `prod`, and `preview-<slug>`.
+- Branch `stage` database state from `prod` and branch `preview-<slug>` database and Blob storage state from `dev`.
+- Export application URLs, deployment IDs, database URLs, and storage prefixes from each environment stack.
 
 ### Non-Functional
 
-- NFR1: Reject execution on the `shared` stack (`core.ErrInvalidEnvironment`).
-- NFR2: Require zero Kinde M2M admin credentials or Neon organization IDs in `infra/main.go`.
+- Reject accidental execution against the `shared` project stack.
+- Deploy environment and pull-request stacks without requiring Kinde M2M admin credentials or Neon organization keys.
 
 ## Design
 

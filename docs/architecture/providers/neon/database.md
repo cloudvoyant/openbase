@@ -8,14 +8,15 @@
 
 ### Functional
 
-- FR1: Provision root branches (`dev` and `prod`) off `defaultBranchId` with dedicated `neon.Endpoint`, `neon.Role`, and `neon.Database` resources.
-- FR2: Provision child copy-on-write branches (`stage` with `BranchFrom: "prod"`, `preview-<slug>` with `BranchFrom: "dev"`) off the parent stack `branchId` and read the inherited role password.
-- FR3: Apply `pulumi.Protect(true)` on `prod` and `stage` branches and export secret pooled (`DATABASE_URL`) and direct (`DIRECT_URL`) connection strings through `Links`.
+- Provision isolated PostgreSQL branches and compute endpoints for `dev`, `stage`, `prod`, and `preview-<slug>` stacks.
+- Branch `stage` from `prod` and `preview-<slug>` from `dev` with inherited schemas, roles, and seed data.
+- Export pooled connection URLs for serverless workloads and direct connection URLs for schema migrations.
 
 ### Non-Functional
 
-- NFR1: Child branches must not recreate `neon.Role` or `neon.Database` (which already exist in the copy-on-write snapshot and return `409 Conflict`).
-- NFR2: Scale idle `dev` and `preview-<slug>` compute endpoints to zero (`SuspendSeconds: 300` default).
+- Branch child databases in seconds via copy-on-write storage without duplicating storage pages or colliding on existing roles.
+- Protect `prod` and `stage` database branches from accidental deletion while deleting ephemeral preview branches on teardown.
+- Scale idle `dev` and `preview-<slug>` compute endpoints to zero to control database cost.
 
 ## Design
 

@@ -8,14 +8,15 @@
 
 ### Functional
 
-- FR1: Resolve `ProjectStackRef` to `<org>/<project>-shared/shared` by default.
-- FR2: Branch `neon.Database` from `prod` on `stage` and from `dev` on `preview-<slug>`, and branch `gcp.Bucket` fallback overlays from `dev` on `preview-<slug>`.
-- FR3: Mount all linked secrets in Secret Manager, grant least-privilege GCS and Artifact Registry IAM to the Cloud Run service account, and export stack outputs (`url`, `urls`, `regionalUrl`, `branchId`, `bucketName`).
+- Deploy a containerized Cloud Run web application backed by branched Neon PostgreSQL, optional Cloud Storage buckets, and optional Kinde OIDC authentication across `dev`, `stage`, `prod`, and `preview-<slug>`.
+- Branch `stage` database state from `prod` and branch `preview-<slug>` database and bucket state from `dev`.
+- Export service URLs, service-account emails, database URLs, and bucket names from each environment stack.
 
 ### Non-Functional
 
-- NFR1: Reject execution on the `shared` stack (`core.ErrInvalidEnvironment`).
-- NFR2: Compute `siteURL` deterministically before creating `CloudRunService` so `kinde.OidcApp` callback URLs require only a single `pulumi up` pass.
+- Reject accidental execution against the `shared` project stack.
+- Converge OIDC callback URLs and container secret mounts in a single `pulumi up` pass without circular dependencies.
+- Mount database and OIDC secrets through Secret Manager with least-privilege service-account access.
 
 ## Design
 

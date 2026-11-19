@@ -8,14 +8,14 @@
 
 ### Functional
 
-- FR1: Allocate a static Global IPv4 address (`ipAddress`) and DNS-authorized wildcard TLS certificate covering `{baseDomain}` and `*.{baseDomain}`.
-- FR2: Route HTTPS requests matching `<service>.{baseDomain}` to the regional Cloud Run service named `<service>` without per-environment load-balancer edits.
-- FR3: Export `ipAddress`, `dnsAuthRecordName`, and `dnsAuthRecordData` so DNS operators configure one wildcard `A` record and one ACME `CNAME` record.
+- Allocate a static global IPv4 address and a DNS-authorized wildcard TLS certificate for a base domain and its single-label subdomains.
+- Route incoming HTTPS requests by subdomain directly to the matching regional Cloud Run service.
+- Export the load-balancer IP address and DNS authorization record values needed to configure external DNS.
 
 ### Non-Functional
 
-- NFR1: New `preview-<slug>` Cloud Run services must receive valid HTTPS on `{project}-{previewId}.{baseDomain}` immediately with zero certificate issuance wait.
-- NFR2: Reject empty `BaseDomain` inputs during `pulumi preview` with `gcp.ErrBaseDomainRequired`.
+- Serve valid HTTPS on new preview and environment subdomains immediately without per-branch certificate issuance delays.
+- Support deployment at the organization, shared project, or single-environment scope without changing application code.
 
 ## Design
 

@@ -8,14 +8,14 @@
 
 ### Functional
 
-- FR1: Combine optional `gcp.Platform`, `vercel.Platform`, `neon.Platform`, and `kinde.Platform` specs in `composite.Platform` and export unified stack outputs for all organization repositories.
-- FR2: Provision `vercel.Project`, `neon.Project`, optional `kinde.Project`, and shared `preview` variables in `composite.VercelNeonProject` (`infra/shared`).
-- FR3: Provision `gcp.Project`, `neon.Project`, and optional `kinde.Project` (with precomputed Cloud Run Kinde callback allowlists) in `composite.GcpCloudRunNeonProject` (`infra/shared`).
+- Provision organization GCP, Vercel, Neon, and Kinde foundations from one central platform blueprint.
+- Provision shared repository assets (project registries, Vercel projects, Neon clusters, and Kinde OIDC clients) once in `infra/shared`.
+- Export a consistent set of shared stack outputs consumed by per-environment blueprints in `infra/`.
 
 ### Non-Functional
 
-- NFR1: Reject deploying `VercelNeonProject` or `GcpCloudRunNeonProject` onto an environment stack (`dev`, `stage`, `prod`, `preview-<slug>`) with `core.ErrInvalidEnvironment`.
-- NFR2: Default environment blueprints to `<org>/<project>-shared/shared` when `ProjectStackRef` is omitted.
+- Prevent shared project blueprints from deploying onto environment stacks (`dev`, `stage`, `prod`, `preview-<slug>`).
+- Isolate privileged provider admin credentials (such as Kinde M2M secrets and Neon org keys) inside `infra/shared` and the organization platform stack.
 
 ## Design
 

@@ -8,15 +8,15 @@
 
 ### Functional
 
-- FR1: Enable required Google Cloud APIs once per organization in `gcp.Platform` with `DisableOnDestroy: false`.
-- FR2: Provision one organization Workload Identity Pool (`ob-<org>-pool`) with optional GitHub Actions (`assertion.repository_owner`) and Vercel (`assertion.owner`) OIDC providers.
-- FR3: Provision an optional KMS `KeyRing` and optional wildcard [gcp.CloudLoadBalancer](./cloud-load-balancer.md) in `gcp.Platform`.
-- FR4: Provision a per-application Docker `artifactregistry.Repository` in `gcp.Project` and inherit `gcp.Platform` outputs via `Platform` or `PlatformStackRef`.
+- Enable required Google Cloud APIs once per organization without disabling dependent services on stack teardown.
+- Federate GitHub Actions and Vercel OIDC identities at the organization level without static service-account keys.
+- Provision optional organization KMS key rings and wildcard HTTPS load balancing for all Cloud Run applications.
+- Provision a dedicated Docker container registry per application repository and inherit organization identity and domain outputs.
 
 ### Non-Functional
 
-- NFR1: Never duplicate Workload Identity Pools across application repositories when `Platform` or `PlatformStackRef` is set.
-- NFR2: Keep `gcp.Platform` free of application `Project`, `Repo`, and `Environment` fields.
+- Reuse one organization Workload Identity Pool across repositories instead of creating duplicate pools per application.
+- Keep organization platform configuration independent of individual application names, repositories, and deployment environments.
 
 ## Design
 

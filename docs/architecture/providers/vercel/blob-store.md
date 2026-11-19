@@ -8,14 +8,14 @@
 
 ### Functional
 
-- FR1: Reuse the project Blob store from `vercel.Project` (`ProjectStackRef`) or create a dedicated `vercelprov.BlobStore` + `BlobProjectConnection`.
-- FR2: Propagate `BLOB_BASE_URL` and `BLOB_READ_WRITE_TOKEN` into `CustomEnvironmentIds` (`stage`, and `dev` when enabled) because `BlobProjectConnection` only populates built-in `development`, `preview`, and `production` targets.
-- FR3: Export `BLOB_PREFIX=<env>/` and `BLOB_FALLBACK_PREFIX=<branchFrom>/` via `Links`.
+- Attach shared or dedicated Vercel Blob stores to `dev`, `stage`, `prod`, and `preview-<slug>` environments.
+- Deliver store base URLs and read-write tokens to built-in and custom Vercel environments alike.
+- Isolate object keys by environment prefix and fall back to parent environment objects when preview keys do not exist.
 
 ### Non-Functional
 
-- NFR1: Preview writes and deletes must stay inside `preview-<slug>/` and never mutate `dev/` keys.
-- NFR2: Keep `BLOB_READ_WRITE_TOKEN` encrypted as a Pulumi secret across stack state and links.
+- Guarantee that preview writes and deletes never overwrite or remove objects in the parent environment prefix.
+- Keep `BLOB_READ_WRITE_TOKEN` encrypted across stack state and linked workloads.
 
 ## Design
 

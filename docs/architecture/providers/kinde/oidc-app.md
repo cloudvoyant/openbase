@@ -8,14 +8,14 @@
 
 ### Functional
 
-- FR1: Route `dev` and `preview-<slug>` stacks to `dev` tenant outputs (`devIssuerUrl`, `devClientId`, `devClientSecret`).
-- FR2: Route `stage` and `prod` stacks to `prod` tenant outputs (`prodIssuerUrl`, `prodClientId`, `prodClientSecret`).
-- FR3: Export `KINDE_ISSUER_URL`, `KINDE_CLIENT_ID`, `KINDE_SITE_URL`, `KINDE_REDIRECT_URL`, `KINDE_POST_LOGIN_REDIRECT_URL`, `KINDE_POST_LOGOUT_REDIRECT_URL`, and secret `KINDE_CLIENT_SECRET` via `Links`.
+- Bind `dev` and `preview-<slug>` deployments to the `dev` Kinde tenant and `stage` and `prod` deployments to the `prod` Kinde tenant.
+- Compute environment-specific site, login callback, post-login, and post-logout URLs for each stack.
+- Deliver OIDC issuer, client ID, redirect URLs, and client secret to linked services.
 
 ### Non-Functional
 
-- NFR1: Require zero Kinde M2M management credentials in `infra/main.go` when `ProjectStackRef` is set.
-- NFR2: Keep `KINDE_CLIENT_SECRET` marked as a Pulumi secret in state and linked workloads.
+- Require zero Kinde management M2M credentials during per-environment and pull-request deployments.
+- Keep OIDC client secrets encrypted across state outputs and linked workloads.
 
 ## Design
 

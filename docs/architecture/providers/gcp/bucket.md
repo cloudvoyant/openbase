@@ -8,14 +8,15 @@
 
 ### Functional
 
-- FR1: Enforce `UniformBucketLevelAccess: true` and `PublicAccessPrevention: "enforced"` on every bucket.
-- FR2: Enable `pulumi.Protect(true)`, object versioning, and 7-day `SoftDeletePolicy` on `prod` and `stage`, and set `ForceDestroy: true` with zero soft-delete retention on `dev` and `preview-<slug>`.
-- FR3: Export primary and fallback bucket names plus scoped IAM roles (`objectAdmin` on primary, `objectViewer` on fallback) when `BranchFrom` is set.
+- Provision private object storage buckets for persistent environments and ephemeral preview branches.
+- Retain versioned backups and soft-deleted objects on `prod` and `stage` buckets.
+- Give branched preview environments read fallback to parent environment objects while isolating new writes and deletes.
 
 ### Non-Functional
 
-- NFR1: Preview creation must not copy objects from `dev` and must clean up non-empty preview buckets on `pulumi destroy`.
-- NFR2: Preview writes and deletes must never mutate the parent `BranchFrom` bucket.
+- Block public bucket ACLs and enforce uniform IAM access control on every bucket.
+- Branch preview storage without copying parent objects and delete non-empty preview buckets cleanly on teardown.
+- Guarantee that preview writes and deletes never modify parent environment objects.
 
 ## Design
 

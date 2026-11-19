@@ -8,14 +8,14 @@
 
 ### Functional
 
-- FR1: Export `neonOrgId`, `neonRegionId`, `neonPostgresVersion` (default `17`), and `neonHistoryRetentionSeconds` (default `86400`) in `neon.Platform`, plus an optional `neon.OrgApiKey`.
-- FR2: Provision `neon.Project` in `infra/shared` with `StorePassword: "yes"` and export `projectId` (`neonProjectId`) and `defaultBranchId` (`neonDefaultBranchId`).
-- FR3: Inherit `OrgID`, `RegionID`, `PostgresVersion`, and `HistoryRetentionSeconds` in `neon.Project` from `Platform` or `PlatformStackRef`.
+- Share Neon organization ID, default region, PostgreSQL version, and point-in-time recovery window from one organization platform stack.
+- Provision optional organization API keys for automation pipelines.
+- Provision an isolated Neon PostgreSQL cluster per application repository that environment branches inherit from.
 
 ### Non-Functional
 
-- NFR1: Keep `neon.Platform` free of application `Project`, `Repo`, and `Environment` fields.
-- NFR2: Mark generated `neonOrgApiKey` outputs as Pulumi secrets.
+- Keep organization platform configuration independent of individual application names and environments.
+- Keep generated Neon API keys and stored role passwords encrypted in Pulumi state.
 
 ## Design
 
