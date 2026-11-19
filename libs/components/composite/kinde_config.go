@@ -50,20 +50,6 @@ func resolveProjectStackRef(ctx *pulumi.Context, explicit string) string {
 	return fmt.Sprintf("%s/%s-shared/shared", ctx.Organization(), ctx.Project())
 }
 
-func requireSharedEnv(meta core.ResourceMeta) error {
-	if meta.Environment != core.EnvShared {
-		return fmt.Errorf("%w: %q requires the shared stack, got %q", core.ErrInvalidEnvironment, meta.Kind, meta.Environment)
-	}
-	return nil
-}
-
-func requireNonSharedEnv(meta core.ResourceMeta, projectComponent string) error {
-	if meta.Environment == core.EnvShared {
-		return fmt.Errorf("%w: %q is per-environment; declare %s in infra/shared for the shared stack", core.ErrInvalidEnvironment, meta.Kind, projectComponent)
-	}
-	return nil
-}
-
 func resolveDBBranch(ctx *pulumi.Context, env core.Environment) (string, string) {
 	if env == core.EnvStage {
 		return "prod", fmt.Sprintf("%s/%s/prod", ctx.Organization(), ctx.Project())

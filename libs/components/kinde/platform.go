@@ -14,7 +14,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*PlatformResource)(nil)
+var _ core.PlatformResource = (*PlatformResource)(nil)
 
 // ErrTenantCredentialsRequired reports missing dev or prod Kinde tenant M2M credentials.
 var ErrTenantCredentialsRequired = errors.New("kinde: both dev and prod tenant domain, clientId, and clientSecret are required")
@@ -40,7 +40,7 @@ type Platform struct {
 // PlatformResource holds organization-level Kinde tenant providers, issuer URLs, and discovered connection IDs.
 type PlatformResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.PlatformMeta
 
 	DevProvider       *kindeprov.Provider
 	ProdProvider      *kindeprov.Provider
@@ -56,12 +56,10 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 		return nil, ErrTenantCredentialsRequired
 	}
 	p.Name = defaultKindeStr(p.Name, "kinde-platform")
-	orgScope := core.OrgScope(p.Org, ctx.Organization())
 	res := &PlatformResource{}
-	meta, err := core.InitStateless(ctx, "openbase:kinde:Platform", "kinde-platform", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     orgScope,
-		Environment: string(core.EnvShared),
+	info, err := core.InitPlatform(ctx, "openbase:kinde:Platform", "kinde-platform", res, &res.PlatformMeta, core.PlatformSpec{
+		Name: p.Name,
+		Org:  p.Org,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -70,8 +68,8 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
+		Name: info.Name,
+		Kind: info.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"KINDE_DEV_ISSUER_URL":  res.DevIssuerURL,
 			"KINDE_PROD_ISSUER_URL": res.ProdIssuerURL,

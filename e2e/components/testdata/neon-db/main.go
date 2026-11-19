@@ -15,15 +15,11 @@ func main() {
 		if os.Getenv("OPENBASE_TEST_FAIL_INFRA") == "1" {
 			return errors.New("simulated neon infrastructure program failure")
 		}
-		env, err := core.ResolveEnvironment(ctx, "")
-		if err != nil {
-			return err
-		}
 		appProject := os.Getenv("OPENBASE_TEST_APP_PROJECT")
 		if appProject == "" {
 			appProject = "obneon"
 		}
-		if env == core.EnvShared {
+		if core.IsProjectStack(ctx) {
 			proj, err := neon.Project{
 				Project:  appProject,
 				OrgID:    os.Getenv("NEON_ORG_ID"),
@@ -35,6 +31,10 @@ func main() {
 			ctx.Export("projectId", proj.ProjectID)
 			ctx.Export("defaultBranchId", proj.DefaultBranchID)
 			return nil
+		}
+		env, err := core.ResolveEnvironment(ctx, "")
+		if err != nil {
+			return err
 		}
 		branchFrom := ""
 		if env == core.EnvStage {

@@ -39,12 +39,12 @@ http.server.ThreadingHTTPServer(("0.0.0.0", int(os.environ.get("PORT", "8080")))
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
+		if core.IsProjectStack(ctx) {
+			return deployFullstackProject(ctx)
+		}
 		env, err := core.ResolveEnvironment(ctx, "")
 		if err != nil {
 			return err
-		}
-		if env == core.EnvShared {
-			return deployFullstackProject(ctx)
 		}
 		return deployAppStack(ctx, env)
 	})
@@ -56,13 +56,22 @@ func deployFullstackProject(ctx *pulumi.Context) error {
 	teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 	teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
 
-	gcpProj, err := gcp.Project{
-		Name:           "gcp-project",
-		Project:        appProject,
+	gcpPlat, err := gcp.Platform{
+		Name:           "gcp-platform",
+		Org:            teamSlug,
 		GCPProject:     pulumi.String(gcpProject),
 		PoolSuffix:     os.Getenv("OPENBASE_TEST_RUN_ID"),
 		VercelTeamSlug: teamSlug,
 		SkipKeyRing:    true,
+	}.Register(ctx)
+	if err != nil {
+		return err
+	}
+	gcpProj, err := gcp.Project{
+		Name:       "gcp-project",
+		Project:    appProject,
+		Platform:   gcpPlat,
+		GCPProject: pulumi.String(gcpProject),
 	}.Register(ctx)
 	if err != nil {
 		return err

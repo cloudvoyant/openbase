@@ -11,7 +11,11 @@ import (
 // Public API -----------------------------------------------------------------
 
 const (
-	// TagEnvironment records the OpenBase environment ("shared", "dev", "stage", "prod", "preview-*").
+	// TagTier records the OpenBase tier ("platform", "project", "environment").
+	TagTier = "openbase.io/tier"
+	// TagOrg records the organization slug on Platform resources.
+	TagOrg = "openbase.io/org"
+	// TagEnvironment records the OpenBase environment ("dev", "stage", "prod", "preview-*").
 	TagEnvironment = "openbase.io/environment"
 	// TagProject records the logical OpenBase project name.
 	TagProject = "openbase.io/project"
@@ -28,6 +32,7 @@ const (
 // StandardTags returns the canonical openbase.io/* metadata map for a resource.
 func StandardTags(meta ResourceMeta) map[string]string {
 	tags := map[string]string{
+		TagTier:        TierEnvironment,
 		TagEnvironment: meta.Environment.String(),
 		TagProject:     meta.Project,
 		TagStateful:    strconv.FormatBool(meta.Stateful),
@@ -56,12 +61,16 @@ func GCPLabels(meta ResourceMeta, extra map[string]string) pulumi.StringMap {
 	if previewID := meta.Environment.PreviewID(); previewID != "" {
 		labels["openbase-preview-id"] = pulumi.String(sanitizeGCPLabelValue(previewID))
 	}
+	appendExtraGCPLabels(labels, extra)
+	return labels
+}
+
+func appendExtraGCPLabels(labels pulumi.StringMap, extra map[string]string) {
 	for k, v := range extra {
 		if key := sanitizeGCPLabelKey(k); key != "" {
 			labels[key] = pulumi.String(sanitizeGCPLabelValue(v))
 		}
 	}
-	return labels
 }
 
 // Private helpers ------------------------------------------------------------

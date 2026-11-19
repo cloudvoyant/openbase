@@ -21,9 +21,12 @@ func EnvDomainLabel(env Environment) string {
 	}
 	pid := env.PreviewID()
 	switch Environment(pid) {
-	case EnvDev, EnvStage, EnvProd, EnvShared:
+	case EnvDev, EnvStage, EnvProd:
 		return string(env)
 	default:
+		if pid == "shared" || pid == "project" || pid == "platform" {
+			return string(env)
+		}
 		return pid
 	}
 }

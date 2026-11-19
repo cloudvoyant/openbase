@@ -61,19 +61,25 @@ func TestPlatformAndProject(t *testing.T) {
 			mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 1)
 		})
 
-		t.Run("when standalone gcp.Project sets SkipKeyRing and VercelIssuerMode global, then it provisions inline Platform without KeyRing", func(t *testing.T) {
+		t.Run("when gcp.Platform sets SkipKeyRing/global OIDC and standalone gcp.Project omits Platform, then Project creates only Artifact Registry", func(t *testing.T) {
 			// Arrange.
 			mocks := newGCPMocks()
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := gcp.Project{
-					Project:          "storefront",
+				if _, err := (gcp.Platform{
+					Org:              "cloudvoyant",
 					GCPProject:       pulumi.String("cloudvoyant-openbase"),
 					VercelTeamSlug:   "cloudvoyant",
 					VercelIssuerMode: "global",
 					SkipKeyRing:      true,
 					Services:         []string{"run.googleapis.com", "storage.googleapis.com"},
+				}).Register(ctx); err != nil {
+					return err
+				}
+				_, err := gcp.Project{
+					Project:    "storefront",
+					GCPProject: pulumi.String("cloudvoyant-openbase"),
 				}.Register(ctx)
 				return err
 			}, pulumi.WithMocks("storefront", "shared", mocks))
@@ -82,7 +88,9 @@ func TestPlatformAndProject(t *testing.T) {
 			requireGCPNoErr(t, err)
 			mocks.assertCount(t, "gcp:projects/service:Service", 2)
 			mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 0)
+			mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
 			mocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 1)
+			mocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 1)
 		})
 	})
 }

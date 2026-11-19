@@ -15,9 +15,9 @@ import (
 
 func TestEnvironmentContracts(t *testing.T) {
 	t.Run("given OpenBase environment strings", func(t *testing.T) {
-		t.Run("when parsing supported persistent, shared, and preview slugs, then ParseEnvironment succeeds", func(t *testing.T) {
+		t.Run("when parsing supported persistent and preview slugs, then ParseEnvironment succeeds", func(t *testing.T) {
 			// Arrange.
-			valid := []string{"shared", "dev", "stage", "prod", "preview-pr-42", "preview-a"}
+			valid := []string{"dev", "stage", "prod", "preview-pr-42", "preview-a"}
 
 			// Act / Assert.
 			for _, raw := range valid {
@@ -27,9 +27,9 @@ func TestEnvironmentContracts(t *testing.T) {
 			}
 		})
 
-		t.Run("when parsing malformed or unsupported tiers, then ParseEnvironment returns ErrInvalidEnvironment", func(t *testing.T) {
+		t.Run("when parsing shared, malformed, or unsupported tiers, then ParseEnvironment returns ErrInvalidEnvironment", func(t *testing.T) {
 			// Arrange.
-			invalid := []string{"", "qa", "production", "staging", "preview-", "preview--bad-", "Preview-1", "preview-UPPER"}
+			invalid := []string{"", "shared", "project", "platform", "qa", "production", "staging", "preview-", "preview--bad-", "Preview-1", "preview-UPPER"}
 
 			// Act / Assert.
 			for _, raw := range invalid {
@@ -196,7 +196,56 @@ func TestLinksAndTags(t *testing.T) {
 	})
 }
 
+func TestTierContracts(t *testing.T) {
+	t.Run("given PlatformResource and ProjectResource registrations", func(t *testing.T) {
+		t.Run("when InitPlatform and InitProject run, then each populates org or project metadata without environment coupling", func(t *testing.T) {
+			// Arrange.
+			var plat core.PlatformResource
+			var proj core.ProjectResource
+
+			// Act.
+			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				tp := &testPlatform{}
+				if _, e := core.InitPlatform(ctx, "test:org:Platform", "org-platform", tp, &tp.PlatformMeta, core.PlatformSpec{
+					Name: "gcp",
+					Org:  "cloudvoyant",
+				}); e != nil {
+					return e
+				}
+				plat = tp
+				tpr := &testProject{}
+				if _, e := core.InitProject(ctx, "test:app:Project", "app-project", tpr, &tpr.ProjectMeta, core.ProjectSpec{
+					Name:    "gcp",
+					Project: "storefront",
+					Repo:    "cloudvoyant/storefront",
+				}); e != nil {
+					return e
+				}
+				proj = tpr
+				return nil
+			}, pulumi.WithMocks("storefront-shared", "shared", &noopMocks{}))
+
+			// Assert.
+			requireNoErr(t, err)
+			assertEqual(t, "platform canonical", plat.OpenBasePlatform().CanonicalName, "cloudvoyant-platform-gcp")
+			assertEqual(t, "platform tier tag", plat.OpenBasePlatform().Tags[core.TagTier], core.TierPlatform)
+			assertEqual(t, "project canonical", proj.OpenBaseProject().CanonicalName, "storefront-project-gcp")
+			assertEqual(t, "project tier tag", proj.OpenBaseProject().Tags[core.TagTier], core.TierProject)
+		})
+	})
+}
+
 // Private helpers ------------------------------------------------------------
+
+type testPlatform struct {
+	pulumi.ResourceState
+	core.PlatformMeta
+}
+
+type testProject struct {
+	pulumi.ResourceState
+	core.ProjectMeta
+}
 
 type noopMocks struct{}
 

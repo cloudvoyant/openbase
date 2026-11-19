@@ -160,9 +160,6 @@ func resolveSiteURL(meta core.ResourceMeta, spec OidcApp, sr *pulumi.StackRefere
 	if spec.SiteURL != nil {
 		return spec.SiteURL.ToStringOutput()
 	}
-	if meta.Environment == core.EnvShared {
-		return pulumi.String("http://localhost:5173").ToStringOutput()
-	}
 	vProjOut, teamOut, baseOut := resolveVercelHostParts(meta.Project, spec, sr)
 	return pulumi.All(vProjOut, teamOut, baseOut).ApplyT(func(vs []any) string {
 		return computeDefaultSiteOrigin(meta.Project, meta.Environment, vs[0].(string), vs[1].(string), vs[2].(string), spec)

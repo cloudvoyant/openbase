@@ -75,9 +75,6 @@ func (g GcpCloudRunNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.Resourc
 	if err != nil {
 		return nil, err
 	}
-	if err := requireNonSharedEnv(meta, "composite.GcpCloudRunNeonProject"); err != nil {
-		return nil, err
-	}
 	if err := provisionGCPEnvStack(ctx, meta, g, res); err != nil {
 		return nil, err
 	}

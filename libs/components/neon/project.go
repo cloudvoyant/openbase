@@ -12,14 +12,13 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*ProjectResource)(nil)
+var _ core.ProjectResource = (*ProjectResource)(nil)
 
 // Project declares an application's cross-environment Neon Project cluster in Premise's infra/shared stack.
 type Project struct {
 	Name                    string
 	Project                 string
 	Repo                    string
-	Environment             string
 	Platform                *PlatformResource
 	PlatformStackRef        string
 	OrgID                   string
@@ -31,7 +30,7 @@ type Project struct {
 // ProjectResource is the provisioned Neon Project cluster handle consumed by per-environment neon.Database branches.
 type ProjectResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.ProjectMeta
 
 	Project         *neonprov.Project
 	ProjectID       pulumi.StringOutput
@@ -42,18 +41,16 @@ type ProjectResource struct {
 // Register provisions a Neon Project cluster and exports projectId and defaultBranchId.
 func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
 	p.Name = defaultIdentifier(p.Name, "neon")
-	env := defaultIdentifier(p.Environment, string(core.EnvShared))
 	res := &ProjectResource{}
-	meta, err := core.InitStateless(ctx, "openbase:neon:Project", "neon-project", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
-		Environment: env,
+	info, err := core.InitProject(ctx, "openbase:neon:Project", "neon-project", res, &res.ProjectMeta, core.ProjectSpec{
+		Name:    p.Name,
+		Project: p.Project,
+		Repo:    p.Repo,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	proj, err := createNeonProject(ctx, p.Name, meta, p, res)
+	proj, err := createNeonProject(ctx, p.Name, info, p, res)
 	if err != nil {
 		return nil, err
 	}
@@ -62,8 +59,8 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	res.DefaultBranchID = proj.DefaultBranchId
 	res.RegionID = proj.RegionId
 	res.SetLink(core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
+		Name: info.Name,
+		Kind: info.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"NEON_PROJECT_ID": proj.ID().ToStringOutput(),
 		},
@@ -82,7 +79,7 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 func createNeonProject(
 	ctx *pulumi.Context,
 	name string,
-	meta core.ResourceMeta,
+	info core.ProjectInfo,
 	spec Project,
 	parent pulumi.Resource,
 ) (*neonprov.Project, error) {
@@ -93,7 +90,7 @@ func createNeonProject(
 	pgVer := resolveNeonInt(spec.PostgresVersion, spec.Platform, 17, func(p *PlatformResource) int { return p.PostgresVersion })
 	retention := resolveNeonInt(spec.HistoryRetentionSeconds, spec.Platform, 86400, func(p *PlatformResource) int { return p.HistoryRetentionSeconds })
 	projArgs := &neonprov.ProjectArgs{
-		Name:                    pulumi.String(meta.CanonicalName),
+		Name:                    pulumi.String(info.CanonicalName),
 		RegionId:                regionOut,
 		PgVersion:               pulumi.Float64(float64(pgVer)),
 		HistoryRetentionSeconds: pulumi.Float64(float64(retention)),

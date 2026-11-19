@@ -15,7 +15,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*PlatformResource)(nil)
+var _ core.PlatformResource = (*PlatformResource)(nil)
 
 // Platform declares organization-level GCP prerequisites (APIs, Workload Identity Federation, KMS, and wildcard Load Balancer) provisioned once per org.
 type Platform struct {
@@ -38,7 +38,7 @@ type Platform struct {
 // PlatformResource holds org-level enabled GCP APIs, Workload Identity Pool/Providers, KMS KeyRing, and optional wildcard LoadBalancer.
 type PlatformResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.PlatformMeta
 
 	EnabledServices          []*projects.Service
 	WorkloadIdentityPool     *iam.WorkloadIdentityPool
@@ -58,20 +58,19 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 	p.Name = defaultStr(p.Name, "gcp-platform")
 	orgScope := core.OrgScope(p.Org, p.GitHubOrg, p.VercelTeamSlug, ctx.Organization())
 	res := &PlatformResource{}
-	meta, err := core.InitStateless(ctx, "openbase:gcp:Platform", "gcp-platform", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     orgScope,
-		Environment: string(core.EnvShared),
+	info, err := core.InitPlatform(ctx, "openbase:gcp:Platform", "gcp-platform", res, &res.PlatformMeta, core.PlatformSpec{
+		Name: p.Name,
+		Org:  orgScope,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionGCPPlatform(ctx, p.Name, orgScope, meta, p, res); err != nil {
+	if err := provisionGCPPlatform(ctx, p.Name, orgScope, info, p, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
+		Name: info.Name,
+		Kind: info.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"GCP_WORKLOAD_IDENTITY_POOL": res.WorkloadIdentityPoolName,
 			"GCP_BASE_DOMAIN":            res.BaseDomain,
@@ -96,7 +95,7 @@ var defaultPlatformServices = []string{
 func provisionGCPPlatform(
 	ctx *pulumi.Context,
 	name, orgScope string,
-	meta core.ResourceMeta,
+	info core.PlatformInfo,
 	spec Platform,
 	res *PlatformResource,
 ) error {
@@ -112,7 +111,7 @@ func provisionGCPPlatform(
 	if err := createIdentityFederation(ctx, name, orgScope, spec, res); err != nil {
 		return err
 	}
-	if err := createOptionalKeyRing(ctx, name, location, meta, spec, res); err != nil {
+	if err := createOptionalKeyRing(ctx, name, location, info, spec, res); err != nil {
 		return err
 	}
 	return createOptionalPlatformLB(ctx, name, orgScope, location, spec, res)
@@ -244,7 +243,7 @@ func attachVercelWIFProvider(
 func createOptionalKeyRing(
 	ctx *pulumi.Context,
 	name, location string,
-	meta core.ResourceMeta,
+	info core.PlatformInfo,
 	spec Platform,
 	res *PlatformResource,
 ) error {
@@ -252,7 +251,7 @@ func createOptionalKeyRing(
 		res.KeyRingID = pulumi.String("").ToStringOutput()
 		return nil
 	}
-	ringName := core.BoundedName(meta.CanonicalName+"-kr", 63)
+	ringName := core.BoundedName(info.CanonicalName+"-kr", 63)
 	kr, err := kms.NewKeyRing(ctx, name+"-kr", &kms.KeyRingArgs{
 		Project:  spec.GCPProject,
 		Location: pulumi.String(location),

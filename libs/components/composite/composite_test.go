@@ -48,12 +48,12 @@ func TestPlatformComposite(t *testing.T) {
 				if e != nil {
 					return e
 				}
-				vSpec := sampleVercelProject("")
+				vSpec := sampleVercelProject()
 				vSpec.Platform = plat
 				if _, e := vSpec.Register(ctx); e != nil {
 					return e
 				}
-				gSpec := sampleGCPProject("")
+				gSpec := sampleGCPProject()
 				gSpec.Platform = plat
 				_, e = gSpec.Register(ctx)
 				return e
@@ -78,7 +78,7 @@ func TestVercelComposite(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := sampleVercelProject("").Register(ctx)
+				_, e := sampleVercelProject().Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront-shared", "shared", mocks))
 
@@ -97,7 +97,7 @@ func TestVercelComposite(t *testing.T) {
 
 			// Act.
 			projectOnDevErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := sampleVercelProject("dev").Register(ctx)
+				_, e := sampleVercelProject().Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront-shared", "dev", mocks))
 			appOnSharedErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
@@ -177,7 +177,7 @@ func TestGCPComposite(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := sampleGCPProject("").Register(ctx)
+				_, e := sampleGCPProject().Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront-shared", "shared", mocks))
 
@@ -214,7 +214,7 @@ func TestGCPComposite(t *testing.T) {
 			mocks.assertCount(t, "gcp:cloudrunv2/service:Service", 1)
 		})
 
-		t.Run("when GcpCloudRunNeonProject enables BaseDomain + LoadBalancer and GcpCloudRunNeonApp sets BaseDomain + Domains, then both wire gcp.cloudvoyant.io and extra DomainMappings", func(t *testing.T) {
+		t.Run("when composite.Platform provisions BaseDomain + LoadBalancer and GcpCloudRunNeonProject + GcpCloudRunNeonApp set BaseDomain + Domains, then they wire gcp.cloudvoyant.io and extra DomainMappings", func(t *testing.T) {
 			// Arrange.
 			projectMocks := newCompositeMocks()
 			appMocks := newCompositeMocks()
@@ -222,10 +222,14 @@ func TestGCPComposite(t *testing.T) {
 
 			// Act.
 			projErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				spec := sampleGCPProject("")
+				plat, e := sampleOrgPlatform().Register(ctx)
+				if e != nil {
+					return e
+				}
+				spec := sampleGCPProject()
+				spec.Platform = plat
 				spec.BaseDomain = "gcp.cloudvoyant.io"
-				spec.EnableLoadBalancer = true
-				_, e := spec.Register(ctx)
+				_, e = spec.Register(ctx)
 				return e
 			}, pulumi.WithMocks("storefront-shared", "shared", projectMocks))
 			appErr := pulumi.RunErr(func(ctx *pulumi.Context) error {
@@ -306,10 +310,9 @@ func sampleKindeProjectConfig() *composite.KindeProjectConfig {
 	}
 }
 
-func sampleVercelProject(env string) composite.VercelNeonProject {
+func sampleVercelProject() composite.VercelNeonProject {
 	return composite.VercelNeonProject{
 		Project:           "storefront",
-		Environment:       env,
 		VercelProjectName: "openbase-storefront",
 		TeamID:            "team_123",
 		TeamSlug:          "cloudvoyant",
@@ -331,13 +334,11 @@ func sampleVercelApp(env string) composite.VercelNeonApp {
 	}
 }
 
-func sampleGCPProject(env string) composite.GcpCloudRunNeonProject {
+func sampleGCPProject() composite.GcpCloudRunNeonProject {
 	return composite.GcpCloudRunNeonProject{
 		Project:          "storefront",
-		Environment:      env,
 		GCPProject:       "cloudvoyant-openbase",
 		GCPProjectNumber: "785485436615",
-		SkipKeyRing:      true,
 		Auth:             sampleKindeProjectConfig(),
 	}
 }

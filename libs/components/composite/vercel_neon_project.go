@@ -12,14 +12,13 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*VercelNeonProjectResource)(nil)
+var _ core.ProjectResource = (*VercelNeonProjectResource)(nil)
 
 // VercelNeonProject declares cross-environment Vercel, Neon, and Kinde project assets in Premise's infra/shared program.
 type VercelNeonProject struct {
 	Name                 string
 	Project              string
 	Repo                 string
-	Environment          string
 	Platform             *PlatformResource
 	PlatformStackRef     string
 	VercelProjectName    string
@@ -44,7 +43,7 @@ type VercelNeonProject struct {
 // VercelNeonProjectResource holds the application's Vercel Project, Neon Project, and Kinde OIDC applications exported for environment stacks.
 type VercelNeonProjectResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.ProjectMeta
 
 	Vercel      *vercel.ProjectResource
 	Neon        *neon.ProjectResource
@@ -56,25 +55,23 @@ type VercelNeonProjectResource struct {
 // Register provisions cross-environment Vercel, Neon, and Kinde project assets on Premise's "shared" stack.
 func (v VercelNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*VercelNeonProjectResource, error) {
 	v.Name = defaultCompStr(v.Name, "project")
-	env := defaultCompStr(v.Environment, string(core.EnvShared))
+	if err := core.RequireProjectStack(ctx, "composite-vercel-neon-project"); err != nil {
+		return nil, err
+	}
 	res := &VercelNeonProjectResource{}
-	meta, err := core.InitStateless(ctx, "openbase:composite:VercelNeonProject", "composite-vercel-neon-project", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        v.Name,
-		Project:     v.Project,
-		Repo:        v.Repo,
-		Environment: env,
+	info, err := core.InitProject(ctx, "openbase:composite:VercelNeonProject", "composite-vercel-neon-project", res, &res.ProjectMeta, core.ProjectSpec{
+		Name:    v.Name,
+		Project: v.Project,
+		Repo:    v.Repo,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := requireSharedEnv(meta); err != nil {
-		return nil, err
-	}
-	if err := provisionVercelProjectStack(ctx, meta, v, res); err != nil {
+	if err := provisionVercelProjectStack(ctx, info, v, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
-		"canonicalName": pulumi.String(meta.CanonicalName),
+		"canonicalName": pulumi.String(info.CanonicalName),
 		"prodUrl":       res.ProdURL,
 	})
 }
@@ -83,16 +80,15 @@ func (v VercelNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.Resource
 
 func provisionVercelProjectStack(
 	ctx *pulumi.Context,
-	meta core.ResourceMeta,
+	info core.ProjectInfo,
 	spec VercelNeonProject,
 	res *VercelNeonProjectResource,
 ) error {
-	vProjName := defaultCompStr(spec.VercelProjectName, "openbase-"+meta.Project)
+	vProjName := defaultCompStr(spec.VercelProjectName, "openbase-"+info.Project)
 	vProj, err := vercel.Project{
 		Name:                 "vercel",
-		Project:              meta.Project,
-		Repo:                 meta.Repo,
-		Environment:          string(meta.Environment),
+		Project:              info.Project,
+		Repo:                 info.Repo,
 		Platform:             vercelPlatformFromComposite(spec.Platform),
 		PlatformStackRef:     spec.PlatformStackRef,
 		VercelProjectName:    vProjName,
@@ -114,9 +110,8 @@ func provisionVercelProjectStack(
 	}
 	nProj, err := neon.Project{
 		Name:             "neon",
-		Project:          meta.Project,
-		Repo:             meta.Repo,
-		Environment:      string(meta.Environment),
+		Project:          info.Project,
+		Repo:             info.Repo,
 		Platform:         neonPlatformFromComposite(spec.Platform),
 		PlatformStackRef: spec.PlatformStackRef,
 		OrgID:            spec.NeonOrgID,
@@ -125,7 +120,7 @@ func provisionVercelProjectStack(
 	if err != nil {
 		return err
 	}
-	kProj, err := registerOptionalVercelProjectKinde(ctx, meta, vProjName, spec, res)
+	kProj, err := registerOptionalVercelProjectKinde(ctx, info, vProjName, spec, res)
 	if err != nil {
 		return err
 	}
@@ -158,7 +153,7 @@ func neonPlatformFromComposite(p *PlatformResource) *neon.PlatformResource {
 
 func registerOptionalVercelProjectKinde(
 	ctx *pulumi.Context,
-	meta core.ResourceMeta,
+	info core.ProjectInfo,
 	vProjName string,
 	spec VercelNeonProject,
 	parent pulumi.Resource,
@@ -169,9 +164,8 @@ func registerOptionalVercelProjectKinde(
 	cfg := spec.Auth
 	return kinde.Project{
 		Name:                       "kinde",
-		Project:                    meta.Project,
-		Repo:                       meta.Repo,
-		Environment:                string(meta.Environment),
+		Project:                    info.Project,
+		Repo:                       info.Repo,
 		Platform:                   resolveKindePlatform(spec.Platform, cfg),
 		PlatformStackRef:           spec.PlatformStackRef,
 		AppName:                    defaultCompStr(cfg.AppName, vProjName),

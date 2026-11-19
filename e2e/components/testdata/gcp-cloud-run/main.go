@@ -103,12 +103,12 @@ http.server.ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
+		if core.IsProjectStack(ctx) {
+			return deployProject(ctx)
+		}
 		env, err := core.ResolveEnvironment(ctx, "")
 		if err != nil {
 			return err
-		}
-		if env == core.EnvShared {
-			return deployProject(ctx)
 		}
 		return deployEnvironment(ctx, env)
 	})
@@ -117,13 +117,21 @@ func main() {
 func deployProject(ctx *pulumi.Context) error {
 	gcpProject := os.Getenv("OPENBASE_TEST_GCP_PROJECT")
 	appProject := defaultEnv("OPENBASE_TEST_APP_PROJECT", "obe2ecr")
-	proj, err := gcp.Project{
-		Project:        appProject,
-		Repo:           "cloudvoyant/openbase",
+	plat, err := gcp.Platform{
+		Org:            "cloudvoyant",
 		GCPProject:     pulumi.String(gcpProject),
 		PoolSuffix:     os.Getenv("OPENBASE_TEST_RUN_ID"),
 		GitHubOrg:      "cloudvoyant",
 		VercelTeamSlug: "cloudvoyant",
+	}.Register(ctx)
+	if err != nil {
+		return err
+	}
+	proj, err := gcp.Project{
+		Project:    appProject,
+		Repo:       "cloudvoyant/openbase",
+		Platform:   plat,
+		GCPProject: pulumi.String(gcpProject),
 	}.Register(ctx)
 	if err != nil {
 		return err

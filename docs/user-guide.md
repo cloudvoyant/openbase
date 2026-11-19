@@ -174,12 +174,12 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
+		if core.IsProjectStack(ctx) {
+			return deployProject(ctx)
+		}
 		env, err := core.ResolveEnvironment(ctx, "")
 		if err != nil {
 			return err
-		}
-		if env == core.EnvShared {
-			return deployProject(ctx)
 		}
 		return deployEnvironment(ctx, env)
 	})
@@ -313,8 +313,9 @@ func deployEnvironment(ctx *pulumi.Context, env core.Environment) error {
 ## Further reading
 
 - [Architecture Overview](./architecture/index.md)
-- [Resource Contracts & Escape Hatches](./architecture/resources.md)
-- [GCP Provider](./architecture/providers/gcp.md)
-- [Vercel Provider](./architecture/providers/vercel.md)
-- [Neon Provider](./architecture/providers/neon.md)
-- [Kinde Provider](./architecture/providers/kinde.md)
+- [Core Resources and Tier Contracts](./architecture/resources.md)
+- [GCP Provider](./architecture/providers/gcp/index.md)
+- [Vercel Provider](./architecture/providers/vercel/index.md)
+- [Neon Provider](./architecture/providers/neon/index.md)
+- [Kinde Provider](./architecture/providers/kinde/index.md)
+- [Composite Blueprints](./architecture/providers/composite/index.md)

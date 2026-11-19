@@ -1,4 +1,4 @@
-// Package core defines OpenBase's environment, naming, tagging, link, and lifecycle contracts.
+// Package core defines OpenBase's tier contracts (Platform, Project, Environment), naming, tagging, and Links.
 package core
 
 import (
@@ -13,12 +13,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// Environment identifies a canonical OpenBase deployment tier.
+// Environment identifies a canonical OpenBase deployment tier (dev, stage, prod, or preview-<slug>).
 type Environment string
 
 const (
-	// EnvShared hosts long-lived cross-environment prerequisites.
-	EnvShared Environment = "shared"
 	// EnvDev is the mutable integration environment.
 	EnvDev Environment = "dev"
 	// EnvStage mirrors production topology before promotion.
@@ -31,7 +29,7 @@ const (
 
 var (
 	// ErrInvalidEnvironment reports an unsupported or malformed environment string.
-	ErrInvalidEnvironment = errors.New("core: invalid environment (expected shared, dev, stage, prod, or preview-<slug>)")
+	ErrInvalidEnvironment = errors.New("core: invalid environment (expected dev, stage, prod, or preview-<slug>)")
 	// ErrInvalidBranchSource reports an unsupported or self-referential BranchFrom target.
 	ErrInvalidBranchSource = errors.New("core: invalid branchFrom source (expected dev, stage, or prod distinct from target)")
 	// ErrInvalidIdentifier reports a malformed project or resource identifier.
@@ -43,7 +41,7 @@ var (
 // ParseEnvironment validates and normalizes an OpenBase environment string.
 func ParseEnvironment(raw string) (Environment, error) {
 	switch Environment(raw) {
-	case EnvShared, EnvDev, EnvStage, EnvProd:
+	case EnvDev, EnvStage, EnvProd:
 		return Environment(raw), nil
 	}
 	if !strings.HasPrefix(raw, PreviewPrefix) {
@@ -65,6 +63,27 @@ func ResolveEnvironment(ctx *pulumi.Context, explicit string) (Environment, erro
 		return ParseEnvironment(candidate)
 	}
 	return ParseEnvironment(ctx.Stack())
+}
+
+// IsProjectStack reports whether the active Pulumi stack targets shared project assets ("shared" or "project").
+func IsProjectStack(ctx *pulumi.Context) bool {
+	candidate := readStackEnvironment(ctx)
+	if candidate == "" {
+		candidate = ctx.Stack()
+	}
+	return candidate == "shared" || candidate == "project"
+}
+
+// RequireProjectStack rejects running an infra/shared Project blueprint against an environment stack (dev, stage, prod, preview-*).
+func RequireProjectStack(ctx *pulumi.Context, kind string) error {
+	candidate := readStackEnvironment(ctx)
+	if candidate == "" {
+		candidate = ctx.Stack()
+	}
+	if _, err := ParseEnvironment(candidate); err == nil {
+		return fmt.Errorf("%w: %q is project-scoped; deploy via infra/shared instead of environment stack %q", ErrInvalidEnvironment, kind, candidate)
+	}
+	return nil
 }
 
 // ValidateBranchSource ensures branchFrom names a persistent tier distinct from current.

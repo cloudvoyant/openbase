@@ -78,9 +78,6 @@ func (v VercelNeonApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOpti
 	if err != nil {
 		return nil, err
 	}
-	if err := requireNonSharedEnv(meta, "composite.VercelNeonProject"); err != nil {
-		return nil, err
-	}
 	if err := provisionVercelEnvStack(ctx, meta, v, res); err != nil {
 		return nil, err
 	}

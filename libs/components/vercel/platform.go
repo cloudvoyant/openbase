@@ -12,7 +12,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*PlatformResource)(nil)
+var _ core.PlatformResource = (*PlatformResource)(nil)
 
 // Platform declares organization/team-level Vercel settings provisioned once per organization.
 type Platform struct {
@@ -26,7 +26,7 @@ type Platform struct {
 // PlatformResource holds team-level Vercel configuration exported for downstream vercel.Project stacks.
 type PlatformResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.PlatformMeta
 
 	TeamID     pulumi.StringOutput
 	TeamSlug   pulumi.StringOutput
@@ -42,17 +42,16 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 		TeamSlug:   pulumi.String(p.TeamSlug).ToStringOutput(),
 		BaseDomain: pulumi.String(core.NormalizeDomain(p.BaseDomain)).ToStringOutput(),
 	}
-	meta, err := core.InitStateless(ctx, "openbase:vercel:Platform", "vercel-platform", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     orgScope,
-		Environment: string(core.EnvShared),
+	info, err := core.InitPlatform(ctx, "openbase:vercel:Platform", "vercel-platform", res, &res.PlatformMeta, core.PlatformSpec{
+		Name: p.Name,
+		Org:  orgScope,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
+		Name: info.Name,
+		Kind: info.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"VERCEL_TEAM_ID":     res.TeamID,
 			"VERCEL_TEAM_SLUG":   res.TeamSlug,

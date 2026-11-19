@@ -11,10 +11,6 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		env, err := core.ResolveEnvironment(ctx, "")
-		if err != nil {
-			return err
-		}
 		appProject := os.Getenv("OPENBASE_TEST_APP_PROJECT")
 		if appProject == "" {
 			appProject = "obkinde"
@@ -23,8 +19,12 @@ func main() {
 		if teamSlug == "" {
 			teamSlug = "cloudvoyant"
 		}
-		if env == core.EnvShared {
+		if core.IsProjectStack(ctx) {
 			return deployKindeProject(ctx, appProject, teamSlug)
+		}
+		env, err := core.ResolveEnvironment(ctx, "")
+		if err != nil {
+			return err
 		}
 		return deployEnvKinde(ctx, env, appProject, teamSlug)
 	})

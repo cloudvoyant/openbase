@@ -22,8 +22,6 @@ func main() {
 			GCPProject:       gcpProject,
 			GCPProjectNumber: projectNum,
 			BaseDomain:       os.Getenv("OPENBASE_BASE_DOMAIN"),
-			PoolSuffix:       os.Getenv("OPENBASE_TEST_RUN_ID"),
-			SkipKeyRing:      true,
 			NeonOrgID:        os.Getenv("NEON_ORG_ID"),
 			Auth:             projectKindeConfig("openbase-e2e-" + appProject),
 		}.Register(ctx)

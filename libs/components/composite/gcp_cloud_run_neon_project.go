@@ -14,38 +14,33 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*GcpCloudRunNeonProjectResource)(nil)
+var _ core.ProjectResource = (*GcpCloudRunNeonProjectResource)(nil)
 
 // GcpCloudRunNeonProject declares cross-environment GCP, Neon, and Kinde project assets in Premise's infra/shared program.
 type GcpCloudRunNeonProject struct {
-	Name               string
-	ServiceName        string
-	Project            string
-	Repo               string
-	Environment        string
-	Platform           *PlatformResource
-	PlatformStackRef   string
-	GCPProject         string
-	GCPProjectNumber   string
-	Location           string
-	BaseDomain         string
-	EnableLoadBalancer bool
-	ExtraDevDomains    []string
-	ExtraStageDomains  []string
-	ExtraProdDomains   []string
-	PoolSuffix         string
-	GitHubOrg          string
-	SkipKeyRing        bool
-	NeonOrgID          string
-	NeonRegionID       string
-	Auth               *KindeProjectConfig
-	SkipStackExports   bool
+	Name              string
+	ServiceName       string
+	Project           string
+	Repo              string
+	Platform          *PlatformResource
+	PlatformStackRef  string
+	GCPProject        string
+	GCPProjectNumber  string
+	Location          string
+	BaseDomain        string
+	ExtraDevDomains   []string
+	ExtraStageDomains []string
+	ExtraProdDomains  []string
+	NeonOrgID         string
+	NeonRegionID      string
+	Auth              *KindeProjectConfig
+	SkipStackExports  bool
 }
 
 // GcpCloudRunNeonProjectResource holds the application's GCP Artifact Registry, Neon Project, and Kinde OIDC applications.
 type GcpCloudRunNeonProjectResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.ProjectMeta
 
 	GCP           *gcp.ProjectResource
 	Neon          *neon.ProjectResource
@@ -58,25 +53,23 @@ func (g GcpCloudRunNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.Res
 	g.Name = defaultCompStr(g.Name, "project")
 	g.ServiceName = defaultCompStr(g.ServiceName, "web")
 	g.Location = defaultCompStr(g.Location, defaultGCPLocation)
-	env := defaultCompStr(g.Environment, string(core.EnvShared))
+	if err := core.RequireProjectStack(ctx, "composite-gcp-cloud-run-neon-project"); err != nil {
+		return nil, err
+	}
 	res := &GcpCloudRunNeonProjectResource{}
-	meta, err := core.InitStateless(ctx, "openbase:composite:GcpCloudRunNeonProject", "composite-gcp-cloud-run-neon-project", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        g.Name,
-		Project:     g.Project,
-		Repo:        g.Repo,
-		Environment: env,
+	info, err := core.InitProject(ctx, "openbase:composite:GcpCloudRunNeonProject", "composite-gcp-cloud-run-neon-project", res, &res.ProjectMeta, core.ProjectSpec{
+		Name:    g.Name,
+		Project: g.Project,
+		Repo:    g.Repo,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := requireSharedEnv(meta); err != nil {
-		return nil, err
-	}
-	if err := provisionGCPProjectStack(ctx, meta, g, res); err != nil {
+	if err := provisionGCPProjectStack(ctx, info, g, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
-		"canonicalName": pulumi.String(meta.CanonicalName),
+		"canonicalName": pulumi.String(info.CanonicalName),
 		"repositoryUrl": res.RepositoryURL,
 	})
 }
@@ -85,33 +78,27 @@ func (g GcpCloudRunNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.Res
 
 func provisionGCPProjectStack(
 	ctx *pulumi.Context,
-	meta core.ResourceMeta,
+	info core.ProjectInfo,
 	spec GcpCloudRunNeonProject,
 	res *GcpCloudRunNeonProjectResource,
 ) error {
 	gProj, err := gcp.Project{
-		Name:               "gcp",
-		Project:            meta.Project,
-		Repo:               meta.Repo,
-		Environment:        string(meta.Environment),
-		Platform:           gcpPlatformFromComposite(spec.Platform),
-		PlatformStackRef:   spec.PlatformStackRef,
-		GCPProject:         optionalGCPProjectPtr(spec.GCPProject),
-		Location:           spec.Location,
-		BaseDomain:         spec.BaseDomain,
-		EnableLoadBalancer: spec.EnableLoadBalancer,
-		PoolSuffix:         spec.PoolSuffix,
-		GitHubOrg:          spec.GitHubOrg,
-		SkipKeyRing:        spec.SkipKeyRing,
+		Name:             "gcp",
+		Project:          info.Project,
+		Repo:             info.Repo,
+		Platform:         gcpPlatformFromComposite(spec.Platform),
+		PlatformStackRef: spec.PlatformStackRef,
+		GCPProject:       optionalGCPProjectPtr(spec.GCPProject),
+		Location:         spec.Location,
+		BaseDomain:       spec.BaseDomain,
 	}.Register(ctx, pulumi.Parent(res))
 	if err != nil {
 		return err
 	}
 	nProj, err := neon.Project{
 		Name:             "neon",
-		Project:          meta.Project,
-		Repo:             meta.Repo,
-		Environment:      string(meta.Environment),
+		Project:          info.Project,
+		Repo:             info.Repo,
 		Platform:         neonPlatformFromComposite(spec.Platform),
 		PlatformStackRef: spec.PlatformStackRef,
 		OrgID:            spec.NeonOrgID,
@@ -120,7 +107,7 @@ func provisionGCPProjectStack(
 	if err != nil {
 		return err
 	}
-	kProj, err := registerOptionalGCPProjectKinde(ctx, meta, spec, res)
+	kProj, err := registerOptionalGCPProjectKinde(ctx, info, spec, res)
 	if err != nil {
 		return err
 	}
@@ -142,7 +129,7 @@ func gcpPlatformFromComposite(p *PlatformResource) *gcp.PlatformResource {
 
 func registerOptionalGCPProjectKinde(
 	ctx *pulumi.Context,
-	meta core.ResourceMeta,
+	info core.ProjectInfo,
 	spec GcpCloudRunNeonProject,
 	parent pulumi.Resource,
 ) (*kinde.ProjectResource, error) {
@@ -154,18 +141,17 @@ func registerOptionalGCPProjectKinde(
 	if !strings.HasPrefix(cb, "/") {
 		cb = "/" + cb
 	}
-	stageHost, prodHost, devRedirects, devLogouts, prodExtrasR, prodExtrasL, err := computeGCPKindeURLs(meta.Project, spec, cb)
+	stageHost, prodHost, devRedirects, devLogouts, prodExtrasR, prodExtrasL, err := computeGCPKindeURLs(info.Project, spec, cb)
 	if err != nil {
 		return nil, err
 	}
 	return kinde.Project{
 		Name:                       "kinde",
-		Project:                    meta.Project,
-		Repo:                       meta.Repo,
-		Environment:                string(meta.Environment),
+		Project:                    info.Project,
+		Repo:                       info.Repo,
 		Platform:                   resolveKindePlatform(spec.Platform, cfg),
 		PlatformStackRef:           spec.PlatformStackRef,
-		AppName:                    defaultCompStr(cfg.AppName, "openbase-"+meta.Project),
+		AppName:                    defaultCompStr(cfg.AppName, "openbase-"+info.Project),
 		BaseDomain:                 spec.BaseDomain,
 		StageDomain:                stageHost,
 		ProdDomain:                 prodHost,

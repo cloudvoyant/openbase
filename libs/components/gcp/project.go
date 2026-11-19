@@ -12,35 +12,26 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*ProjectResource)(nil)
+var _ core.ProjectResource = (*ProjectResource)(nil)
 
-// Project declares an application's shared GCP assets (Docker Artifact Registry repository, reusing gcp.Platform WIF/APIs/LB when supplied) in Premise's infra/shared stack.
+// Project declares an application's shared GCP project assets (Docker Artifact Registry repository, optionally linked to gcp.Platform) in Premise's infra/shared stack.
 type Project struct {
-	Name               string
-	Project            string
-	Repo               string
-	Environment        string
-	Platform           *PlatformResource
-	PlatformStackRef   string
-	GCPProject         pulumi.StringPtrInput
-	Location           string
-	PoolSuffix         string
-	GitHubOrg          string
-	VercelTeamSlug     string
-	VercelIssuerMode   string
-	BaseDomain         string
-	EnableLoadBalancer bool
-	Services           []string
-	SkipKeyRing        bool
-	ExtraLabels        map[string]string
+	Name             string
+	Project          string
+	Repo             string
+	Platform         *PlatformResource
+	PlatformStackRef string
+	GCPProject       pulumi.StringPtrInput
+	Location         string
+	BaseDomain       string
+	ExtraLabels      map[string]string
 }
 
-// ProjectResource is the provisioned handle for an application's Artifact Registry repository and inherited or inline GCP Platform roots.
+// ProjectResource is the provisioned handle for an application's Artifact Registry repository and inherited GCP Platform references.
 type ProjectResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.ProjectMeta
 
-	InlinePlatform           *PlatformResource
 	EnabledServices          []*projects.Service
 	Repository               *artifactregistry.Repository
 	WorkloadIdentityPool     *iam.WorkloadIdentityPool
@@ -59,23 +50,21 @@ type ProjectResource struct {
 // Register provisions per-application shared GCP resources in Premise's infra/shared stack.
 func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
 	p.Name = defaultStr(p.Name, "gcp")
-	env := defaultStr(p.Environment, string(core.EnvShared))
 	res := &ProjectResource{}
-	meta, err := core.InitStateless(ctx, "openbase:gcp:Project", "gcp-project", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
-		Environment: env,
+	info, err := core.InitProject(ctx, "openbase:gcp:Project", "gcp-project", res, &res.ProjectMeta, core.ProjectSpec{
+		Name:    p.Name,
+		Project: p.Project,
+		Repo:    p.Repo,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionGCPProject(ctx, p.Name, meta, p, res); err != nil {
+	if err := provisionGCPProject(ctx, p.Name, info, p, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
+		Name: info.Name,
+		Kind: info.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"GCP_ARTIFACT_REGISTRY_URL":  res.RepositoryURL,
 			"GCP_WORKLOAD_IDENTITY_POOL": res.WorkloadIdentityPoolName,
@@ -86,12 +75,12 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 
 // Private helpers ------------------------------------------------------------
 
-func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Project, res *ProjectResource) error {
+func provisionGCPProject(ctx *pulumi.Context, name string, info core.ProjectInfo, spec Project, res *ProjectResource) error {
 	location := defaultStr(spec.Location, "us-central1")
-	if err := attachOrProvisionPlatform(ctx, name, location, meta, spec, res); err != nil {
+	if err := bindPlatformRefsToProject(ctx, name, spec, res); err != nil {
 		return err
 	}
-	repo, err := createArtifactRepository(ctx, name, location, meta, spec, res)
+	repo, err := createArtifactRepository(ctx, name, location, info, spec, res)
 	if err != nil {
 		return err
 	}
@@ -101,10 +90,9 @@ func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMet
 	return nil
 }
 
-func attachOrProvisionPlatform(
+func bindPlatformRefsToProject(
 	ctx *pulumi.Context,
-	name, location string,
-	meta core.ResourceMeta,
+	name string,
 	spec Project,
 	res *ProjectResource,
 ) error {
@@ -115,26 +103,10 @@ func attachOrProvisionPlatform(
 	if spec.PlatformStackRef != "" {
 		return loadPlatformStackRefIntoProject(ctx, name, spec, res)
 	}
-	plat, err := Platform{
-		Name:               name + "-platform",
-		Org:                meta.Project,
-		GCPProject:         spec.GCPProject,
-		Location:           location,
-		PoolSuffix:         spec.PoolSuffix,
-		GitHubOrg:          spec.GitHubOrg,
-		VercelTeamSlug:     spec.VercelTeamSlug,
-		VercelIssuerMode:   spec.VercelIssuerMode,
-		BaseDomain:         spec.BaseDomain,
-		EnableLoadBalancer: spec.EnableLoadBalancer,
-		Services:           spec.Services,
-		SkipKeyRing:        spec.SkipKeyRing,
-		ExtraLabels:        spec.ExtraLabels,
-	}.Register(ctx, pulumi.Parent(res))
-	if err != nil {
-		return err
-	}
-	res.InlinePlatform = plat
-	copyPlatformOutputsToProject(plat, spec.BaseDomain, res)
+	res.WorkloadIdentityPoolName = pulumi.String("").ToStringOutput()
+	res.VercelOIDCProviderName = pulumi.String("").ToStringOutput()
+	res.KeyRingID = pulumi.String("").ToStringOutput()
+	res.BaseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
 	return nil
 }
 
@@ -197,20 +169,20 @@ func preferGCPStackStr(sr *pulumi.StackReference, primaryKey, fallbackKey string
 func createArtifactRepository(
 	ctx *pulumi.Context,
 	name, location string,
-	meta core.ResourceMeta,
+	info core.ProjectInfo,
 	spec Project,
-	parent pulumi.Resource,
+	parent *ProjectResource,
 ) (*artifactregistry.Repository, error) {
 	var deps []pulumi.Resource
-	for _, s := range parent.(*ProjectResource).EnabledServices {
+	for _, s := range parent.EnabledServices {
 		deps = append(deps, s)
 	}
 	return artifactregistry.NewRepository(ctx, name+"-ar", &artifactregistry.RepositoryArgs{
 		Project:      spec.GCPProject,
 		Location:     pulumi.String(location),
-		RepositoryId: pulumi.String(core.BoundedName(meta.CanonicalName, 63)),
+		RepositoryId: pulumi.String(core.BoundedName(info.CanonicalName, 63)),
 		Format:       pulumi.String("DOCKER"),
-		Labels:       core.GCPLabels(meta, spec.ExtraLabels),
+		Labels:       core.GCPProjectLabels(info, spec.ExtraLabels),
 	}, pulumi.Parent(parent), pulumi.DependsOn(deps))
 }
 

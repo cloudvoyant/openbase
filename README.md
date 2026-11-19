@@ -27,7 +27,7 @@ go get github.com/cloudvoyant/openbase/libs/components@latest
 
 | Import Path | Purpose | Declarative Specs |
 | :--- | :--- | :--- |
-| `github.com/cloudvoyant/openbase/libs/components/core` | Environment validation (`shared`, `dev`, `stage`, `prod`, `preview-<slug>`), domain conventions, naming, `openbase.io/*` tags, escape hatches, and typed `Links` | `Stateless`, `Stateful`, `StatelessResource`, `StatefulResource`, `ResolveLinks` |
+| `github.com/cloudvoyant/openbase/libs/components/core` | Tier contracts (`PlatformResource`, `ProjectResource`, `StatelessResource`, `StatefulResource`), environment rules (`dev`, `stage`, `prod`, `preview-<slug>`), domain formulas, naming, `openbase.io/*` tags, escape hatches, and `Links` | `PlatformResource`, `ProjectResource`, `StatelessResource`, `StatefulResource`, `Stateless`, `Stateful`, `ResolveLinks` |
 | `github.com/cloudvoyant/openbase/libs/components/gcp` | Org-wide WIF/APIs/KMS/wildcard HTTPS Load Balancers (`*.gcp.cloudvoyant.io`), per-app Artifact Registry projects, Cloud Run v2 services, and GCS buckets with zero-copy preview overlays | `Platform`, `Project`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs.Store` |
 | `github.com/cloudvoyant/openbase/libs/components/vercel` | Team-level settings, per-app Vercel Projects (`staging` CustomEnvironment, domains, bypass, shared Blob store), WebApp deployments/aliases, and keyless GCP OIDC federation | `Platform`, `Project`, `WebApp`, `BlobStore`, `BlobOverlayClient` |
 | `github.com/cloudvoyant/openbase/libs/components/neon` | Org defaults, per-app Neon Project clusters, and copy-on-write branched serverless PostgreSQL over `kislerdm/neon` | `Platform`, `Project`, `Database` |
@@ -70,8 +70,9 @@ mise run e2e:live
 - [User Guide](./docs/user-guide.md)
 - [Architecture Overview](./docs/architecture/index.md)
 - [Resource Contracts & Links](./docs/architecture/resources.md)
-- [GCP Provider](./docs/architecture/providers/gcp.md)
-- [Vercel Provider](./docs/architecture/providers/vercel.md)
-- [Neon Provider](./docs/architecture/providers/neon.md)
-- [Kinde Provider](./docs/architecture/providers/kinde.md)
+- [GCP Provider](./docs/architecture/providers/gcp/index.md)
+- [Vercel Provider](./docs/architecture/providers/vercel/index.md)
+- [Neon Provider](./docs/architecture/providers/neon/index.md)
+- [Kinde Provider](./docs/architecture/providers/kinde/index.md)
+- [Composite Blueprints](./docs/architecture/providers/composite/index.md)
 - [End-to-End Test Suite](./e2e/README.md)

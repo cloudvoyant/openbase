@@ -11,15 +11,11 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		env, err := core.ResolveEnvironment(ctx, "")
-		if err != nil {
-			return err
-		}
 		appProject := os.Getenv("OPENBASE_TEST_APP_PROJECT")
 		vProjName := "openbase-e2e-" + appProject
 		teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
-		if env == core.EnvShared {
+		if core.IsProjectStack(ctx) {
 			proj, err := vercel.Project{
 				Project:           appProject,
 				VercelProjectName: vProjName,
@@ -35,6 +31,10 @@ func main() {
 			ctx.Export("prodDomainName", proj.ProdDomainName)
 			ctx.Export("stageDomainName", proj.StageDomainName)
 			return nil
+		}
+		env, err := core.ResolveEnvironment(ctx, "")
+		if err != nil {
+			return err
 		}
 		revision := os.Getenv("OPENBASE_TEST_REVISION")
 		if revision == "" {

@@ -13,7 +13,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*PlatformResource)(nil)
+var _ core.PlatformResource = (*PlatformResource)(nil)
 
 // Platform declares organization-level Neon settings and optional org API keys provisioned once per organization.
 type Platform struct {
@@ -30,7 +30,7 @@ type Platform struct {
 // PlatformResource holds organization-level Neon defaults exported for per-repo neon.Project stacks.
 type PlatformResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.PlatformMeta
 
 	OrgAPIKey               *neonprov.OrgApiKey
 	OrgID                   pulumi.StringOutput
@@ -42,23 +42,21 @@ type PlatformResource struct {
 // Register provisions org-level Neon configuration on a central platform stack.
 func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	p.Name = defaultIdentifier(p.Name, "neon-platform")
-	orgScope := core.OrgScope(p.Org, ctx.Organization())
 	res := &PlatformResource{}
-	meta, err := core.InitStateless(ctx, "openbase:neon:Platform", "neon-platform", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     orgScope,
-		Environment: string(core.EnvShared),
+	info, err := core.InitPlatform(ctx, "openbase:neon:Platform", "neon-platform", res, &res.PlatformMeta, core.PlatformSpec{
+		Name: p.Name,
+		Org:  p.Org,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
 	populateNeonPlatformDefaults(p, res)
-	if err := createOptionalNeonOrgKey(ctx, p.Name, meta, p, res); err != nil {
+	if err := createOptionalNeonOrgKey(ctx, p.Name, info, p, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
+		Name: info.Name,
+		Kind: info.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"NEON_ORG_ID":    res.OrgID,
 			"NEON_REGION_ID": res.RegionID,
@@ -89,7 +87,7 @@ func populateNeonPlatformDefaults(spec Platform, res *PlatformResource) {
 func createOptionalNeonOrgKey(
 	ctx *pulumi.Context,
 	name string,
-	meta core.ResourceMeta,
+	info core.PlatformInfo,
 	spec Platform,
 	res *PlatformResource,
 ) error {
@@ -97,7 +95,7 @@ func createOptionalNeonOrgKey(
 	if !spec.CreateOrgAPIKey || orgID == "" {
 		return nil
 	}
-	keyName := defaultIdentifier(spec.OrgAPIKeyName, meta.CanonicalName)
+	keyName := defaultIdentifier(spec.OrgAPIKeyName, info.CanonicalName)
 	k, err := neonprov.NewOrgApiKey(ctx, name+"-org-key", &neonprov.OrgApiKeyArgs{
 		OrgId: pulumi.String(orgID),
 		Name:  pulumi.String(keyName),

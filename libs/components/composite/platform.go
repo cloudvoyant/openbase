@@ -12,7 +12,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*PlatformResource)(nil)
+var _ core.PlatformResource = (*PlatformResource)(nil)
 
 // Platform declares organization-wide GCP, Vercel, Neon, and Kinde foundations provisioned once per organization.
 type Platform struct {
@@ -28,7 +28,7 @@ type Platform struct {
 // PlatformResource holds provisioned organization-level provider foundations exported for per-repo Project stacks.
 type PlatformResource struct {
 	pulumi.ResourceState
-	core.StatelessMeta
+	core.PlatformMeta
 
 	GCP    *gcp.PlatformResource
 	Vercel *vercel.PlatformResource
@@ -41,10 +41,9 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 	p.Name = defaultCompStr(p.Name, "platform")
 	orgScope := core.OrgScope(p.Org, ctx.Organization())
 	res := &PlatformResource{}
-	meta, err := core.InitStateless(ctx, "openbase:composite:Platform", "composite-platform", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     orgScope,
-		Environment: string(core.EnvShared),
+	info, err := core.InitPlatform(ctx, "openbase:composite:Platform", "composite-platform", res, &res.PlatformMeta, core.PlatformSpec{
+		Name: p.Name,
+		Org:  orgScope,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -53,7 +52,7 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
-		"canonicalName": pulumi.String(meta.CanonicalName),
+		"canonicalName": pulumi.String(info.CanonicalName),
 	})
 }
 
