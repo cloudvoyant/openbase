@@ -5,47 +5,47 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	"github.com/cloudvoyant/openbase/libs/components/composite"
+	openbase "github.com/cloudvoyant/openbase/libs/components"
+	"github.com/cloudvoyant/openbase/libs/components/core"
+	"github.com/cloudvoyant/openbase/libs/components/gcp"
 	"github.com/cloudvoyant/openbase/libs/components/kinde"
+	"github.com/cloudvoyant/openbase/libs/components/neon"
 )
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		appProject := envOrDefault("OPENBASE_APP_PROJECT", "OPENBASE_TEST_APP_PROJECT", "obgapp")
-		gcpProject := envOrDefault("OPENBASE_GCP_PROJECT", "OPENBASE_TEST_GCP_PROJECT", "cloudvoyant-openbase")
 		projectNum := envOrDefault("OPENBASE_GCP_PROJECT_NUMBER", "OPENBASE_TEST_GCP_PROJECT_NUMBER", "785485436615")
+		baseDomain := os.Getenv("OPENBASE_BASE_DOMAIN")
+		platformRef := envOrDefault("OPENBASE_PLATFORM_STACK_REF", "", "organization/platform/platform")
 
-		_, err := composite.GcpCloudRunNeonProject{
-			ServiceName:      "web",
+		cb, err := gcp.BuildCloudRunCallbackURLs(appProject, "web", projectNum, "us-central1", baseDomain, "")
+		if err != nil {
+			return err
+		}
+		_, err = openbase.Project{
 			Project:          appProject,
-			PlatformStackRef: os.Getenv("OPENBASE_PLATFORM_STACK_REF"),
-			GCPProject:       gcpProject,
-			GCPProjectNumber: projectNum,
-			BaseDomain:       os.Getenv("OPENBASE_BASE_DOMAIN"),
-			NeonOrgID:        os.Getenv("NEON_ORG_ID"),
-			Auth:             projectKindeConfig("openbase-e2e-" + appProject),
+			PlatformStackRef: platformRef,
+			Resources: []core.ScopedSpec{
+				gcp.Project{BaseDomain: baseDomain},
+				neon.Project{},
+				kinde.Project{
+					AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", "openbase-e2e-"+appProject),
+					BaseDomain:                 baseDomain,
+					StageDomain:                cb.StageHost,
+					ProdDomain:                 cb.ProdHost,
+					ExtraNonProdRedirectURIs:   cb.ExtraNonProdRedirects,
+					ExtraNonProdLogoutURIs:     cb.ExtraNonProdLogouts,
+					ExtraProdRedirectURIs:      cb.ExtraProdRedirect,
+					ExtraProdLogoutURIs:        cb.ExtraProdLogout,
+					ImportNonProdAppID:         envOrDefault("OPENBASE_IMPORT_NONPROD_APP_ID", "OPENBASE_TEST_IMPORT_NONPROD_APP_ID", ""),
+					ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),
+					RetainApplicationsOnDelete: os.Getenv("OPENBASE_RETAIN_KINDE_APPS") == "1" || os.Getenv("OPENBASE_TEST_RETAIN_KINDE_APPS") == "1",
+				},
+			},
 		}.Register(ctx)
 		return err
 	})
-}
-
-func projectKindeConfig(defaultAppName string) *composite.KindeProjectConfig {
-	return &composite.KindeProjectConfig{
-		AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", defaultAppName),
-		ImportDevAppID:             envOrDefault("OPENBASE_IMPORT_DEV_APP_ID", "OPENBASE_TEST_IMPORT_DEV_APP_ID", ""),
-		ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),
-		RetainApplicationsOnDelete: os.Getenv("OPENBASE_RETAIN_KINDE_APPS") == "1" || os.Getenv("OPENBASE_TEST_RETAIN_KINDE_APPS") == "1",
-		Dev: kinde.TenantCredentials{
-			Domain:       os.Getenv("KINDE_DEV_TENANT_DOMAIN"),
-			ClientID:     pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_ID")),
-			ClientSecret: pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_SECRET")),
-		},
-		Prod: kinde.TenantCredentials{
-			Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
-			ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
-			ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
-		},
-	}
 }
 
 func envOrDefault(primaryKey, secondaryKey, fallback string) string {

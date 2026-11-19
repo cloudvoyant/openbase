@@ -7,42 +7,52 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
+	"github.com/cloudvoyant/openbase/libs/components/core"
 	"github.com/cloudvoyant/openbase/libs/components/gcp"
 )
 
 // Public API -----------------------------------------------------------------
 
 func TestPlatformAndProject(t *testing.T) {
-	t.Run("given gcp.Platform and gcp.Project specs", func(t *testing.T) {
-		t.Run("when two gcp.Project apps share one gcp.Platform, then APIs, WIF pool, and KeyRing are created once while each app gets its own Artifact Registry", func(t *testing.T) {
+	t.Run("given separate gcp.Platform (platform stack) and gcp.Project (shared stack) specs", func(t *testing.T) {
+		t.Run("when gcp.Platform runs on the platform stack and two gcp.Project apps run on shared stacks, then APIs, WIF pool, and KeyRing live on platform while each app gets its own Artifact Registry", func(t *testing.T) {
 			// Arrange.
-			mocks := newGCPMocks()
+			platMocks := newGCPMocks()
+			sharedMocks := newGCPMocks()
 
 			// Act.
-			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				plat, err := gcp.Platform{
-					Org:            "cloudvoyant",
-					GCPProject:     pulumi.String("cloudvoyant-openbase"),
-					GitHubOrg:      "cloudvoyant",
-					VercelTeamSlug: "cloudvoyant",
-				}.Register(ctx)
-				if err != nil {
-					return err
-				}
-				appA, err := gcp.Project{
-					Name:       "gcp-a",
-					Project:    "storefront",
+			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := gcp.Platform{
+					Org:        "cloudvoyant",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
-					Platform:   plat,
+					Links: []core.OIDCProviderSource{
+						core.GitHubActionsOIDC("cloudvoyant"),
+						core.OIDCIssuer{
+							ID:                 "vercel",
+							DisplayName:        "Vercel OIDC",
+							IssuerURI:          "https://oidc.vercel.com/cloudvoyant",
+							AllowedAudiences:   []string{"https://vercel.com/cloudvoyant"},
+							AttributeCondition: "assertion.owner == 'cloudvoyant'",
+							Claims:             map[string]string{"project_id": "assertion.project_id"},
+						},
+					},
+				}.Register(ctx)
+				return err
+			}, pulumi.WithMocks("platform", "platform", platMocks))
+
+			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				appA, err := gcp.Project{
+					Name:             "gcp-a",
+					Project:          "storefront",
+					PlatformStackRef: "organization/platform/platform",
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
 				appB, err := gcp.Project{
-					Name:       "gcp-b",
-					Project:    "billing",
-					GCPProject: pulumi.String("cloudvoyant-openbase"),
-					Platform:   plat,
+					Name:             "gcp-b",
+					Project:          "billing",
+					PlatformStackRef: "organization/platform/platform",
 				}.Register(ctx)
 				if err != nil {
 					return err
@@ -50,39 +60,40 @@ func TestPlatformAndProject(t *testing.T) {
 				assertProjectNotNil(t, appA)
 				assertProjectNotNil(t, appB)
 				return nil
-			}, pulumi.WithMocks("cloudvoyant", "shared", mocks))
+			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
 
 			// Assert.
-			requireGCPNoErr(t, err)
-			mocks.assertCount(t, "gcp:projects/service:Service", 8)
-			mocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 2)
-			mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
-			mocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 2)
-			mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 1)
+			requireGCPNoErr(t, errPlat)
+			requireGCPNoErr(t, errShared)
+			platMocks.assertCount(t, "gcp:projects/service:Service", 8)
+			platMocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
+			platMocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 2)
+			platMocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 1)
+			sharedMocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 2)
+			sharedMocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 0)
 		})
 
-		t.Run("when gcp.Platform sets SkipKeyRing/global OIDC and standalone gcp.Project omits Platform, then Project creates only Artifact Registry", func(t *testing.T) {
+		t.Run("when gcp.Platform sets SkipKeyRing and custom Services, then it omits KeyRing and enables only requested APIs", func(t *testing.T) {
 			// Arrange.
 			mocks := newGCPMocks()
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				if _, err := (gcp.Platform{
-					Org:              "cloudvoyant",
-					GCPProject:       pulumi.String("cloudvoyant-openbase"),
-					VercelTeamSlug:   "cloudvoyant",
-					VercelIssuerMode: "global",
-					SkipKeyRing:      true,
-					Services:         []string{"run.googleapis.com", "storage.googleapis.com"},
-				}).Register(ctx); err != nil {
-					return err
-				}
-				_, err := gcp.Project{
-					Project:    "storefront",
+				_, err := gcp.Platform{
+					Org:        "cloudvoyant",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
+					Links: []core.OIDCProviderSource{
+						core.OIDCIssuer{
+							ID:               "custom",
+							IssuerURI:        "https://oidc.example.com",
+							AllowedAudiences: []string{"https://example.com"},
+						},
+					},
+					SkipKeyRing: true,
+					Services:    []string{"run.googleapis.com", "storage.googleapis.com"},
 				}.Register(ctx)
 				return err
-			}, pulumi.WithMocks("storefront", "shared", mocks))
+			}, pulumi.WithMocks("platform", "platform", mocks))
 
 			// Assert.
 			requireGCPNoErr(t, err)
@@ -90,7 +101,6 @@ func TestPlatformAndProject(t *testing.T) {
 			mocks.assertCount(t, "gcp:kms/keyRing:KeyRing", 0)
 			mocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 1)
 			mocks.assertCount(t, "gcp:iam/workloadIdentityPoolProvider:WorkloadIdentityPoolProvider", 1)
-			mocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 1)
 		})
 	})
 }
@@ -139,6 +149,11 @@ func populateGCPMockOutputs(a pulumi.MockResourceArgs, outs resource.PropertyMap
 	case "gcp:iam/workloadIdentityPool:WorkloadIdentityPool":
 		poolID := outs["workloadIdentityPoolId"].StringValue()
 		outs["name"] = resource.NewStringProperty("projects/123456/locations/global/workloadIdentityPools/" + poolID)
+	case "pulumi:pulumi:StackReference":
+		outs["outputs"] = resource.NewObjectProperty(resource.PropertyMap{
+			"gcpProject":    resource.NewStringProperty("cloudvoyant-openbase"),
+			"gcpBaseDomain": resource.NewStringProperty("gcp.cloudvoyant.io"),
+		})
 	}
 }
 
@@ -170,8 +185,8 @@ func (m *gcpMocks) findFirst(typeToken string) (gcpMockRecord, bool) {
 
 func assertProjectNotNil(t *testing.T, s *gcp.ProjectResource) {
 	t.Helper()
-	if s.Repository == nil || s.WorkloadIdentityPool == nil || s.GitHubOIDCProvider == nil || s.VercelOIDCProvider == nil || s.KeyRing == nil {
-		t.Fatal("expected Repository, WorkloadIdentityPool, GitHubOIDCProvider, VercelOIDCProvider, and KeyRing to be non-nil")
+	if s.Repository == nil {
+		t.Fatal("expected Artifact Registry Repository to be non-nil on gcp.ProjectResource")
 	}
 }
 

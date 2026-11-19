@@ -29,7 +29,7 @@ func TestVercelNeonKindeApp(t *testing.T) {
 	runID := fmt.Sprintf("%d", time.Now().Unix()%100000)
 	appProject := "obva" + runID
 	vProjName := "openbase-e2e-" + appProject
-	devAppID, devAppName := prepareKindeSandboxApp(t, "dev", vProjName, appProject, teamSlug)
+	nonProdAppID, nonProdAppName := prepareKindeSandboxApp(t, "non-prod", vProjName, appProject, teamSlug)
 	prodAppID, _ := prepareKindeSandboxApp(t, "prod", vProjName, appProject, teamSlug)
 
 	h := NewLiveHarness(
@@ -42,28 +42,24 @@ func TestVercelNeonKindeApp(t *testing.T) {
 		"OPENBASE_TEST_VERCEL_TEAM_ID="+teamID,
 		"OPENBASE_TEST_VERCEL_TEAM_SLUG="+teamSlug,
 		"NEON_ORG_ID="+neonOrgID,
-		"OPENBASE_TEST_KINDE_APP_NAME="+devAppName,
-		"OPENBASE_TEST_IMPORT_DEV_APP_ID="+devAppID,
+		"OPENBASE_TEST_KINDE_APP_NAME="+nonProdAppName,
+		"OPENBASE_TEST_IMPORT_NONPROD_APP_ID="+nonProdAppID,
 		"OPENBASE_TEST_IMPORT_PROD_APP_ID="+prodAppID,
 		"OPENBASE_TEST_RETAIN_KINDE_APPS=1",
 	)
 
-	var vercelProjectID, blobStoreID, blobBaseURL, blobRWToken, neonProjectID string
-	t.Cleanup(func() {
-		if !h.Keep {
-			purgeAllStoreBlobs(blobBaseURL, blobRWToken)
-		}
-	})
+	var vercelProjectID, blobStoreID, neonProjectID string
 	h.OnCleanupVerify(func(t *testing.T) {
 		assertVercelNeonKindeCleanup(t, teamID, vercelProjectID, blobStoreID, neonProjectID)
 	})
 
-	t.Run("given a Premise-structured composite.VercelNeonProject (infra/shared) and composite.VercelNeonApp (infra) workspace", func(t *testing.T) {
-		for _, stack := range []string{"shared", "dev", "prod", "stage", "preview-pr-11"} {
+	t.Run("given separate openbase.Platform (platform), openbase.Project (infra/shared), and openbase.Environment (infra) Vercel programs", func(t *testing.T) {
+		for _, stack := range []string{"platform", "shared", "dev", "prod", "stage", "preview-pr-11"} {
 			h.InitStack(t, stack)
 		}
+		h.Pulumi(t, nil, "up", "--stack", "platform", "--yes", "--non-interactive", "--skip-preview")
 
-		t.Run("when previewing shared, then it plans Vercel, Neon, and Kinde shared resources without mutating cloud state", func(t *testing.T) {
+		t.Run("when previewing shared, then it plans Vercel, Neon, and Kinde shared resources against platform without mutating project state", func(t *testing.T) {
 			// Arrange / Act.
 			planOut := h.Pulumi(t, nil, "preview", "--stack", "shared")
 			h.WriteArtifact(t, "shared-preview-plan.txt", planOut)
@@ -74,36 +70,40 @@ func TestVercelNeonKindeApp(t *testing.T) {
 			assertContains(t, planOut, "kinde:index:Application")
 		})
 
-		t.Run("given provisioned shared, dev, prod, stage<-prod, and preview-pr-11<-dev stacks", func(t *testing.T) {
+		t.Run("given provisioned platform, shared, dev, prod, stage<-prod, and preview-pr-11<-dev stacks", func(t *testing.T) {
 			s := deployAllVercelAppStacks(t, h, teamID, vProjName)
 			vercelProjectID = s.vercelProjectID
 			blobStoreID = s.blobStoreID
-			blobBaseURL = s.blobBaseURL
-			blobRWToken = s.blobRWToken
 			neonProjectID = s.neonProjectID
 
-			t.Run("when probing prod and stage, then prod serves production and stage inherits prod Neon state with prod Kinde auth", func(t *testing.T) {
+			t.Run("when probing prod and stage, then stage propagates CustomEnvironment Blob vars and inherits prod Neon state with Prod Kinde auth", func(t *testing.T) {
 				// Arrange / Act.
+				hasStageTok, hasStageBase := inspectStageBlobEnvVars(t, teamID, s.vercelProjectID, s.stageEnvID)
 				prodHealth := waitForAppHealth(t, s.prodURL, s.bypassSecret)
 				stageHealth := waitForAppHealth(t, s.stageURL, s.bypassSecret)
 				stageHTML := fetchAppText(t, s.stageURL+"/", s.bypassSecret)
 				h.WriteJSONArtifact(t, "prod-stage-health.json", map[string]any{"prod": prodHealth, "stage": stageHealth})
 
 				// Assert.
+				if !hasStageTok || !hasStageBase {
+					t.Fatalf("expected stage CustomEnvironment BLOB_READ_WRITE_TOKEN=%v BLOB_BASE_URL=%v", hasStageTok, hasStageBase)
+				}
 				assertProdAndStageAppHealth(t, prodHealth, stageHealth, stageHTML, "vercel", s.prodIssuer, sha256Hex(s.prodClientSec), "seeded-in-vercel-prod")
 			})
 
-			t.Run("when probing / and /api/health on preview-pr-11, then it serves the HTML dashboard and verifies Neon, Blob, and dev Kinde wiring", func(t *testing.T) {
+			t.Run("when probing preview-pr-11 without and with x-vercel-protection-bypass, then unauthenticated requests are blocked while bypass serves the app", func(t *testing.T) {
 				// Arrange / Act.
+				unauthStatus, unauthLoc := probeUnauthenticatedPreview(t, s.previewURL+"/api/health")
 				health := waitForAppHealth(t, s.previewURL, s.bypassSecret)
 				dashboardHTML := fetchAppText(t, s.previewURL+"/", s.bypassSecret)
 				h.WriteJSONArtifact(t, "preview-health.json", health)
 
 				// Assert.
+				assertPreviewStatusBlocked(t, s.previewURL+"/api/health", unauthStatus, unauthLoc)
 				assertPreviewVercelAppHealth(t, health, dashboardHTML, s.devIssuer, sha256Hex(s.devClientSec))
 			})
 
-			t.Run("when mutating notes and blobs on preview-pr-11, then it inherits dev state and isolates preview writes from dev", func(t *testing.T) {
+			t.Run("when mutating notes and blobs on preview-pr-11 and BlobOverlayClient, then it inherits dev state and isolates preview writes", func(t *testing.T) {
 				// Arrange / Act.
 				seedRead := getAppStorage(t, s.previewURL, s.bypassSecret, "seed.txt")
 				postAppNote(t, s.previewURL, s.bypassSecret, "only-in-vercel-preview")
@@ -111,19 +111,27 @@ func TestVercelNeonKindeApp(t *testing.T) {
 				previewAfter := waitForAppHealth(t, s.previewURL, s.bypassSecret)
 				devAfter := waitForAppHealth(t, s.devURL, s.bypassSecret)
 				devDeltaStatus := getAppStorageStatus(t, s.devURL, s.bypassSecret, "delta.txt")
+				clientSrc, clientSeed, clientIsolated := exerciseBlobOverlayClient(t, s.blobBaseURL, s.blobRWToken, "dev/", "preview-pr-11/", "dev/")
 				h.WriteJSONArtifact(t, "isolation-report.json", map[string]any{
 					"fallbackRead":   seedRead,
 					"previewNotes":   previewAfter.DB.NoteCount,
 					"devNotes":       devAfter.DB.NoteCount,
 					"devDeltaStatus": devDeltaStatus,
+					"clientIsolated": clientIsolated,
 				})
 
 				// Assert.
 				assertAppStorageAndDBIsolation(t, seedRead.SourcePrefix, "dev/", seedRead.Content, "vercel-blob-from-dev", previewAfter.DB.NoteCount, devAfter.DB.NoteCount, devDeltaStatus)
+				assertEqualStr(t, "BlobOverlayClient fallback prefix", clientSrc, "dev/")
+				assertEqualStr(t, "BlobOverlayClient seed bytes", clientSeed, "vercel-blob-from-dev")
+				if !clientIsolated {
+					t.Fatal("expected BlobOverlayClient preview write to stay absent from dev/")
+				}
 			})
 
-			t.Run("when logging in and out via Kinde OIDC in headless Chrome, then preview and default <project>.vercel.app complete end-to-end authentication", func(t *testing.T) {
+			t.Run("when calling /oauth2/auth with unregistered redirects vs logging in via headless Chrome, then invalid redirects fail while preview and <project>.vercel.app authenticate", func(t *testing.T) {
 				// Arrange / Act.
+				rejCode, rejLoc, rejBody := callKindeAuthorize(t, s.devIssuer, s.devClientID, "https://unregistered.example.com/callback")
 				defLoginStatus, defAuthLoc := callAppNoRedirect(t, s.defaultProjectURL+"/api/auth/login", s.bypassSecret)
 				defKindeStatus, defKindeLoc := followAuthorizeRedirect(t, defAuthLoc)
 				browserReport := verifyKindeBrowserLogin(t, h, s.previewURL, s.bypassSecret)
@@ -134,6 +142,7 @@ func TestVercelNeonKindeApp(t *testing.T) {
 				})
 
 				// Assert.
+				assertRedirectRejected(t, "https://unregistered.example.com/callback", rejCode, rejLoc, rejBody)
 				assertAppLoginAndBrowserFlow(t, s.defaultProjectURL, s.prodIssuer, defLoginStatus, defAuthLoc, defKindeStatus, defKindeLoc, browserReport)
 			})
 
@@ -158,12 +167,14 @@ func TestVercelNeonKindeApp(t *testing.T) {
 
 type vercelDeployedAppState struct {
 	vercelProjectID   string
+	stageEnvID        string
 	blobStoreID       string
 	blobBaseURL       string
 	blobRWToken       string
 	bypassSecret      string
 	neonProjectID     string
 	devIssuer         string
+	devClientID       string
 	devClientSec      string
 	prodIssuer        string
 	prodClientSec     string
@@ -221,12 +232,14 @@ func deployAllVercelAppStacks(t *testing.T, h *LiveStackHarness, teamID, vProjNa
 	h.Pulumi(t, nil, "up", "--stack", "shared", "--yes", "--non-interactive", "--skip-preview")
 	s := vercelDeployedAppState{
 		vercelProjectID:   h.Output(t, "shared", "vercelProjectId"),
+		stageEnvID:        h.Output(t, "shared", "stageCustomEnvironmentId"),
 		blobStoreID:       h.Output(t, "shared", "blobStoreId"),
 		blobBaseURL:       h.Output(t, "shared", "blobBaseUrl"),
 		bypassSecret:      h.Output(t, "shared", "protectionBypassSecret"),
 		neonProjectID:     h.Output(t, "shared", "neonProjectId"),
-		devIssuer:         h.Output(t, "shared", "devIssuerUrl"),
-		devClientSec:      h.Output(t, "shared", "devClientSecret"),
+		devIssuer:         h.Output(t, "shared", "nonProdIssuerUrl"),
+		devClientID:       h.Output(t, "shared", "nonProdClientId"),
+		devClientSec:      h.Output(t, "shared", "nonProdClientSecret"),
 		prodIssuer:        h.Output(t, "shared", "prodIssuerUrl"),
 		prodClientSec:     h.Output(t, "shared", "prodClientSecret"),
 		defaultProjectURL: "https://" + vProjName + ".vercel.app",
@@ -234,6 +247,12 @@ func deployAllVercelAppStacks(t *testing.T, h *LiveStackHarness, teamID, vProjNa
 	s.blobRWToken = fetchProjectBlobRWToken(t, teamID, s.vercelProjectID)
 	h.RegisterSecret(s.blobRWToken)
 	h.RecordVercelBlobStore(s.vercelProjectID, teamID, s.blobBaseURL)
+	baseURL, rwTok := s.blobBaseURL, s.blobRWToken
+	t.Cleanup(func() {
+		if !h.Keep {
+			purgeAllStoreBlobs(baseURL, rwTok)
+		}
+	})
 
 	stackEnv := []string{"OPENBASE_TEST_BLOB_RW_TOKEN=" + s.blobRWToken}
 	h.Pulumi(t, stackEnv, "up", "--stack", "dev", "--yes", "--non-interactive", "--skip-preview")
@@ -341,7 +360,7 @@ func assertVercelNeonKindeCleanup(t *testing.T, teamID, vercelProjectID, blobSto
 	if neonProjectID != "" {
 		assertNeonStatus(t, "https://console.neon.tech/api/v2/projects/"+neonProjectID, http.StatusNotFound)
 	}
-	if countOpenBaseKindeApps(t, "dev") > 1 || countOpenBaseKindeApps(t, "prod") > 1 {
+	if countOpenBaseKindeApps(t, "non-prod") > 1 || countOpenBaseKindeApps(t, "prod") > 1 {
 		t.Fatal("expected at most 1 retained openbase-e2e Kinde sandbox app per tenant")
 	}
 }
@@ -356,7 +375,7 @@ func purgeAllStoreBlobs(baseURL, rwToken string) {
 	if err != nil {
 		return
 	}
-	_ = c.Delete(ctx, "dev/seed.txt", "prod/seed.txt", "stage/seed.txt", "preview-pr-11/delta.txt")
+	_ = c.Delete(ctx, "dev/seed.txt", "prod/seed.txt", "stage/seed.txt", "preview-pr-11/delta.txt", "preview-pr-11/client-delta.txt")
 }
 
 func waitForAppHealth(t *testing.T, baseURL, bypassSecret string) fullStackHealthResponse {

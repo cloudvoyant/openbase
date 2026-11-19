@@ -140,32 +140,36 @@ func TestNamingAndBranchValidation(t *testing.T) {
 
 func TestLinksAndTags(t *testing.T) {
 	t.Run("given linked core.Stateful and core.Stateless specs", func(t *testing.T) {
-		t.Run("when registering a preview consumer linked to a stateful resource, then tags, GCP labels, env outputs, and GrantAccess resolve", func(t *testing.T) {
+		t.Run("when registering a preview consumer linked to multiple stateful resources, then tags, GCP labels, attributes, and GrantAccess resolve without collisions", func(t *testing.T) {
 			// Arrange.
 			var stateMeta, appMeta core.ResourceMeta
 			var gcpLabels pulumi.StringMap
-			grantedCh := make(chan string, 1)
-			envValCh := make(chan string, 1)
+			grantedCh := make(chan string, 2)
+			attrCh := make(chan string, 1)
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				db, err := newLinkedTestStateful(ctx, grantedCh)
+				dbA, err := newLinkedTestStateful(ctx, "db-primary", grantedCh)
 				if err != nil {
 					return err
 				}
-				stateMeta = db.OpenBaseMeta()
+				dbB, err := newLinkedTestStateful(ctx, "db-analytics", grantedCh)
+				if err != nil {
+					return err
+				}
+				stateMeta = dbA.OpenBaseMeta()
 				gcpLabels = core.GCPLabels(stateMeta, map[string]string{"openbase.io/custom": "v1"})
 				api, err := core.Stateless{
 					Name:        "api",
 					Project:     "orders",
 					Environment: "preview-pr-7",
-					Links:       []core.Resource{db},
+					Links:       []core.Resource{dbA, dbB},
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
 				appMeta = api.OpenBaseMeta()
-				api.Link().Env["DB_HOST"].ApplyT(func(v string) string { envValCh <- v; return v })
+				dbA.Link().Attributes["host"].ApplyT(func(v string) string { attrCh <- v; return v })
 				return nil
 			}, pulumi.WithMocks("orders", "preview-pr-7", &noopMocks{}))
 
@@ -175,38 +179,9 @@ func TestLinksAndTags(t *testing.T) {
 			assertEqual(t, "stateful tag", stateMeta.Tags[core.TagStateful], "true")
 			assertEqual(t, "stateless tag", appMeta.Tags[core.TagStateful], "false")
 			assertBool(t, "gcp label present", gcpLabels["openbase-preview-id"] != nil, true)
-			assertEqual(t, "GrantAccess consumer", <-grantedCh, "orders-preview-pr-7-api")
-			assertEqual(t, "DB_HOST link env", <-envValCh, "db.internal")
-		})
-
-		t.Run("when two linked resources export the same env key, then ResolveLinks returns ErrDuplicateLinkEnvKey", func(t *testing.T) {
-			// Arrange / Act.
-			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				a, err := core.Stateless{
-					Name: "a", Project: "orders", Environment: "dev",
-					Env: map[string]pulumi.StringInput{"SHARED_KEY": pulumi.String("1")},
-				}.Register(ctx)
-				if err != nil {
-					return err
-				}
-				b, err := core.Stateless{
-					Name: "b", Project: "orders", Environment: "dev",
-					Env: map[string]pulumi.StringInput{"SHARED_KEY": pulumi.String("2")},
-				}.Register(ctx)
-				if err != nil {
-					return err
-				}
-				_, err = core.Stateless{
-					Name: "c", Project: "orders", Environment: "dev",
-					Links: []core.Resource{a, b},
-				}.Register(ctx)
-				return err
-			}, pulumi.WithMocks("orders", "dev", &noopMocks{}))
-
-			// Assert.
-			if !errors.Is(err, core.ErrDuplicateLinkEnvKey) {
-				t.Fatalf("expected ErrDuplicateLinkEnvKey, got %v", err)
-			}
+			assertEqual(t, "first GrantAccess consumer", <-grantedCh, "orders-preview-pr-7-api")
+			assertEqual(t, "second GrantAccess consumer", <-grantedCh, "orders-preview-pr-7-api")
+			assertEqual(t, "attribute host", <-attrCh, "db.internal")
 		})
 	})
 }
@@ -253,27 +228,20 @@ func (*noopMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Prope
 
 func (*noopMocks) Call(a pulumi.MockCallArgs) (resource.PropertyMap, error) { return a.Args, nil }
 
-func newLinkedTestStateful(ctx *pulumi.Context, grantedCh chan<- string) (*core.CustomStatefulResource, error) {
-	db, err := core.Stateful{
-		Name:        "db",
+func newLinkedTestStateful(ctx *pulumi.Context, name string, grantedCh chan<- string) (*core.CustomStatefulResource, error) {
+	return core.Stateful{
+		Name:        name,
 		Project:     "orders",
 		Repo:        "cloudvoyant/orders",
 		Environment: "preview-pr-7",
 		Kind:        "postgres",
 		BranchFrom:  "dev",
-		Env:         map[string]pulumi.StringInput{"DB_HOST": pulumi.String("db.internal")},
-		Secrets:     map[string]pulumi.StringInput{"DATABASE_URL": pulumi.String("postgres://u:p@db.internal/app")},
+		Attributes:  map[string]pulumi.StringInput{"host": pulumi.String("db.internal")},
+		GrantAccess: func(g core.LinkGrantContext) error {
+			grantedCh <- g.ConsumerName
+			return nil
+		},
 	}.Register(ctx)
-	if err != nil {
-		return nil, err
-	}
-	desc := db.Link()
-	desc.GrantAccess = func(g core.LinkGrantContext) error {
-		grantedCh <- g.ConsumerName
-		return nil
-	}
-	db.SetLink(desc)
-	return db, nil
 }
 
 func requireNoErr(t *testing.T, err error) {

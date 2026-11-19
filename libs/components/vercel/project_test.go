@@ -13,42 +13,45 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestVercelProjectAndPlatform(t *testing.T) {
-	t.Run("given vercel.Platform and vercel.Project specs", func(t *testing.T) {
-		t.Run("when Platform + Project are registered with EnableBlobStore, then Project inherits team/baseDomain and creates Project, CustomEnvironment, ProjectDomains, Bypass, and BlobStore", func(t *testing.T) {
+	t.Run("given separate vercel.Platform (platform stack) and vercel.Project (shared stack) specs", func(t *testing.T) {
+		t.Run("when Platform runs on platform and Project runs on shared with EnableBlobStore, then Project inherits team/baseDomain via PlatformStackRef and creates Project, CustomEnvironment, ProjectDomains, Bypass, and BlobStore", func(t *testing.T) {
 			// Arrange.
-			mocks := newVercelMocks()
+			platMocks := newVercelMocks()
+			sharedMocks := newVercelMocks()
 			baseURLCh := make(chan string, 1)
 
 			// Act.
-			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				plat, err := vercel.Platform{
+			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := vercel.Platform{
 					TeamID:     "team_123",
 					TeamSlug:   "cloudvoyant",
 					BaseDomain: "vercel.cloudvoyant.io",
 				}.Register(ctx)
-				if err != nil {
-					return err
-				}
+				return err
+			}, pulumi.WithMocks("platform", "platform", platMocks))
+
+			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				proj, err := vercel.Project{
-					Project:         "storefront",
-					Platform:        plat,
-					EnableBlobStore: true,
+					Project:          "storefront",
+					PlatformStackRef: "organization/platform/platform",
+					EnableBlobStore:  true,
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
 				proj.BlobBaseURL.ApplyT(func(v string) string { baseURLCh <- v; return v })
 				return nil
-			}, pulumi.WithMocks("storefront", "shared", mocks))
+			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
 
 			// Assert.
-			requireVercelNoErr(t, err)
-			mocks.assertCount(t, "vercel:index/project:Project", 1)
-			mocks.assertCount(t, "vercel:index/customEnvironment:CustomEnvironment", 1)
-			mocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
-			mocks.assertCount(t, "vercel:index/projectProtectionBypass:ProjectProtectionBypass", 1)
-			mocks.assertCount(t, "vercel:index/blobStore:BlobStore", 1)
-			mocks.assertCount(t, "vercel:index/blobProjectConnection:BlobProjectConnection", 1)
+			requireVercelNoErr(t, errPlat)
+			requireVercelNoErr(t, errShared)
+			sharedMocks.assertCount(t, "vercel:index/project:Project", 1)
+			sharedMocks.assertCount(t, "vercel:index/customEnvironment:CustomEnvironment", 1)
+			sharedMocks.assertCount(t, "vercel:index/projectDomain:ProjectDomain", 2)
+			sharedMocks.assertCount(t, "vercel:index/projectProtectionBypass:ProjectProtectionBypass", 1)
+			sharedMocks.assertCount(t, "vercel:index/blobStore:BlobStore", 1)
+			sharedMocks.assertCount(t, "vercel:index/blobProjectConnection:BlobProjectConnection", 1)
 			assertVercelEq(t, "derived BLOB_BASE_URL", <-baseURLCh, "https://abcxyz.public.blob.vercel-storage.com")
 		})
 
@@ -137,6 +140,8 @@ func (m *vercelMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.P
 		outs["name"] = resource.NewStringProperty("projects/proj/serviceAccounts/" + acc)
 	case "pulumi:pulumi:StackReference":
 		outs["outputs"] = resource.NewObjectProperty(resource.PropertyMap{
+			"teamId":                   resource.NewStringProperty("team_123"),
+			"vercelBaseDomain":         resource.NewStringProperty("vercel.cloudvoyant.io"),
 			"projectId":                resource.NewStringProperty("prj_from_ref"),
 			"vercelProjectName":        resource.NewStringProperty("openbase-storefront"),
 			"teamSlug":                 resource.NewStringProperty("cloudvoyant"),

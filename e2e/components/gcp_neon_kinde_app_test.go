@@ -1,8 +1,11 @@
 package e2e_test
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,13 +20,13 @@ func TestGCPNeonKindeApp(t *testing.T) {
 	_ = RequireLiveKinde(t)
 	_, _ = RequireLiveKindeUser(t)
 
-	projectNumber := strings.TrimSpace(runCommand(t, repositoryRoot(t), "gcloud", "projects", "describe", gcpProject, "--format=value(projectNumber)"))
+	projectNumber := ResolveGCPProjectNumber(t, gcpProject)
 	neonOrgID := detectNeonOrgID(t)
 	runID := fmt.Sprintf("%d", time.Now().Unix()%100000)
 	appProject := "obga" + runID
-	devR, devL := expectedGCPKindeURLs("dev", appProject, projectNumber)
+	nonProdR, nonProdL := expectedGCPKindeURLs("non-prod", appProject, projectNumber)
 	prodR, prodL := expectedGCPKindeURLs("prod", appProject, projectNumber)
-	devAppID, devAppName := prepareKindeSandboxByPrefix(t, "dev", "openbase-e2e-gcp-", "openbase-e2e-gcp-"+appProject, devR, devL)
+	nonProdAppID, nonProdAppName := prepareKindeSandboxByPrefix(t, "non-prod", "openbase-e2e-gcp-", "openbase-e2e-gcp-"+appProject, nonProdR, nonProdL)
 	prodAppID, _ := prepareKindeSandboxByPrefix(t, "prod", "openbase-e2e-gcp-", "openbase-e2e-gcp-"+appProject, prodR, prodL)
 
 	h := NewLiveHarness(
@@ -37,8 +40,8 @@ func TestGCPNeonKindeApp(t *testing.T) {
 		"OPENBASE_TEST_APP_PROJECT="+appProject,
 		"OPENBASE_TEST_RUN_ID="+runID,
 		"NEON_ORG_ID="+neonOrgID,
-		"OPENBASE_TEST_KINDE_APP_NAME="+devAppName,
-		"OPENBASE_TEST_IMPORT_DEV_APP_ID="+devAppID,
+		"OPENBASE_TEST_KINDE_APP_NAME="+nonProdAppName,
+		"OPENBASE_TEST_IMPORT_NONPROD_APP_ID="+nonProdAppID,
 		"OPENBASE_TEST_IMPORT_PROD_APP_ID="+prodAppID,
 		"OPENBASE_TEST_RETAIN_KINDE_APPS=1",
 	)
@@ -54,12 +57,13 @@ func TestGCPNeonKindeApp(t *testing.T) {
 		)
 	})
 
-	t.Run("given a Premise-structured composite.GcpCloudRunNeonProject (infra/shared) and composite.GcpCloudRunNeonApp (infra) workspace", func(t *testing.T) {
-		for _, stack := range []string{"shared", "dev", "prod", "stage", "preview-pr-12"} {
+	t.Run("given separate openbase.Platform (platform), openbase.Project (infra/shared), and openbase.Environment (infra) GCP programs", func(t *testing.T) {
+		for _, stack := range []string{"platform", "shared", "dev", "prod", "stage", "preview-pr-12"} {
 			h.InitStack(t, stack)
 		}
+		h.Pulumi(t, nil, "up", "--stack", "platform", "--yes", "--non-interactive", "--skip-preview")
 
-		t.Run("when previewing shared, then it plans GCP, Neon, and Kinde shared resources without mutating cloud state", func(t *testing.T) {
+		t.Run("when previewing shared, then it plans GCP, Neon, and Kinde shared resources against platform without mutating project state", func(t *testing.T) {
 			// Arrange / Act.
 			planOut := h.Pulumi(t, nil, "preview", "--stack", "shared")
 			h.WriteArtifact(t, "shared-preview-plan.txt", planOut)
@@ -70,31 +74,41 @@ func TestGCPNeonKindeApp(t *testing.T) {
 			assertContains(t, planOut, "kinde:index:Application")
 		})
 
-		t.Run("given provisioned shared, dev, prod, stage<-prod, and preview-pr-12<-dev stacks", func(t *testing.T) {
+		t.Run("given provisioned platform, shared, dev, prod, stage<-prod, and preview-pr-12<-dev stacks", func(t *testing.T) {
 			state = deployAllGCPAppStacks(t, h)
 
-			t.Run("when probing prod and stage on Cloud Run, then prod serves production and stage inherits prod Neon state with prod Kinde auth", func(t *testing.T) {
+			t.Run("when probing prod and stage over HTTP and pgx, then stage inherits prod Neon state with Prod Kinde auth", func(t *testing.T) {
 				// Arrange / Act.
 				prodHealth := waitForAppHealth(t, state.prodURL, "")
 				stageHealth := waitForAppHealth(t, state.stageURL, "")
 				stageHTML := fetchAppText(t, state.stageURL+"/", "")
+				pgxNote := querySingleText(t, state.stageDBURL, "SELECT body FROM app_notes LIMIT 1")
 				h.WriteJSONArtifact(t, "prod-stage-health.json", map[string]any{"prod": prodHealth, "stage": stageHealth})
 
 				// Assert.
 				assertProdAndStageAppHealth(t, prodHealth, stageHealth, stageHTML, "gcp-cloud-run", state.prodIssuer, sha256Hex(state.prodClientSec), "seeded-in-gcp-prod")
+				assertEqualStr(t, "stage<-prod pgx row", pgxNote, "seeded-in-gcp-prod")
 			})
 
-			t.Run("when probing / and /api/health on preview-pr-12, then it serves the HTML dashboard and verifies Neon, GCS, and Secret Manager Kinde wiring", func(t *testing.T) {
+			t.Run("when destroying protected prod or stage, updating dev in place, or failing an apply, then protected resources and state stay intact", func(t *testing.T) {
+				verifyGCPProtectionUpdateAndFailure(t, h, state)
+			})
+
+			t.Run("when probing /api/health and /api/sign on preview-pr-12, then it serves the dashboard, Secret Manager auth, and keyless GCS v4 signed URLs", func(t *testing.T) {
 				// Arrange / Act.
 				health := waitForAppHealth(t, state.previewURL, "")
 				dashboardHTML := fetchAppText(t, state.previewURL+"/", "")
+				signedCode, signedBody := probeSignedEndpoint(t, state.previewURL, state.previewBucket)
 				h.WriteJSONArtifact(t, "preview-health.json", health)
 
 				// Assert.
 				assertPreviewGCPAppHealth(t, health, dashboardHTML, state.devIssuer, sha256Hex(state.devClientSec), state.devBucket)
+				if signedCode != http.StatusOK || signedBody != "signed-v4-ok" {
+					t.Fatalf("expected keyless v4 signed URL 200 'signed-v4-ok', got %d %q", signedCode, signedBody)
+				}
 			})
 
-			t.Run("when mutating notes and objects on preview-pr-12, then it reads dev state via CoW/overlay and isolates preview writes from dev", func(t *testing.T) {
+			t.Run("when mutating notes and objects on preview-pr-12 and overlayfs.Store, then it reads dev state and isolates preview writes", func(t *testing.T) {
 				// Arrange / Act.
 				seedRead := getAppStorage(t, state.previewURL, "", "seed.txt")
 				postAppNote(t, state.previewURL, "", "only-in-gcp-preview")
@@ -102,8 +116,10 @@ func TestGCPNeonKindeApp(t *testing.T) {
 				previewAfter := waitForAppHealth(t, state.previewURL, "")
 				devAfter := waitForAppHealth(t, state.devURL, "")
 				devDeltaStatus := getAppStorageStatus(t, state.devURL, "", "delta.txt")
+				ofsReport := exerciseOverlayFS(t, state.devBucket, state.previewBucket, state.devBucket)
 				h.WriteJSONArtifact(t, "isolation-report.json", map[string]any{
 					"fallbackRead":   seedRead,
+					"overlayClient":  ofsReport,
 					"previewNotes":   previewAfter.DB.NoteCount,
 					"devNotes":       devAfter.DB.NoteCount,
 					"devDeltaStatus": devDeltaStatus,
@@ -111,6 +127,9 @@ func TestGCPNeonKindeApp(t *testing.T) {
 
 				// Assert.
 				assertAppStorageAndDBIsolation(t, seedRead.SourceBucket, state.devBucket, seedRead.Content, "gcs-object-from-dev", previewAfter.DB.NoteCount, devAfter.DB.NoteCount, devDeltaStatus)
+				if !ofsReport.DeltaAbsentInDev || ofsReport.DevSeedAfter != "gcs-object-from-dev" {
+					t.Fatalf("expected overlayfs.Store to preserve dev bucket, got %+v", ofsReport)
+				}
 			})
 
 			t.Run("when logging in and out via Kinde OIDC in headless Chrome, then both Cloud Run URLs complete end-to-end authentication", func(t *testing.T) {
@@ -157,6 +176,7 @@ type gcpDeployedAppState struct {
 	devURL          string
 	prodURL         string
 	stageURL        string
+	stageDBURL      string
 	previewURL      string
 	previewHashURL  string
 	devSvc          string
@@ -169,6 +189,7 @@ type gcpDeployedAppState struct {
 	stageBucket     string
 	previewBucket   string
 	devBranchID     string
+	prodBranchID    string
 	stageBranchID   string
 	previewBranchID string
 }
@@ -178,8 +199,8 @@ func deployAllGCPAppStacks(t *testing.T, h *LiveStackHarness) gcpDeployedAppStat
 	h.Pulumi(t, nil, "up", "--stack", "shared", "--yes", "--non-interactive", "--skip-preview")
 	s := gcpDeployedAppState{
 		neonProjectID: h.Output(t, "shared", "neonProjectId"),
-		devIssuer:     h.Output(t, "shared", "devIssuerUrl"),
-		devClientSec:  h.Output(t, "shared", "devClientSecret"),
+		devIssuer:     h.Output(t, "shared", "nonProdIssuerUrl"),
+		devClientSec:  h.Output(t, "shared", "nonProdClientSecret"),
 		prodIssuer:    h.Output(t, "shared", "prodIssuerUrl"),
 		prodClientSec: h.Output(t, "shared", "prodClientSecret"),
 	}
@@ -197,6 +218,7 @@ func deployAllGCPAppStacks(t *testing.T, h *LiveStackHarness) gcpDeployedAppStat
 	s.prodURL = h.Output(t, "prod", "regionalUrl")
 	s.prodSvc = h.Output(t, "prod", "serviceName")
 	s.prodBucket = h.Output(t, "prod", "bucketName")
+	s.prodBranchID = h.Output(t, "prod", "branchId")
 	_ = waitForAppHealth(t, s.prodURL, "")
 	postAppNote(t, s.prodURL, "", "seeded-in-gcp-prod")
 
@@ -205,6 +227,7 @@ func deployAllGCPAppStacks(t *testing.T, h *LiveStackHarness) gcpDeployedAppStat
 	s.stageSvc = h.Output(t, "stage", "serviceName")
 	s.stageBucket = h.Output(t, "stage", "bucketName")
 	s.stageBranchID = h.Output(t, "stage", "branchId")
+	s.stageDBURL = h.Output(t, "stage", "databaseUrl")
 
 	h.Pulumi(t, nil, "up", "--stack", "preview-pr-12", "--yes", "--non-interactive", "--skip-preview")
 	s.previewURL = h.Output(t, "preview-pr-12", "regionalUrl")
@@ -222,6 +245,85 @@ func deployAllGCPAppStacks(t *testing.T, h *LiveStackHarness) gcpDeployedAppStat
 	return s
 }
 
+func verifyGCPProtectionUpdateAndFailure(t *testing.T, h *LiveStackHarness, s gcpDeployedAppState) {
+	t.Helper()
+	// Arrange / Act.
+	prodMeta := describeGCSBucket(t, s.prodBucket)
+	failProd := h.PulumiFail(t, nil, "destroy", "--stack", "prod", "--yes", "--non-interactive")
+	failStage := h.PulumiFail(t, nil, "destroy", "--stack", "stage", "--yes", "--non-interactive")
+	failApply := h.PulumiFail(t, []string{"OPENBASE_TEST_FAIL_INFRA=1"}, "up", "--stack", "dev", "--yes", "--non-interactive", "--skip-preview")
+	h.Pulumi(t, []string{"OPENBASE_TEST_REVISION=b"}, "up", "--stack", "dev", "--yes", "--non-interactive", "--skip-preview")
+	devMeta := describeGCSBucket(t, s.devBucket)
+	freshBucket := queryFreshCheckoutOutput(t, "gcp-neon-kinde-app", h.BackendURL, "dev", "bucketName")
+
+	// Assert.
+	assertProtectedBucketFields(t, s.prodBucket, prodMeta)
+	assertContains(t, strings.ToLower(failProd), "protect")
+	assertContains(t, strings.ToLower(failStage), "protect")
+	assertContains(t, failApply, "simulated infrastructure program failure")
+	assertEqualStr(t, "in-place updated revision label", devMeta.Labels["openbase-revision"], "b")
+	assertEqualStr(t, "fresh checkout bucketName", freshBucket, s.devBucket)
+	assertNeonStatus(t, fmt.Sprintf("https://console.neon.tech/api/v2/projects/%s/branches/%s", s.neonProjectID, s.prodBranchID), http.StatusOK)
+}
+
+func queryFreshCheckoutOutput(t *testing.T, fixtureName, backendURL, stack, key string) string {
+	t.Helper()
+	freshDir := copyFixture(t, fixtureName)
+	freshEnv := []string{
+		"PULUMI_HOME=" + t.TempDir(),
+		"PULUMI_BACKEND_URL=" + backendURL,
+		"PULUMI_CONFIG_PASSPHRASE=",
+		"PULUMI_SKIP_UPDATE_CHECK=true",
+	}
+	infraDir := filepath.Join(freshDir, "infra")
+	runCommandEnv(t, infraDir, freshEnv, "pulumi", "login", backendURL)
+	return strings.TrimSpace(runCommandEnv(t, infraDir, freshEnv, "pulumi", "stack", "output", key, "--stack", stack))
+}
+
+func probeSignedEndpoint(t *testing.T, baseURL, bucketName string) (int, string) {
+	t.Helper()
+	seedGCSObject(t, bucketName, "signed-probe.txt", "signed-v4-ok")
+	deadline := time.Now().Add(90 * time.Second)
+	var lastCode int
+	var lastBody string
+	for time.Now().Before(deadline) {
+		lastCode, lastBody = tryProbeSignedObject(baseURL + "/api/sign?key=signed-probe.txt")
+		if lastCode == http.StatusOK {
+			return lastCode, lastBody
+		}
+		time.Sleep(3 * time.Second)
+	}
+	return lastCode, lastBody
+}
+
+func tryProbeSignedObject(endpoint string) (int, string) {
+	signedURL, msg := tryFetchSignedURL(endpoint)
+	if signedURL == "" {
+		return http.StatusInternalServerError, msg
+	}
+	resp, err := http.Get(signedURL)
+	if err != nil {
+		return 0, err.Error()
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
+}
+
+func tryFetchSignedURL(endpoint string) (string, string) {
+	raw, status, err := doAppRequest(http.MethodGet, endpoint, "", "", nil)
+	if err != nil || status != http.StatusOK {
+		return "", fmt.Sprintf("status=%d err=%v body=%s", status, err, string(raw))
+	}
+	var parsed struct {
+		SignedURL string `json:"signedUrl"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil || parsed.SignedURL == "" {
+		return "", fmt.Sprintf("invalid signedUrl payload: %s", string(raw))
+	}
+	return parsed.SignedURL, ""
+}
+
 func assertPreviewGCPAppHealth(t *testing.T, health fullStackHealthResponse, dashboardHTML, devIssuer, devSecHash, devBucket string) {
 	t.Helper()
 	assertContains(t, dashboardHTML, "Sign in with Kinde OIDC")
@@ -237,7 +339,7 @@ func assertPreviewGCPAppHealth(t *testing.T, health fullStackHealthResponse, das
 }
 
 func expectedGCPKindeURLs(tenant, appProject, projectNum string) ([]string, []string) {
-	if tenant == "dev" {
+	if tenant != "prod" {
 		reg := fmt.Sprintf("https://%s-*-%s.us-central1.run.app", appProject, projectNum)
 		hash := fmt.Sprintf("https://%s-*-uc.a.run.app", appProject)
 		redirects := []string{
@@ -284,7 +386,7 @@ func assertGCPNeonKindeCleanup(t *testing.T, gcpProject, neonProjectID string, s
 	if neonProjectID != "" {
 		assertNeonStatus(t, "https://console.neon.tech/api/v2/projects/"+neonProjectID, http.StatusNotFound)
 	}
-	if countKindeAppsByPrefix(t, "dev", "openbase-e2e-gcp-") > 1 || countKindeAppsByPrefix(t, "prod", "openbase-e2e-gcp-") > 1 {
+	if countKindeAppsByPrefix(t, "non-prod", "openbase-e2e-gcp-") > 1 || countKindeAppsByPrefix(t, "prod", "openbase-e2e-gcp-") > 1 {
 		t.Fatal("expected at most 1 retained openbase-e2e-gcp Kinde sandbox app per tenant")
 	}
 }

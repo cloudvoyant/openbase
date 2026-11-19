@@ -15,63 +15,86 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestKindeOidcApp(t *testing.T) {
-	t.Run("given kinde.Platform, kinde.Project, and kinde.OidcApp specs", func(t *testing.T) {
-		t.Run("when routing dev/preview and stage/prod stacks through Platform -> Project -> OidcApp, then each tier binds the matching tenant and callback URL", func(t *testing.T) {
+	t.Run("given separate kinde.Platform (platform), kinde.Project (shared), and kinde.OidcApp (env) stacks", func(t *testing.T) {
+		t.Run("when Platform runs on platform, Project runs on shared, and OidcApps run on preview and stage, then callbacks and NonProd/Prod tenant routing resolve across stacks", func(t *testing.T) {
 			// Arrange.
-			mocks := newKindeMocks()
+			platMocks := newKindeMocks()
+			sharedMocks := newKindeMocks()
+			previewMocks := newKindeMocks()
+			stageMocks := newKindeMocks()
 			previewIssuerCh := make(chan string, 1)
-			stageIssuerCh := make(chan string, 1)
+			previewSecretCh := make(chan string, 1)
 			previewRedirectCh := make(chan string, 1)
+			stageIssuerCh := make(chan string, 1)
 
 			// Act.
-			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				plat, err := sampleKindePlatformSpec().Register(ctx)
-				if err != nil {
-					return err
-				}
-				proj, err := kinde.Project{
-					Name:           "project-oidc",
-					Project:        "storefront",
-					Platform:       plat,
-					VercelTeamSlug: "cloudvoyant",
+			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := sampleKindePlatformSpec().Register(ctx)
+				return err
+			}, pulumi.WithMocks("platform", "platform", platMocks))
+
+			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := kinde.Project{
+					Name:             "project-oidc",
+					Project:          "storefront",
+					PlatformStackRef: "organization/platform/platform",
+					VercelTeamSlug:   "cloudvoyant",
 				}.Register(ctx)
-				if err != nil {
-					return err
-				}
+				return err
+			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
+
+			errPreview := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				prevApp, err := kinde.OidcApp{
-					Name:           "oidc-preview",
-					Project:        "storefront",
-					Environment:    "preview-pr-5",
-					KindeProject:   proj,
-					VercelTeamSlug: "cloudvoyant",
+					Name:            "oidc",
+					Project:         "storefront",
+					Environment:     "preview-pr-5",
+					ProjectStackRef: "organization/storefront-shared/shared",
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
-				stageApp, err := kinde.OidcApp{
-					Name:           "oidc-stage",
-					Project:        "storefront",
-					Environment:    "stage",
-					KindeProject:   proj,
-					VercelTeamSlug: "cloudvoyant",
-				}.Register(ctx)
-				if err != nil {
-					return err
-				}
-				prevApp.Link().Env["KINDE_ISSUER_URL"].ApplyT(func(v string) string { previewIssuerCh <- v; return v })
-				prevApp.Link().Env["KINDE_REDIRECT_URL"].ApplyT(func(v string) string { previewRedirectCh <- v; return v })
-				stageApp.Link().Env["KINDE_ISSUER_URL"].ApplyT(func(v string) string { stageIssuerCh <- v; return v })
+				prevApp.IssuerURL.ApplyT(func(v string) string { previewIssuerCh <- v; return v })
+				prevApp.ClientSecret.ApplyT(func(v string) string { previewSecretCh <- v; return v })
+				prevApp.RedirectURL.ApplyT(func(v string) string { previewRedirectCh <- v; return v })
 				return nil
-			}, pulumi.WithMocks("storefront", "shared", mocks))
+			}, pulumi.WithMocks("storefront", "preview-pr-5", previewMocks))
+
+			errStage := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				stageApp, err := kinde.OidcApp{
+					Name:            "oidc",
+					Project:         "storefront",
+					Environment:     "stage",
+					ProjectStackRef: "organization/storefront-shared/shared",
+				}.Register(ctx)
+				if err != nil {
+					return err
+				}
+				stageApp.IssuerURL.ApplyT(func(v string) string { stageIssuerCh <- v; return v })
+				return nil
+			}, pulumi.WithMocks("storefront", "stage", stageMocks))
 
 			// Assert.
-			requireKindeNoErr(t, err)
-			mocks.assertCount(t, "pulumi:providers:kinde", 2)
-			mocks.assertCount(t, "kinde:index/application:Application", 2)
-			mocks.assertCount(t, "kinde:index/applicationConnection:ApplicationConnection", 1)
-			assertKindeEq(t, "preview issuer", <-previewIssuerCh, "https://dev-test.kinde.com")
-			assertKindeEq(t, "stage issuer", <-stageIssuerCh, "https://prod-test.kinde.com")
-			assertKindeEq(t, "preview redirect", <-previewRedirectCh, "https://storefront-pr-5-cloudvoyant.vercel.app/api/auth/kinde_callback")
+			requireKindeNoErr(t, errPlat)
+			requireKindeNoErr(t, errShared)
+			requireKindeNoErr(t, errPreview)
+			requireKindeNoErr(t, errStage)
+			platMocks.assertCount(t, "pulumi:providers:kinde", 2)
+			sharedMocks.assertCount(t, "kinde:index/application:Application", 2)
+			sharedMocks.assertCount(t, "kinde:index/applicationConnection:ApplicationConnection", 1)
+			assertKindeEq(t, "preview issuer", <-previewIssuerCh, "https://nonprod-ref.kinde.com")
+			assertKindeEq(t, "preview secret", <-previewSecretCh, "ref_nonprod_secret")
+			assertKindeEq(t, "stage issuer", <-stageIssuerCh, "https://prod-ref.kinde.com")
+			assertKindeEq(t, "preview redirect", <-previewRedirectCh, "https://openbase-storefront-pr-5-cloudvoyant.vercel.app/api/auth/kinde_callback")
+			got := sharedMocks.appRedirects["project-oidc-nonprod-app"]
+			for _, want := range []string{
+				"https://storefront.vercel.app/api/auth/kinde_callback",
+				"https://storefront-cloudvoyant.vercel.app/api/auth/kinde_callback",
+				"https://storefront-*-cloudvoyant.vercel.app/api/auth/kinde_callback",
+			} {
+				if !slices.Contains(got, want) {
+					t.Fatalf("expected nonProd redirects %v to include %q", got, want)
+				}
+			}
 		})
 
 		t.Run("when tenant credentials or OidcApp sources are missing, then Register rejects with sentinel errors", func(t *testing.T) {
@@ -79,7 +102,7 @@ func TestKindeOidcApp(t *testing.T) {
 			errMissingCreds := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				_, e := kinde.Project{Project: "storefront"}.Register(ctx)
 				return e
-			}, pulumi.WithMocks("storefront", "shared", newKindeMocks()))
+			}, pulumi.WithMocks("storefront-shared", "shared", newKindeMocks()))
 
 			errMissingOidcSrc := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				_, e := kinde.OidcApp{
@@ -98,57 +121,6 @@ func TestKindeOidcApp(t *testing.T) {
 				t.Fatalf("expected ErrOidcSourceRequired, got %v", errMissingOidcSrc)
 			}
 		})
-
-		t.Run("when resolving credentials and host parts via ProjectStackRef, then secret clientSecret and callback URL resolve cleanly", func(t *testing.T) {
-			// Arrange.
-			secCh := make(chan string, 1)
-			redirCh := make(chan string, 1)
-
-			// Act.
-			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				app, e := kinde.OidcApp{
-					Name:            "oidc",
-					Project:         "storefront",
-					Environment:     "preview-pr-8",
-					ProjectStackRef: "organization/storefront-shared/shared",
-				}.Register(ctx)
-				if e != nil {
-					return e
-				}
-				app.Link().Secrets["KINDE_CLIENT_SECRET"].ApplyT(func(v string) string { secCh <- v; return v })
-				app.Link().Env["KINDE_REDIRECT_URL"].ApplyT(func(v string) string { redirCh <- v; return v })
-				return nil
-			}, pulumi.WithMocks("storefront", "preview-pr-8", newKindeMocks()))
-
-			// Assert.
-			requireKindeNoErr(t, err)
-			assertKindeEq(t, "ProjectStackRef secret", <-secCh, "ref_dev_secret")
-			assertKindeEq(t, "ProjectStackRef redirect", <-redirCh, "https://openbase-storefront-pr-8-cloudvoyant.vercel.app/api/auth/kinde_callback")
-		})
-
-		t.Run("when registering kinde.Project for Vercel, then dev includes default <project>.vercel.app, team, and wildcard callbacks", func(t *testing.T) {
-			// Arrange.
-			mocks := newKindeMocks()
-
-			// Act.
-			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := sampleProjectSpec().Register(ctx)
-				return e
-			}, pulumi.WithMocks("storefront", "shared", mocks))
-
-			// Assert.
-			requireKindeNoErr(t, err)
-			got := mocks.appRedirects["project-oidc-dev-app"]
-			for _, want := range []string{
-				"https://storefront.vercel.app/api/auth/kinde_callback",
-				"https://storefront-cloudvoyant.vercel.app/api/auth/kinde_callback",
-				"https://storefront-*-cloudvoyant.vercel.app/api/auth/kinde_callback",
-			} {
-				if !slices.Contains(got, want) {
-					t.Fatalf("expected dev redirects %v to include %q", got, want)
-				}
-			}
-		})
 	})
 }
 
@@ -156,34 +128,16 @@ func TestKindeOidcApp(t *testing.T) {
 
 func sampleKindePlatformSpec() kinde.Platform {
 	return kinde.Platform{
-		Dev: kinde.TenantCredentials{
-			Domain:       "dev-test.kinde.com",
-			ClientID:     pulumi.String("dev-m2m-id"),
-			ClientSecret: pulumi.String("dev-m2m-secret"),
+		NonProd: kinde.TenantCredentials{
+			Domain:       "nonprod-test.kinde.com",
+			ClientID:     pulumi.String("nonprod-m2m-id"),
+			ClientSecret: pulumi.String("nonprod-m2m-secret"),
 		},
 		Prod: kinde.TenantCredentials{
 			Domain:       "https://prod-test.kinde.com/",
 			ClientID:     pulumi.String("prod-m2m-id"),
 			ClientSecret: pulumi.String("prod-m2m-secret"),
 		},
-	}
-}
-
-func sampleProjectSpec() kinde.Project {
-	return kinde.Project{
-		Name:    "project-oidc",
-		Project: "storefront",
-		Dev: kinde.TenantCredentials{
-			Domain:       "dev-test.kinde.com",
-			ClientID:     pulumi.String("dev-m2m-id"),
-			ClientSecret: pulumi.String("dev-m2m-secret"),
-		},
-		Prod: kinde.TenantCredentials{
-			Domain:       "https://prod-test.kinde.com/",
-			ClientID:     pulumi.String("prod-m2m-id"),
-			ClientSecret: pulumi.String("prod-m2m-secret"),
-		},
-		VercelTeamSlug: "cloudvoyant",
 	}
 }
 
@@ -213,11 +167,18 @@ func (m *kindeMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Pr
 	}
 	if a.TypeToken == "pulumi:pulumi:StackReference" {
 		outs["outputs"] = resource.NewObjectProperty(resource.PropertyMap{
-			"devIssuerUrl":      resource.NewStringProperty("https://dev-ref.kinde.com"),
-			"devClientId":       resource.NewStringProperty("ref_dev_cid"),
-			"devClientSecret":   resource.NewStringProperty("ref_dev_secret"),
-			"vercelProjectName": resource.NewStringProperty("openbase-storefront"),
-			"teamSlug":          resource.NewStringProperty("cloudvoyant"),
+			"nonProdIssuerUrl":            resource.NewStringProperty("https://nonprod-ref.kinde.com"),
+			"nonProdClientId":             resource.NewStringProperty("ref_nonprod_cid"),
+			"nonProdClientSecret":         resource.NewStringProperty("ref_nonprod_secret"),
+			"prodIssuerUrl":               resource.NewStringProperty("https://prod-ref.kinde.com"),
+			"prodClientId":                resource.NewStringProperty("ref_prod_cid"),
+			"prodClientSecret":            resource.NewStringProperty("ref_prod_secret"),
+			"kindeNonProdM2mClientId":     resource.NewStringProperty("nonprod_m2m_cid"),
+			"kindeNonProdM2mClientSecret": resource.NewStringProperty("nonprod_m2m_sec"),
+			"kindeProdM2mClientId":        resource.NewStringProperty("prod_m2m_cid"),
+			"kindeProdM2mClientSecret":    resource.NewStringProperty("prod_m2m_sec"),
+			"vercelProjectName":           resource.NewStringProperty("openbase-storefront"),
+			"teamSlug":                    resource.NewStringProperty("cloudvoyant"),
 		})
 	}
 	return a.Name + "_id", outs, nil

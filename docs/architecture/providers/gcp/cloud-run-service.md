@@ -26,9 +26,11 @@
 ```mermaid
 flowchart TD
     Proj["gcp.Project (ProjectStackRef)"] -->|"repositoryId"| ARIAM["RepositoryIamMember (reader)"]
-    Links["Links (Bucket, Database, OidcApp)"] -->|"ResolveLinks"| SM["Secret + SecretVersion + SecretIamMember"]
+    Links["Links (Bucket, internal CloudRunService)"] -->|"ResolveLinks"| IAMGrants["Linked Resource GrantAccess IAM"]
+    Secrets["Explicit Secrets Map"] --> SM["Secret + SecretVersion + SecretIamMember"]
     SA["serviceaccount.Account (6-30 chars)"] --> SelfSign["serviceAccount.IAMMember (tokenCreator)"]
     SA --> ARIAM
+    SA --> IAMGrants
     SA --> SM
     SA --> Svc["cloudrunv2.Service"]
     SM -->|"SecretKeyRef"| Svc
@@ -39,8 +41,8 @@ flowchart TD
 ```
 
 - `serviceaccount.Account` isolates container identity per stack and service.
-- `secretmanager.Secret` and `SecretVersion` hold merged secrets from `Secrets` and `Links`.
-- `cloudrunv2.Service` runs the container image, injects plain `Env` variables and secret references, and exports `URL`, `URLs`, and `ServiceAccountEmail`.
+- `secretmanager.Secret` and `SecretVersion` hold secrets from `Secrets` and grant `roles/secretmanager.secretAccessor` to the service account.
+- `cloudrunv2.Service` runs the container image, injects caller `Env` variables and secret references, and exports `URL`, `RegionalURL`, `URLs`, and `ServiceAccountEmail`.
 - `LinkDescriptor.GrantAccess` grants `roles/run.invoker` to downstream `CloudRunService` or `vercel.WebApp` consumers when linked.
 
 ### Data and Control Flow
@@ -65,10 +67,18 @@ During `Register`, `CloudRunService` resolves `Links`, writes secrets to Secret 
 
 ```go
 api, err := gcp.CloudRunService{
-	Name:            "web",
-	Project:         "storefront",
-	Environment:     "stage",
-	Links:           []core.Resource{uploads, db, auth},
+	Name:        "web",
+	Project:     "storefront",
+	Environment: "stage",
+	Links:       []core.Resource{uploads},
+	Env: map[string]pulumi.StringInput{
+		"STORAGE_BUCKET":   uploads.BucketName,
+		"KINDE_ISSUER_URL": auth.IssuerURL,
+	},
+	Secrets: map[string]pulumi.StringInput{
+		"DATABASE_URL":        db.DatabaseURL,
+		"KINDE_CLIENT_SECRET": auth.ClientSecret,
+	},
 	ProjectStackRef: "cloudvoyant/storefront-shared/shared",
 	BaseDomain:      "gcp.cloudvoyant.io",
 	Domains:         []string{"stage.storefront.io"},
@@ -82,8 +92,8 @@ api, err := gcp.CloudRunService{
 | `Visibility` | Input | `public` (default), `internal`, or `worker` |
 | `BaseDomain` | Input | Formats `{project}-{env}.{baseDomain}` for `CloudLoadBalancer` |
 | `Domains` | Input | Extra vanity domains bound via `cloudrun.DomainMapping` on `dev`, `stage`, or `prod` |
-| `URL` / `URLs` | Output | Primary HTTPS endpoint and all routed URLs |
-| `<NAME>_URL` | Link Env | Exported to linked callers alongside automatic `roles/run.invoker` IAM |
+| `URL` / `RegionalURL` / `URLs` | Output | Primary HTTPS endpoint, regional `.run.app` URL, and all routed URLs |
+| `Links` | Access Grant | Binds `roles/run.invoker` on `internal` and `worker` services to linked callers |
 
 ## Implementation
 

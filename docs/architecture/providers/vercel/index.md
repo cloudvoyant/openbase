@@ -2,7 +2,7 @@
 
 ## Overview
 
-`libs/components/vercel` separates team-wide Vercel configuration (`vercel.Platform`, `core.PlatformResource`) from shared repository assets (`vercel.Project`, `core.StatelessResource` with `Environment: "shared"`) over `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `vercel.Platform` runs once per organization and owns team and base-domain defaults. `vercel.Project` runs once per repository in `infra/shared` and owns the Vercel Project, `staging` Custom Environment, attached domains, automation bypass secret, and optional shared Blob store.
+`libs/components/vercel` separates team-wide Vercel configuration (`vercel.Platform`, `core.PlatformResource`) from shared repository assets (`vercel.Project`, `core.StatelessResource` with `Environment: "shared"`) over `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `vercel.Platform` runs once per organization and owns team and base-domain defaults. `vercel.Project` runs once per repository in `infra/shared` and owns the Vercel Project, `staging` Custom Environment, attached domains, automation bypass secret, optional shared Blob store, and optional preview environment seeding.
 
 ## Requirement
 
@@ -11,7 +11,7 @@
 - Share Vercel team and base-domain defaults across repositories from one organization platform stack.
 - Provision a Vercel project per repository with team OIDC federation, deployment-protection bypass tokens, and optional shared Blob storage.
 - Support `staging` and optional `dev` custom environments alongside `prod` and nameless preview deployments.
-- Attach persistent custom domains to `prod` and `stage` without conflicting with `dev` or pull-request aliases.
+- Seed explicit `"preview"`-targeted project environment variables (`PreviewEnv` and `PreviewSecrets`) when desired.
 
 ### Non-Functional
 
@@ -35,6 +35,7 @@ flowchart TD
         Doms["ProjectDomains (prod + staging)"]
         Bypass["ProjectProtectionBypass"]
         BlobRoot["BlobStore + BlobProjectConnection (optional)"]
+        PrevSeed["Preview ProjectEnvironmentVariables (PreviewEnv / PreviewSecrets)"]
     end
 
     subgraph Env["App infra/ Stacks"]
@@ -49,7 +50,7 @@ flowchart TD
 ```
 
 - `vercel.Platform` exports team and wildcard domain defaults for all repositories in the organization.
-- `vercel.Project` creates the Vercel Project, `staging` Custom Environment, `prod` and `staging` domains, bypass token, and optional shared Blob store.
+- `vercel.Project` creates the Vercel Project, `staging` Custom Environment, `prod` and `staging` domains, bypass token, optional shared Blob store, and optional `"preview"`-targeted environment variables.
 - [vercel.WebApp](./web-app.md) and [vercel.BlobStore](./blob-store.md) consume `ProjectStackRef` on `dev`, `stage`, `prod`, and `preview-<slug>`.
 
 ### Data and Control Flow
@@ -62,7 +63,7 @@ flowchart LR
     PrevStack["Stack: preview-pr-42"] -->|"vercel.Alias"| PrevAlias["Nameless Preview + {project}-pr-42.{baseDomain} Alias"]
 ```
 
- Vercel Pro includes one free Custom Environment per project (`staging`). `prod` targets built-in `Production`, `stage` targets `staging`, and `dev` plus `preview-<slug>` deploy as nameless preview deployments bound to deterministic `vercel.Alias` hostnames.
+Vercel Pro includes one free Custom Environment per project (`staging`). `prod` targets built-in `Production`, `stage` targets `staging`, and `dev` plus `preview-<slug>` deploy as nameless preview deployments bound to deterministic `vercel.Alias` hostnames.
 
 ### Interfaces and Contracts
 
@@ -79,9 +80,16 @@ plat, err := vercel.Platform{
 proj, err := vercel.Project{
 	Project:          "storefront",
 	Repo:             "cloudvoyant/storefront",
-	PlatformStackRef: "cloudvoyant/platform/shared",
+	PlatformStackRef: "cloudvoyant/platform/platform",
 	ExtraProdDomains: []string{"storefront.io"},
 	EnableBlobStore:  true,
+	PreviewEnv: map[string]pulumi.StringInput{
+		"KINDE_ISSUER_URL": kindeProj.NonProdIssuerURL,
+		"KINDE_CLIENT_ID":  kindeProj.NonProdClientID,
+	},
+	PreviewSecrets: map[string]pulumi.StringInput{
+		"KINDE_CLIENT_SECRET": kindeProj.NonProdClientSecret,
+	},
 }.Register(ctx)
 ```
 

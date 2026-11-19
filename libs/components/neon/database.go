@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/url"
 	"reflect"
-	"strings"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
@@ -15,7 +14,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatefulResource = (*DatabaseResource)(nil)
+var (
+	_ core.StatefulResource                = (*DatabaseResource)(nil)
+	_ core.ScopedSpecOf[*DatabaseResource] = Database{}
+)
 
 // ErrProjectIDRequired reports a missing NeonProject, ProjectID, and ProjectStackRef on Database.
 var ErrProjectIDRequired = errors.New("neon: neonProject, projectId, or projectStackRef is required")
@@ -30,17 +32,16 @@ type Database struct {
 	BranchFrom      string
 	Backup          *bool
 	Links           []core.Resource
-	Env             map[string]pulumi.StringInput
-	Secrets         map[string]pulumi.StringInput
 	NeonProject     *ProjectResource
 	ProjectID       pulumi.StringInput
 	DefaultBranchID pulumi.StringInput
 	ParentBranchID  pulumi.StringInput
 	ProjectStackRef string
 	BranchStackRef  string
+	APIKey          pulumi.StringInput
+	APIBaseURL      string
 	DatabaseName    string
 	RoleName        string
-	EnvPrefix       string
 	SuspendSeconds  *int
 }
 
@@ -75,20 +76,44 @@ func (d Database) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 		BranchFrom:  d.BranchFrom,
 		Backup:      d.Backup,
 		Links:       d.Links,
-		Env:         d.Env,
-		Secrets:     d.Secrets,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
+	inheritNeonProjectAPISettings(&d)
 	if err := provisionNeonBranch(ctx, d.Name, meta, d, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildDatabaseLink(meta, d, res))
+	res.SetLink(buildDatabaseLink(meta, res))
 	if err := registerDatabaseOutputs(ctx, meta, res); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// RegisterInScope adapts neon.Database to openbase.Project and openbase.Environment.
+func (d Database) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return d.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers neon.Database with inherited Scope metadata, BranchFrom, and ProjectStackRef.
+func (d Database) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*DatabaseResource, error) {
+	d.Project = defaultIdentifier(d.Project, scope.Project)
+	d.Repo = defaultIdentifier(d.Repo, scope.Repo)
+	d.Environment = defaultIdentifier(d.Environment, string(scope.Env))
+	d.BranchFrom = defaultIdentifier(d.BranchFrom, scope.DefaultDBBranchFrom())
+	if d.NeonProject == nil && scope.ProjectRef != nil {
+		if np, ok := scope.ProjectRef.ResourceHandle("neon-project").(*ProjectResource); ok {
+			d.NeonProject = np
+		}
+	}
+	if d.ProjectStackRef == "" && d.NeonProject == nil && d.ProjectID == nil {
+		d.ProjectStackRef = scope.ProjectStackName()
+	}
+	if d.BranchFrom != "" && d.BranchStackRef == "" {
+		d.BranchStackRef = scope.BranchStackRef(ctx, d.BranchFrom)
+	}
+	return d.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -215,6 +240,18 @@ func createNeonEndpoint(
 	}, pulumi.Parent(parent))
 }
 
+func inheritNeonProjectAPISettings(d *Database) {
+	if d.NeonProject == nil {
+		return
+	}
+	if d.APIKey == nil {
+		d.APIKey = d.NeonProject.apiKey
+	}
+	if d.APIBaseURL == "" {
+		d.APIBaseURL = d.NeonProject.apiBaseURL
+	}
+}
+
 func configureCredentialsAndURLs(
 	ctx *pulumi.Context,
 	name string,
@@ -227,7 +264,7 @@ func configureCredentialsAndURLs(
 ) error {
 	roleName := defaultIdentifier(spec.RoleName, "openbase_app")
 	dbName := defaultIdentifier(spec.DatabaseName, "openbase")
-	passwordOut, err := ensureRoleAndDatabase(ctx, name, meta, projectID, branch, ep, roleName, dbName, res)
+	passwordOut, err := ensureRoleAndDatabase(ctx, name, meta, spec, projectID, branch, ep, roleName, dbName, res)
 	if err != nil {
 		return err
 	}
@@ -240,6 +277,7 @@ func ensureRoleAndDatabase(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
+	spec Database,
 	projectID pulumi.StringOutput,
 	branch *neonprov.Branch,
 	ep *neonprov.Endpoint,
@@ -250,7 +288,7 @@ func ensureRoleAndDatabase(
 		readyBranchID := pulumi.All(branch.ID(), ep.ID()).ApplyT(func(vs []any) string {
 			return string(vs[0].(pulumi.ID))
 		}).(pulumi.StringOutput)
-		return revealRolePasswordOutput(ctx, projectID, readyBranchID, roleName), nil
+		return revealRolePasswordOutput(ctx, projectID, readyBranchID, roleName, spec.APIKey, spec.APIBaseURL), nil
 	}
 	role, err := neonprov.NewRole(ctx, name+"-role", &neonprov.RoleArgs{
 		ProjectId: projectID,
@@ -274,7 +312,7 @@ func ensureRoleAndDatabase(
 	readyBranchID := pulumi.All(branch.ID(), role.ID(), db.ID()).ApplyT(func(vs []any) string {
 		return string(vs[0].(pulumi.ID))
 	}).(pulumi.StringOutput)
-	return revealRolePasswordOutput(ctx, projectID, readyBranchID, roleName), nil
+	return revealRolePasswordOutput(ctx, projectID, readyBranchID, roleName, spec.APIKey, spec.APIBaseURL), nil
 }
 
 func formatPostgresURL(roleName string, password, host pulumi.StringOutput, dbName string) pulumi.StringOutput {
@@ -293,30 +331,22 @@ func formatPostgresURL(roleName string, password, host pulumi.StringOutput, dbNa
 	return pulumi.ToSecret(raw).(pulumi.StringOutput)
 }
 
-func buildDatabaseLink(meta core.ResourceMeta, spec Database, res *DatabaseResource) core.LinkDescriptor {
-	dbKey, directKey, hostKey := "DATABASE_URL", "DIRECT_URL", "DATABASE_HOST"
-	if spec.EnvPrefix != "" {
-		p := strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(spec.EnvPrefix), "-", "_"))
-		dbKey = p + "_DATABASE_URL"
-		directKey = p + "_DIRECT_URL"
-		hostKey = p + "_DATABASE_HOST"
-	}
-	envMap := map[string]pulumi.StringOutput{hostKey: res.PoolerHost}
-	for k, v := range spec.Env {
-		envMap[k] = v.ToStringOutput()
-	}
-	secrets := map[string]pulumi.StringOutput{
-		dbKey:     res.DatabaseURL,
-		directKey: res.DirectURL,
-	}
-	for k, v := range spec.Secrets {
-		secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
-	}
+func buildDatabaseLink(meta core.ResourceMeta, res *DatabaseResource) core.LinkDescriptor {
 	return core.LinkDescriptor{
-		Name:    meta.Name,
-		Kind:    meta.Kind,
-		Env:     envMap,
-		Secrets: secrets,
+		Name: meta.Name,
+		Kind: meta.Kind,
+		Attributes: map[string]pulumi.StringOutput{
+			"branchId":   res.BranchID,
+			"host":       res.Host,
+			"poolerHost": res.PoolerHost,
+		},
+		StackExports: map[string]pulumi.Input{
+			"branchId":    res.BranchID,
+			"host":        res.Host,
+			"poolerHost":  res.PoolerHost,
+			"databaseUrl": res.DatabaseURL,
+			"directUrl":   res.DirectURL,
+		},
 	}
 }
 

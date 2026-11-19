@@ -67,13 +67,12 @@ blobs, err := vercel.BlobStore{
 client := vercel.NewBlobOverlayClient(baseURL, token, "preview-pr-20/", "dev/")
 ```
 
-| Link Key | Secret | Example (`preview-pr-20`, `BranchFrom: "dev"`) |
+| Output Field | Type | Example (`preview-pr-20`, `BranchFrom: "dev"`) |
 | :--- | :--- | :--- |
-| `BLOB_STORE_ID` | No | `store_AbcXyz` |
-| `BLOB_BASE_URL` | No | `https://abcxyz.public.blob.vercel-storage.com` |
-| `BLOB_PREFIX` | No | `preview-pr-20/` |
-| `BLOB_FALLBACK_PREFIX` | No | `dev/` |
-| `BLOB_READ_WRITE_TOKEN` | Yes | `vercel_blob_rw_...` |
+| `StoreID` | `pulumi.StringOutput` | `store_AbcXyz` |
+| `BlobBaseURL` | `pulumi.StringOutput` | `https://abcxyz.public.blob.vercel-storage.com` |
+| `BlobPrefix` | `string` | `preview-pr-20/` |
+| `BlobFallbackPrefix` | `string` | `dev/` |
 
 ## Implementation
 

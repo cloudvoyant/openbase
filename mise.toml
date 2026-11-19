@@ -32,7 +32,7 @@ run = [
 [tasks.e2e]
 description = "Run E2E suite(s): mise run e2e [file_or_suite] [--no-cleanup | --keep | --offline]"
 usage = '''
-arg "[target]" help="Suite or test target (core, gcp, gcp_bucket, gcp_cloud_run, neon, kinde, vercel, vercel_blob_store, vercel_web_app, links, apps, vercel_neon_kinde_app, gcp_neon_kinde_app)"
+arg "[target]" help="Suite or test target (core, gcp, neon, kinde, vercel, links, apps, gcp_neon_kinde_app, vercel_neon_kinde_app)"
 flag "-k --keep" help="Keep cloud stacks & Pulumi state in e2e/outputs/components/<Test>/"
 flag "--no-cleanup" help="Keep cloud stacks & Pulumi state in e2e/outputs/components/<Test>/"
 flag "--cleanup" help="Destroy stacks after the test completes (default)"

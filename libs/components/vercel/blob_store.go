@@ -11,7 +11,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatefulResource = (*BlobStoreResource)(nil)
+var (
+	_ core.StatefulResource                 = (*BlobStoreResource)(nil)
+	_ core.ScopedSpecOf[*BlobStoreResource] = BlobStore{}
+)
 
 // BlobStore declares a Vercel BlobStore component with custom-env token propagation and prefix overlays.
 type BlobStore struct {
@@ -23,8 +26,6 @@ type BlobStore struct {
 	BranchFrom               string
 	Backup                   *bool
 	Links                    []core.Resource
-	Env                      map[string]pulumi.StringInput
-	Secrets                  map[string]pulumi.StringInput
 	VercelProject            *ProjectResource
 	ProjectStackRef          string
 	StoreID                  pulumi.StringInput
@@ -68,8 +69,6 @@ func (b BlobStore) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) 
 		BranchFrom:  b.BranchFrom,
 		Backup:      b.Backup,
 		Links:       b.Links,
-		Env:         b.Env,
-		Secrets:     b.Secrets,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -77,11 +76,33 @@ func (b BlobStore) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) 
 	if err := provisionBlobStore(ctx, b.Name, meta, b, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildBlobStoreLink(meta, b, res))
+	res.SetLink(buildBlobStoreLink(meta, res))
 	if err := registerBlobOutputs(ctx, meta, res); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// RegisterInScope adapts vercel.BlobStore to openbase.Project and openbase.Environment.
+func (b BlobStore) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return b.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers vercel.BlobStore with inherited Scope metadata, BranchFrom, and ProjectStackRef.
+func (b BlobStore) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*BlobStoreResource, error) {
+	b.Project = defaultVercelStr(b.Project, scope.Project)
+	b.Repo = defaultVercelStr(b.Repo, scope.Repo)
+	b.Environment = defaultVercelStr(b.Environment, string(scope.Env))
+	b.BranchFrom = defaultVercelStr(b.BranchFrom, scope.DefaultStorageBranchFrom())
+	if b.VercelProject == nil && scope.ProjectRef != nil {
+		if vp, ok := scope.ProjectRef.ResourceHandle("vercel-project").(*ProjectResource); ok {
+			b.VercelProject = vp
+		}
+	}
+	if b.ProjectStackRef == "" && b.VercelProject == nil && b.StoreID == nil {
+		b.ProjectStackRef = scope.ProjectStackName()
+	}
+	return b.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -290,30 +311,21 @@ func createCustomEnvBlobVars(
 	return baseVar, tokVar, err
 }
 
-func buildBlobStoreLink(meta core.ResourceMeta, spec BlobStore, res *BlobStoreResource) core.LinkDescriptor {
-	envMap := map[string]pulumi.StringOutput{
-		"BLOB_STORE_ID": res.StoreID,
-		"BLOB_BASE_URL": res.BlobBaseURL,
-		"BLOB_PREFIX":   pulumi.String(res.BlobPrefix).ToStringOutput(),
-	}
-	if res.BlobFallbackPrefix != "" {
-		envMap["BLOB_FALLBACK_PREFIX"] = pulumi.String(res.BlobFallbackPrefix).ToStringOutput()
-	}
-	for k, v := range spec.Env {
-		envMap[k] = v.ToStringOutput()
-	}
-	secrets := map[string]pulumi.StringOutput{}
-	if spec.BlobReadWriteToken != nil {
-		secrets["BLOB_READ_WRITE_TOKEN"] = pulumi.ToSecret(spec.BlobReadWriteToken.ToStringOutput()).(pulumi.StringOutput)
-	}
-	for k, v := range spec.Secrets {
-		secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
-	}
+func buildBlobStoreLink(meta core.ResourceMeta, res *BlobStoreResource) core.LinkDescriptor {
 	return core.LinkDescriptor{
-		Name:    meta.Name,
-		Kind:    meta.Kind,
-		Env:     envMap,
-		Secrets: secrets,
+		Name: meta.Name,
+		Kind: meta.Kind,
+		Attributes: map[string]pulumi.StringOutput{
+			"storeId":            res.StoreID,
+			"blobBaseUrl":        res.BlobBaseURL,
+			"blobPrefix":         pulumi.String(res.BlobPrefix).ToStringOutput(),
+			"blobFallbackPrefix": pulumi.String(res.BlobFallbackPrefix).ToStringOutput(),
+		},
+		StackExports: map[string]pulumi.Input{
+			"blobBaseUrl":        res.BlobBaseURL,
+			"blobPrefix":         pulumi.String(res.BlobPrefix),
+			"blobFallbackPrefix": pulumi.String(res.BlobFallbackPrefix),
+		},
 	}
 }
 

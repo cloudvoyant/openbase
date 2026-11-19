@@ -57,6 +57,45 @@ type LiveStackHarness struct {
 	secrets         []string
 }
 
+var (
+	gcpProjectNumberMu    sync.Mutex
+	gcpProjectNumberCache = map[string]string{}
+)
+
+// ResolveGCPProjectNumber looks up and caches the numeric GCP project number, billing quota to gcpProject with retry.
+func ResolveGCPProjectNumber(t *testing.T, gcpProject string) string {
+	t.Helper()
+	if envNum := strings.TrimSpace(os.Getenv("OPENBASE_TEST_GCP_PROJECT_NUMBER")); envNum != "" {
+		return envNum
+	}
+	gcpProjectNumberMu.Lock()
+	defer gcpProjectNumberMu.Unlock()
+	if cached := gcpProjectNumberCache[gcpProject]; cached != "" {
+		return cached
+	}
+	num := queryGCPProjectNumberWithRetry(t, gcpProject)
+	gcpProjectNumberCache[gcpProject] = num
+	return num
+}
+
+func queryGCPProjectNumberWithRetry(t *testing.T, gcpProject string) string {
+	t.Helper()
+	var lastOut []byte
+	var lastErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		cmd := exec.Command("gcloud", "projects", "describe", gcpProject, "--billing-project="+gcpProject, "--format=value(projectNumber)")
+		lastOut, lastErr = cmd.CombinedOutput()
+		if lastErr == nil {
+			if num := strings.TrimSpace(string(lastOut)); num != "" {
+				return num
+			}
+		}
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
+	}
+	t.Fatalf("gcloud projects describe %s: %v\n%s", gcpProject, lastErr, string(lastOut))
+	return ""
+}
+
 // RequireLiveGCP checks OPENBASE_TEST_GCP/OPENBASE_TEST_LIVE and returns (gcpProject, backendOverride).
 func RequireLiveGCP(t *testing.T) (string, string) {
 	t.Helper()
@@ -89,12 +128,27 @@ func RequireLiveKinde(t *testing.T) string {
 	if !isLiveEnabled("OPENBASE_TEST_KINDE") {
 		t.Skip("set OPENBASE_TEST_KINDE=1 or OPENBASE_TEST_LIVE=1 to run against live Kinde")
 	}
+	backfillNonProdKindeEnv(t)
 	requireEnvVars(
 		t,
-		"KINDE_DEV_TENANT_DOMAIN", "KINDE_DEV_M2M_CLIENT_ID", "KINDE_DEV_M2M_CLIENT_SECRET",
+		"KINDE_NONPROD_TENANT_DOMAIN", "KINDE_NONPROD_M2M_CLIENT_ID", "KINDE_NONPROD_M2M_CLIENT_SECRET",
 		"KINDE_PROD_TENANT_DOMAIN", "KINDE_PROD_M2M_CLIENT_ID", "KINDE_PROD_M2M_CLIENT_SECRET",
 	)
 	return optionalBackendEnv()
+}
+
+func backfillNonProdKindeEnv(t *testing.T) {
+	t.Helper()
+	pairs := [][2]string{
+		{"KINDE_NONPROD_TENANT_DOMAIN", "KINDE_DEV_TENANT_DOMAIN"},
+		{"KINDE_NONPROD_M2M_CLIENT_ID", "KINDE_DEV_M2M_CLIENT_ID"},
+		{"KINDE_NONPROD_M2M_CLIENT_SECRET", "KINDE_DEV_M2M_CLIENT_SECRET"},
+	}
+	for _, p := range pairs {
+		if os.Getenv(p[0]) == "" && os.Getenv(p[1]) != "" {
+			t.Setenv(p[0], os.Getenv(p[1]))
+		}
+	}
 }
 
 // RequireLiveVercel checks OPENBASE_TEST_VERCEL/OPENBASE_TEST_LIVE and returns backendOverride.
@@ -246,6 +300,7 @@ func (h *LiveStackHarness) OnCleanupVerify(fn func(t *testing.T)) {
 var ambientSecretEnvKeys = []string{
 	"VERCEL_TOKEN",
 	"NEON_API_KEY",
+	"KINDE_NONPROD_M2M_CLIENT_SECRET",
 	"KINDE_DEV_M2M_CLIENT_SECRET",
 	"KINDE_PROD_M2M_CLIENT_SECRET",
 	"KINDE_E2E_PASSWORD",
@@ -327,6 +382,12 @@ func (h *LiveStackHarness) writeWorkspaceMiseFile(t *testing.T) {
 }
 
 func (h *LiveStackHarness) dirForStack(stack string) string {
+	if stack == "platform" {
+		platDir := filepath.Join(h.Dir, "platform")
+		if _, err := os.Stat(filepath.Join(platDir, "Pulumi.yaml")); err == nil {
+			return platDir
+		}
+	}
 	if stack == "shared" {
 		sharedDir := filepath.Join(h.Dir, "infra", "shared")
 		if _, err := os.Stat(filepath.Join(sharedDir, "Pulumi.yaml")); err == nil {

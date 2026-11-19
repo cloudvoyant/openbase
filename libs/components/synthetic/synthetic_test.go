@@ -15,7 +15,7 @@ import (
 
 func TestSyntheticComponents(t *testing.T) {
 	t.Run("given synthetic.Storage and synthetic.Service specs in preview-pr-12", func(t *testing.T) {
-		t.Run("when registering a Service linked to a branched Storage, then it wires fallback env vars and records consumer grants", func(t *testing.T) {
+		t.Run("when registering a Service linked to a branched Storage, then it records consumer grants while caller wires explicit Env", func(t *testing.T) {
 			// Arrange.
 			bucketCh := make(chan string, 1)
 			fallbackCh := make(chan string, 1)
@@ -30,7 +30,6 @@ func TestSyntheticComponents(t *testing.T) {
 					Project:     "storefront",
 					Environment: "preview-pr-12",
 					BranchFrom:  "dev",
-					SecretToken: "tok_123",
 				}.Register(ctx)
 				if err != nil {
 					return err
@@ -40,14 +39,18 @@ func TestSyntheticComponents(t *testing.T) {
 					Project:     "storefront",
 					Environment: "preview-pr-12",
 					Links:       []core.Resource{uploads},
+					Env: map[string]pulumi.StringInput{
+						"PRIMARY_BUCKET":  uploads.BucketName,
+						"FALLBACK_BUCKET": uploads.FallbackBucketName,
+					},
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
 				branchSrc = uploads.BranchSource()
 				granted = uploads.GrantedConsumers
-				api.ResolvedEnv["UPLOADS_BUCKET"].ApplyT(func(v string) string { bucketCh <- v; return v })
-				api.ResolvedEnv["UPLOADS_FALLBACK_BUCKET"].ApplyT(func(v string) string { fallbackCh <- v; return v })
+				api.ResolvedEnv["PRIMARY_BUCKET"].ApplyT(func(v string) string { bucketCh <- v; return v })
+				api.ResolvedEnv["FALLBACK_BUCKET"].ApplyT(func(v string) string { fallbackCh <- v; return v })
 				api.URL.ApplyT(func(v string) string { urlCh <- v; return v })
 				return nil
 			}, pulumi.WithMocks("storefront", "preview-pr-12", &mockMonitor{}))

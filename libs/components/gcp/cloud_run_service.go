@@ -18,7 +18,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*CloudRunServiceResource)(nil)
+var (
+	_ core.StatelessResource                      = (*CloudRunServiceResource)(nil)
+	_ core.ScopedSpecOf[*CloudRunServiceResource] = CloudRunService{}
+)
 
 const (
 	// VisibilityPublic allows unauthenticated internet invocations (allUsers roles/run.invoker).
@@ -61,7 +64,6 @@ type CloudRunService struct {
 	ProjectStackRef          string
 	ArtifactRegistryRepo     pulumi.StringInput
 	ArtifactRegistryLocation string
-	WorkloadIdentityPoolName pulumi.StringInput
 	Location                 string
 	Image                    pulumi.StringInput
 	Command                  []string
@@ -90,6 +92,7 @@ type CloudRunServiceResource struct {
 	DomainMapping       *cloudrun.DomainMapping
 	DomainMappings      []*cloudrun.DomainMapping
 	URL                 pulumi.StringOutput
+	RegionalURL         pulumi.StringOutput
 	CustomURL           pulumi.StringOutput
 	URLs                pulumi.StringArrayOutput
 	ServiceAccountEmail pulumi.StringOutput
@@ -112,8 +115,6 @@ func (c CloudRunService) Register(
 		Environment: c.Environment,
 		Kind:        c.Kind,
 		Links:       c.Links,
-		Env:         c.Env,
-		Secrets:     c.Secrets,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -126,6 +127,17 @@ func (c CloudRunService) Register(
 		return nil, err
 	}
 	return res, nil
+}
+
+// RegisterInScope adapts gcp.CloudRunService to openbase.Project and openbase.Environment.
+func (c CloudRunService) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return c.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers gcp.CloudRunService with inherited Scope metadata and ProjectStackRef.
+func (c CloudRunService) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*CloudRunServiceResource, error) {
+	applyCloudRunScope(&c, scope)
+	return c.Register(ctx, opts...)
 }
 
 // CloudRunURL returns the deterministic regional Cloud Run v2 URL for a service before deployment.
@@ -158,8 +170,7 @@ func CloudRunServiceName(project string, env core.Environment, name, baseDomain 
 // Private helpers ------------------------------------------------------------
 
 type sharedRefs struct {
-	repoID   pulumi.StringOutput
-	poolName pulumi.StringOutput
+	repoID pulumi.StringOutput
 }
 
 func validateCloudRunSpec(spec CloudRunService) error {
@@ -196,7 +207,7 @@ func buildCloudRunResources(
 	if err := grantArtifactRegistryAccess(ctx, name, spec, refs, sa, res); err != nil {
 		return err
 	}
-	envs, deps, err := resolveEnvsAndSecrets(ctx, name, meta, spec, refs, sa, res)
+	envs, deps, err := resolveEnvsAndSecrets(ctx, name, meta, spec, sa, res)
 	if err != nil {
 		return err
 	}
@@ -206,6 +217,7 @@ func buildCloudRunResources(
 		return err
 	}
 	res.Service = svc
+	res.RegionalURL = computeRegionalCloudRunURL(meta, spec, svc.Uri)
 	res.CustomURL = computeCustomBaseURL(meta, spec)
 	res.URL = selectPrimaryCloudRunURL(svc.Uri, res.CustomURL, spec)
 	res.URLs = collectCloudRunURLs(svc.Uri, res.CustomURL, spec)
@@ -259,9 +271,6 @@ func resolveProjectRefs(ctx *pulumi.Context, name string, spec CloudRunService) 
 	if !isOutputSet(refs.repoID) {
 		refs.repoID = sr.GetStringOutput(pulumi.String("repositoryId"))
 	}
-	if !isOutputSet(refs.poolName) {
-		refs.poolName = sr.GetStringOutput(pulumi.String("workloadIdentityPoolName"))
-	}
 	return refs, nil
 }
 
@@ -269,13 +278,9 @@ func initDirectCloudRunRefs(spec CloudRunService) sharedRefs {
 	var refs sharedRefs
 	if spec.GCPProjectRef != nil {
 		refs.repoID = spec.GCPProjectRef.RepositoryID
-		refs.poolName = spec.GCPProjectRef.WorkloadIdentityPoolName
 	}
 	if spec.ArtifactRegistryRepo != nil {
 		refs.repoID = spec.ArtifactRegistryRepo.ToStringOutput()
-	}
-	if spec.WorkloadIdentityPoolName != nil {
-		refs.poolName = spec.WorkloadIdentityPoolName.ToStringOutput()
 	}
 	return refs
 }
@@ -317,29 +322,31 @@ func resolveEnvsAndSecrets(
 	name string,
 	meta core.ResourceMeta,
 	spec CloudRunService,
-	refs sharedRefs,
 	sa *serviceaccount.Account,
 	parent pulumi.Resource,
 ) (cloudrunv2.ServiceTemplateContainerEnvArray, []pulumi.Resource, error) {
-	resolved, err := core.ResolveLinks(core.LinkGrantContext{
-		Ctx:                         ctx,
-		ConsumerName:                meta.CanonicalName,
-		Environment:                 meta.Environment,
-		GCPProject:                  spec.GCPProject,
-		GCPServiceAccountEmail:      sa.Email,
-		GCPWorkloadIdentityPoolName: refs.poolName,
-	}, spec.Links)
-	if err != nil {
+	if _, err := core.ResolveLinks(core.LinkGrantContext{
+		Ctx:          ctx,
+		ConsumerName: meta.CanonicalName,
+		ConsumerMeta: meta,
+		Environment:  meta.Environment,
+		Subject: core.Subject{
+			Provider: "gcp",
+			NativeID: pulumi.Sprintf("serviceAccount:%s", sa.Email),
+		},
+	}, spec.Links); err != nil {
 		return nil, nil, err
 	}
+	plain := make(map[string]pulumi.StringOutput, len(spec.Env))
 	for k, v := range spec.Env {
-		resolved.Env[k] = v.ToStringOutput()
+		plain[k] = v.ToStringOutput()
 	}
+	secrets := make(map[string]pulumi.StringOutput, len(spec.Secrets))
 	for k, v := range spec.Secrets {
-		resolved.Secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
+		secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
 	}
-	envs := sortedPlainEnvs(resolved.Env)
-	secretEnvs, deps, err := createSecretMounts(ctx, name, meta, spec, resolved.Secrets, sa, parent)
+	envs := sortedPlainEnvs(plain)
+	secretEnvs, deps, err := createSecretMounts(ctx, name, meta, spec, secrets, sa, parent)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -594,6 +601,37 @@ func configureInvokerIAM(
 	return nil
 }
 
+func computeRegionalCloudRunURL(meta core.ResourceMeta, spec CloudRunService, fallbackURI pulumi.StringOutput) pulumi.StringOutput {
+	if spec.GCPProjectNumber == nil {
+		return fallbackURI
+	}
+	loc := defaultStr(spec.Location, "us-central1")
+	return spec.GCPProjectNumber.ToStringOutput().ApplyT(func(num string) string {
+		if strings.TrimSpace(num) == "" {
+			return ""
+		}
+		u, err := CloudRunRegionalURL(meta.Project, meta.Environment, meta.Name, num, loc, spec.BaseDomain)
+		if err != nil {
+			return ""
+		}
+		return u
+	}).(pulumi.StringOutput)
+}
+
+func applyCloudRunScope(c *CloudRunService, scope core.Scope) {
+	c.Project = defaultStr(c.Project, scope.Project)
+	c.Repo = defaultStr(c.Repo, scope.Repo)
+	c.Environment = defaultStr(c.Environment, string(scope.Env))
+	if c.GCPProjectRef == nil && scope.ProjectRef != nil {
+		if pr, ok := scope.ProjectRef.ResourceHandle("gcp-project").(*ProjectResource); ok {
+			c.GCPProjectRef = pr
+		}
+	}
+	if c.ProjectStackRef == "" && c.GCPProjectRef == nil && c.ArtifactRegistryRepo == nil {
+		c.ProjectStackRef = scope.ProjectStackName()
+	}
+}
+
 func computeCustomBaseURL(meta core.ResourceMeta, spec CloudRunService) pulumi.StringOutput {
 	if dom, err := core.EnvironmentDomain(meta.Project, meta.Environment, meta.Name, spec.BaseDomain); err == nil && dom != "" {
 		return pulumi.String("https://" + dom).ToStringOutput()
@@ -667,15 +705,24 @@ func createOptionalDomainMappings(
 }
 
 func buildCloudRunLink(name string, meta core.ResourceMeta, spec CloudRunService, res *CloudRunServiceResource) core.LinkDescriptor {
-	urlKey := envKeyPrefix(meta.Name) + "_URL"
 	return core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
-		Env: map[string]pulumi.StringOutput{
-			urlKey: res.URL,
+		Attributes: map[string]pulumi.StringOutput{
+			"url":                 res.URL,
+			"regionalUrl":         res.RegionalURL,
+			"serviceAccountEmail": res.ServiceAccountEmail,
+		},
+		StackExports: map[string]pulumi.Input{
+			"url":                 res.URL,
+			"urls":                res.URLs,
+			"regionalUrl":         res.RegionalURL,
+			"serviceName":         res.Service.Name,
+			"serviceAccountEmail": res.ServiceAccountEmail,
 		},
 		GrantAccess: func(g core.LinkGrantContext) error {
-			if defaultStr(spec.Visibility, VisibilityPublic) == VisibilityPublic || !isOutputSet(g.GCPServiceAccountEmail) {
+			member, ok := g.Principals["gcp"]
+			if defaultStr(spec.Visibility, VisibilityPublic) == VisibilityPublic || !ok || !isOutputSet(member) {
 				return nil
 			}
 			slug := core.BoundedName(g.ConsumerName, 24)
@@ -684,7 +731,7 @@ func buildCloudRunLink(name string, meta core.ResourceMeta, spec CloudRunService
 				Location: res.Service.Location,
 				Name:     res.Service.Name,
 				Role:     pulumi.String("roles/run.invoker"),
-				Member:   pulumi.Sprintf("serviceAccount:%s", g.GCPServiceAccountEmail),
+				Member:   member,
 			}, pulumi.Parent(res))
 			return err
 		},

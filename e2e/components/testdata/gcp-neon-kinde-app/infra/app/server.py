@@ -1,4 +1,5 @@
 import base64
+import datetime
 import hashlib
 import hmac
 import html
@@ -12,13 +13,70 @@ import urllib.parse
 import urllib.request
 
 
-def gcp_access_token():
+def gcp_metadata(path):
     req = urllib.request.Request(
-        "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token",
+        "http://metadata.google.internal/computeMetadata/v1/" + path,
         headers={"Metadata-Flavor": "Google"},
     )
     with urllib.request.urlopen(req, timeout=10) as resp:
-        return json.loads(resp.read().decode("utf-8"))["access_token"]
+        return resp.read().decode("utf-8")
+
+
+def gcp_access_token():
+    return json.loads(gcp_metadata("instance/service-accounts/default/token"))["access_token"]
+
+
+def sign_gcs_v4(bucket, obj):
+    sa_email = gcp_metadata("instance/service-accounts/default/email").strip()
+    tok = gcp_access_token()
+    now = datetime.datetime.now(datetime.timezone.utc)
+    datestamp = now.strftime("%Y%m%d")
+    timestamp = now.strftime("%Y%m%dT%H%M%SZ")
+    scope = f"{datestamp}/auto/storage/goog4_request"
+    cred = f"{sa_email}/{scope}"
+    params = [
+        ("X-Goog-Algorithm", "GOOG4-RSA-SHA256"),
+        ("X-Goog-Credential", urllib.parse.quote(cred, safe="")),
+        ("X-Goog-Date", timestamp),
+        ("X-Goog-Expires", "300"),
+        ("X-Goog-SignedHeaders", "host"),
+    ]
+    query = "&".join(f"{k}={v}" for k, v in params)
+    escaped_obj = "/".join(urllib.parse.quote(p, safe="") for p in obj.split("/"))
+    canonical = "\n".join(
+        [
+            "GET",
+            f"/{bucket}/{escaped_obj}",
+            query,
+            "host:storage.googleapis.com",
+            "",
+            "host",
+            "UNSIGNED-PAYLOAD",
+        ]
+    )
+    sts = "\n".join(
+        [
+            "GOOG4-RSA-SHA256",
+            timestamp,
+            scope,
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        ]
+    )
+    body = json.dumps({"payload": base64.b64encode(sts.encode("utf-8")).decode("ascii")}).encode("utf-8")
+    sign_req = urllib.request.Request(
+        f"https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/{sa_email}:signBlob",
+        data=body,
+        headers={"Authorization": f"Bearer {tok}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(sign_req, timeout=10) as resp:
+            sig_b64 = json.loads(resp.read().decode("utf-8"))["signedBlob"]
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"signBlob HTTP {exc.code}: {detail}") from exc
+    sig_hex = base64.b64decode(sig_b64).hex()
+    return f"https://storage.googleapis.com/{bucket}/{escaped_obj}?{query}&X-Goog-Signature={sig_hex}"
 
 
 def sign_session(payload_obj):
@@ -153,6 +211,9 @@ class AppHandler(http.server.BaseHTTPRequestHandler):
                 return self.handle_notes_get()
             if parsed.path == "/api/storage":
                 return self.handle_storage_get(qs)
+            if parsed.path == "/api/sign":
+                key = ((qs.get("key") or ["seed.txt"])[0]).lstrip("/")
+                return self.send_json(200, {"ok": True, "signedUrl": sign_gcs_v4(os.environ.get("STORAGE_BUCKET", ""), key)})
             if parsed.path == "/api/health":
                 return self.handle_health(session)
             return self.handle_dashboard(session)

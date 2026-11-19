@@ -12,7 +12,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*ProjectResource)(nil)
+var (
+	_ core.StatelessResource              = (*ProjectResource)(nil)
+	_ core.ScopedSpecOf[*ProjectResource] = Project{}
+)
 
 // Project declares an application's Vercel Project, CustomEnvironments, ProtectionBypass, Domains, and shared BlobStore in Premise's infra/shared stack.
 type Project struct {
@@ -43,6 +46,8 @@ type Project struct {
 	BlobAccess            string
 	BlobRegion            string
 	ProtectionBypassToken string
+	PreviewEnv            map[string]pulumi.StringInput
+	PreviewSecrets        map[string]pulumi.StringInput
 }
 
 // ProjectResource is the provisioned handle for an application's Vercel Project, custom environments, domains, and bypass secret.
@@ -60,6 +65,7 @@ type ProjectResource struct {
 	ExtraProjectDomains      []*vercelprov.ProjectDomain
 	BlobStore                *vercelprov.BlobStore
 	BlobConnection           *vercelprov.BlobProjectConnection
+	PreviewEnvVariables      []*vercelprov.ProjectEnvironmentVariable
 	ProjectID                pulumi.StringOutput
 	VercelProjectName        pulumi.StringOutput
 	TeamID                   pulumi.StringOutput
@@ -91,17 +97,32 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	if err := provisionVercelProject(ctx, p.Name, meta, p, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
-		Env: map[string]pulumi.StringOutput{
-			"VERCEL_PROJECT_ID": res.ProjectID,
-		},
-		Secrets: map[string]pulumi.StringOutput{
-			"VERCEL_AUTOMATION_BYPASS_SECRET": res.ProtectionBypassSecret,
-		},
-	})
+	res.SetLink(buildVercelProjectLink(meta, res))
 	return res, registerVercelProjectOutputs(ctx, res)
+}
+
+// RegisterInScope adapts vercel.Project to openbase.Project.
+func (p Project) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return p.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers vercel.Project with inherited Project and PlatformRef defaults.
+func (p Project) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
+	if p.Project == "" {
+		p.Project = scope.Project
+	}
+	if p.Repo == "" {
+		p.Repo = scope.Repo
+	}
+	if p.Platform == nil && scope.Platform != nil {
+		if plat, ok := scope.Platform.PlatformHandle("vercel-platform").(*PlatformResource); ok {
+			p.Platform = plat
+		}
+	}
+	if p.PlatformStackRef == "" {
+		p.PlatformStackRef = scope.PlatformStackName()
+	}
+	return p.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -134,6 +155,22 @@ func provisionVercelProject(
 	res.TeamSlug = plat.teamSlug
 	res.BaseDomain = plat.baseDom
 
+	if err := provisionVercelProjectChildren(ctx, name, meta, vProjName, spec, plat, proj, res); err != nil {
+		return err
+	}
+	return seedOptionalPreviewEnvVars(ctx, name, spec, res)
+}
+
+func provisionVercelProjectChildren(
+	ctx *pulumi.Context,
+	name string,
+	meta core.ResourceMeta,
+	vProjName string,
+	spec Project,
+	plat resolvedVercelPlatform,
+	proj *vercelprov.Project,
+	res *ProjectResource,
+) error {
 	if err := createDevCustomEnv(ctx, name, spec, plat.teamID, proj, res); err != nil {
 		return err
 	}
@@ -147,6 +184,55 @@ func provisionVercelProject(
 		return err
 	}
 	return createOptionalProjectBlob(ctx, name, meta, spec, plat.teamID, proj, res)
+}
+
+func seedOptionalPreviewEnvVars(
+	ctx *pulumi.Context,
+	name string,
+	spec Project,
+	res *ProjectResource,
+) error {
+	if len(spec.PreviewEnv) == 0 && len(spec.PreviewSecrets) == 0 {
+		return nil
+	}
+	plain := make(map[string]pulumi.StringOutput, len(spec.PreviewEnv))
+	for k, v := range spec.PreviewEnv {
+		plain[k] = v.ToStringOutput()
+	}
+	secrets := make(map[string]pulumi.StringOutput, len(spec.PreviewSecrets))
+	for k, v := range spec.PreviewSecrets {
+		secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
+	}
+	if err := writePreviewEnvMap(ctx, name, plain, false, res); err != nil {
+		return err
+	}
+	return writePreviewEnvMap(ctx, name, secrets, true, res)
+}
+
+func writePreviewEnvMap(
+	ctx *pulumi.Context,
+	name string,
+	vars map[string]pulumi.StringOutput,
+	sensitive bool,
+	res *ProjectResource,
+) error {
+	teamPtr := nonEmptyStringPtrOutput(res.TeamID)
+	for _, k := range sortedMapKeys(vars) {
+		slug := core.BoundedName(strings.ToLower(k), 28)
+		ev, err := vercelprov.NewProjectEnvironmentVariable(ctx, fmt.Sprintf("%s-preview-%s", name, slug), &vercelprov.ProjectEnvironmentVariableArgs{
+			ProjectId: res.ProjectID,
+			TeamId:    teamPtr,
+			Targets:   pulumi.ToStringArray([]string{"preview"}),
+			Key:       pulumi.String(k),
+			Value:     vars[k],
+			Sensitive: pulumi.Bool(sensitive),
+		}, pulumi.Parent(res))
+		if err != nil {
+			return err
+		}
+		res.PreviewEnvVariables = append(res.PreviewEnvVariables, ev)
+	}
+	return nil
 }
 
 func resolveVercelPlatformRefs(ctx *pulumi.Context, name string, spec Project) (resolvedVercelPlatform, error) {
@@ -447,6 +533,41 @@ func createOptionalProjectBlob(
 	res.BlobStoreID = store.ID().ToStringOutput()
 	res.BlobBaseURL = DeriveBlobBaseURL(store.ID())
 	return nil
+}
+
+func buildVercelProjectLink(meta core.ResourceMeta, res *ProjectResource) core.LinkDescriptor {
+	return core.LinkDescriptor{
+		Name: meta.Name,
+		Kind: meta.Kind,
+		Attributes: map[string]pulumi.StringOutput{
+			"projectId":                res.ProjectID,
+			"vercelProjectName":        res.VercelProjectName,
+			"teamId":                   res.TeamID,
+			"teamSlug":                 res.TeamSlug,
+			"baseDomain":               res.BaseDomain,
+			"devCustomEnvironmentId":   res.DevCustomEnvironmentID,
+			"stageCustomEnvironmentId": res.StageCustomEnvironmentID,
+			"devDomainName":            res.DevDomainName,
+			"prodDomainName":           res.ProdDomainName,
+			"stageDomainName":          res.StageDomainName,
+			"blobStoreId":              res.BlobStoreID,
+			"blobBaseUrl":              res.BlobBaseURL,
+		},
+		StackExports: map[string]pulumi.Input{
+			"vercelProjectId":          res.ProjectID,
+			"vercelProjectName":        res.VercelProjectName,
+			"teamSlug":                 res.TeamSlug,
+			"baseDomain":               res.BaseDomain,
+			"devCustomEnvironmentId":   res.DevCustomEnvironmentID,
+			"stageCustomEnvironmentId": res.StageCustomEnvironmentID,
+			"protectionBypassSecret":   res.ProtectionBypassSecret,
+			"devDomainName":            res.DevDomainName,
+			"prodDomainName":           res.ProdDomainName,
+			"stageDomainName":          res.StageDomainName,
+			"blobStoreId":              res.BlobStoreID,
+			"blobBaseUrl":              res.BlobBaseURL,
+		},
+	}
 }
 
 func registerVercelProjectOutputs(ctx *pulumi.Context, res *ProjectResource) error {

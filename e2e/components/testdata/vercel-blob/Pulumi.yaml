@@ -1,3 +1,0 @@
-name: openbase-vercel-blob-fixture
-runtime: go
-description: Standalone Go consumer fixture for OpenBase vercel.Project and vercel.BlobStore E2E tests

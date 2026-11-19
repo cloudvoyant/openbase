@@ -52,7 +52,7 @@ func TestCloudRunService(t *testing.T) {
 			mocks.assertCount(t, "gcp:cloudrunv2/serviceIamMember:ServiceIamMember", 1)
 		})
 
-		t.Run("when linking a caller service to an internal service with DomainMapping, then it exports ORDERS_URL and binds roles/run.invoker", func(t *testing.T) {
+		t.Run("when linking a caller service to an internal service with DomainMapping, then it exposes URL outputs and binds roles/run.invoker", func(t *testing.T) {
 			// Arrange.
 			mocks := newGCPMocks()
 			urlCh := make(chan string, 1)
@@ -75,13 +75,14 @@ func TestCloudRunService(t *testing.T) {
 					Project:     "storefront",
 					Environment: "prod",
 					Links:       []core.Resource{backend},
+					Env:         map[string]pulumi.StringInput{"ORDERS_URL": backend.URL},
 					Image:       pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
 					Visibility:  gcp.VisibilityWorker,
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
-				backend.Link().Env["ORDERS_URL"].ApplyT(func(v string) string { urlCh <- v; return v })
+				backend.URL.ApplyT(func(v string) string { urlCh <- v; return v })
 				_ = caller
 				return nil
 			}, pulumi.WithMocks("storefront", "prod", mocks))
@@ -89,7 +90,7 @@ func TestCloudRunService(t *testing.T) {
 			// Assert.
 			requireGCPNoErr(t, err)
 			if got := <-urlCh; got != "https://orders-svc.a.run.app" {
-				t.Fatalf("ORDERS_URL = %q", got)
+				t.Fatalf("backend.URL = %q", got)
 			}
 			mocks.assertCount(t, "gcp:cloudrun/domainMapping:DomainMapping", 1)
 			mocks.assertCount(t, "gcp:cloudrunv2/serviceIamMember:ServiceIamMember", 1)

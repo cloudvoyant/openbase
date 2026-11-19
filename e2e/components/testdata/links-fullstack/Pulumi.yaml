@@ -1,3 +1,0 @@
-name: openbase-links-fullstack-fixture
-runtime: go
-description: Standalone Go consumer fixture for cross-cloud OpenBase Links and OIDC federation

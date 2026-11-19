@@ -1,3 +1,0 @@
-name: openbase-gcp-bucket-fixture
-runtime: go
-description: Standalone Go consumer fixture for OpenBase gcp.Bucket E2E tests

@@ -1,321 +1,292 @@
 # OpenBase user guide
 
-OpenBase organizes cloud infrastructure into three clean tiers using declarative Go specs (`<pkg>.<Spec>{...}.Register(ctx)`):
+OpenBase organizes cloud infrastructure into three scopes in the root `github.com/cloudvoyant/openbase/libs/components` package:
 
-1. **`Platform` (once per organization, e.g. a central `platform` repo)**: Enables GCP APIs, provisions one org-wide Workload Identity Pool, optional KMS KeyRing, and wildcard HTTPS Load Balancer (`*.gcp.acme.io`), sets Vercel team/domain defaults (`*.vercel.acme.io`), sets Neon org/region defaults, and validates `dev` & `prod` Kinde tenants (`composite.Platform` or `<provider>.Platform`).
-2. **`Project` (once per application repo in `infra/shared/main.go`, deployed via `pm infra apply --shared`)**: Provisions the app's Artifact Registry repository, Vercel Project (`staging` CustomEnvironment, `prod` & `staging` domains, automation bypass, shared Blob store), Neon Project cluster, and `dev` & `prod` Kinde OIDC `Application`s (`composite.VercelNeonProject` / `composite.GcpCloudRunNeonProject` or `<provider>.Project`).
-3. **`Environment` (per `dev`, `stage`, `prod`, and `preview-<slug>` stack in `infra/main.go`, deployed via `pm infra apply --env ...`)**: Deploys isolated compute, copy-on-write Neon branches, storage overlays, and Kinde callbacks wired from `ProjectStackRef` (`composite.VercelNeonApp` / `composite.GcpCloudRunNeonApp` or concrete product specs).
+1. `openbase.Platform` runs once per organization in a dedicated platform repository (`platform/main.go` on stack `platform`) to enable GCP APIs, create one Workload Identity Pool and wildcard HTTPS Load Balancer, export Vercel team and Neon organization defaults, and connect `NonProd` and `Prod` Kinde tenants.
+2. `openbase.Project` runs once per application repository in `infra/shared/main.go` (`shared` stack via `pm infra apply --shared`) to provision shared assets such as `gcp.Project`, `vercel.Project`, `neon.Project`, `kinde.Project`, or shared `gcp.Bucket` stores.
+3. `openbase.Environment` runs per `dev`, `stage`, `prod`, and `preview-<slug>` stack in `infra/main.go` (`pm infra apply --env ...`) to provision isolated compute, copy-on-write Neon branches, storage overlays, and OIDC bindings.
 
 ## Stack topology
 
 ```mermaid
 flowchart TD
-    OrgProg["Org Repo (composite.Platform)"] --> OrgStack["Stack: organization/platform/shared"]
-    ProjProg["App Shared Program (infra/shared/main.go)"] --> ProjStack["Stack: shared (VercelNeonProject / GcpCloudRunNeonProject)"]
-    EnvProg["App Environment Program (infra/main.go)"] --> Dev["Stack: dev"]
+    OrgProg["Platform Repo (platform/main.go)"] --> OrgStack["Stack: acme/platform/platform (openbase.Platform)"]
+    ProjProg["App Shared Program (infra/shared/main.go)"] --> ProjStack["Stack: acme/storefront-shared/shared (openbase.Project)"]
+    EnvProg["App Environment Program (infra/main.go)"] --> Dev["Stack: dev (openbase.Environment)"]
     EnvProg --> Stage["Stack: stage (BranchFrom: prod)"]
     EnvProg --> Prod["Stack: prod"]
     EnvProg --> Preview["Stack: preview-<slug> (BranchFrom: dev)"]
-    OrgStack -->|"PlatformStackRef (optional)"| ProjStack
-    ProjStack -->|"ProjectStackRef"| Dev
-    ProjStack -->|"ProjectStackRef"| Stage
-    ProjStack -->|"ProjectStackRef"| Prod
-    ProjStack -->|"ProjectStackRef"| Preview
+    OrgStack -->|"LookupPlatform / PlatformStackRef"| ProjStack
+    ProjStack -->|"LookupProject / openbaseManifest"| Dev
+    ProjStack -->|"LookupProject / openbaseManifest"| Stage
+    ProjStack -->|"LookupProject / openbaseManifest"| Prod
+    ProjStack -->|"LookupProject / openbaseManifest"| Preview
 ```
 
-## 1. Install OpenBase in your workspace
+## 1. Install OpenBase
 
 ```sh
 go get github.com/cloudvoyant/openbase/libs/components@latest
 ```
 
-## 2. Organization foundation (`composite.Platform`, once per org)
+## 2. Organization platform (`openbase.Platform`)
+
+Deploy one organization platform stack into your shared Pulumi backend (`gs://<org>-pulumi-state`):
 
 ```go
 package main
 
 import (
-	"os"
-
-	"github.com/cloudvoyant/openbase/libs/components/composite"
-	"github.com/cloudvoyant/openbase/libs/components/gcp"
-	"github.com/cloudvoyant/openbase/libs/components/kinde"
-	"github.com/cloudvoyant/openbase/libs/components/neon"
-	"github.com/cloudvoyant/openbase/libs/components/vercel"
-	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-)
-
-func main() {
-	pulumi.Run(func(ctx *pulumi.Context) error {
-		_, err := composite.Platform{
-			Org: "acme",
-			GCP: &gcp.Platform{
-				GCPProject:         pulumi.String(os.Getenv("GCP_PROJECT")),
-				GCPProjectNumber:   os.Getenv("GCP_PROJECT_NUMBER"),
-				GitHubOrg:          "acme",
-				VercelTeamSlug:     "acme",
-				BaseDomain:         "gcp.acme.io",
-				EnableLoadBalancer: true,
-			},
-			Vercel: &vercel.Platform{
-				TeamID:     os.Getenv("VERCEL_TEAM_ID"),
-				TeamSlug:   "acme",
-				BaseDomain: "vercel.acme.io",
-			},
-			Neon: &neon.Platform{
-				OrgID:    os.Getenv("NEON_ORG_ID"),
-				RegionID: "aws-us-east-1",
-			},
-			Kinde: &kinde.Platform{
-				Dev: kinde.TenantCredentials{
-					Domain:       os.Getenv("KINDE_DEV_TENANT_DOMAIN"),
-					ClientID:     pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_ID")),
-					ClientSecret: pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_SECRET")),
-				},
-				Prod: kinde.TenantCredentials{
-					Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
-					ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
-					ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
-				},
-			},
-		}.Register(ctx)
-		return err
-	})
-}
-```
-
-## 3. Application quickstart with `libs/components/composite` (Premise layout)
-
-In `premise.yaml`, configure `workspace.infra.directory: infra` and `workspace.infra.shared_directory: infra/shared`.
-
-### `infra/shared/main.go` (`name: storefront-shared`, deployed via `pm infra apply --shared`)
-
-```go
-package main
-
-import (
-	"os"
-
-	"github.com/cloudvoyant/openbase/libs/components/composite"
-	"github.com/cloudvoyant/openbase/libs/components/kinde"
-	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-)
-
-func main() {
-	pulumi.Run(func(ctx *pulumi.Context) error {
-		_, err := composite.VercelNeonProject{
-			Project:          "storefront",
-			PlatformStackRef: "organization/platform/shared", // optional: inherits TeamID/TeamSlug/BaseDomain/NeonOrgID
-			TeamSlug:         "acme",
-			BaseDomain:       "vercel.acme.io",
-			Auth: &composite.KindeProjectConfig{
-				Dev: kinde.TenantCredentials{
-					Domain:       os.Getenv("KINDE_DEV_TENANT_DOMAIN"),
-					ClientID:     pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_ID")),
-					ClientSecret: pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_SECRET")),
-				},
-				Prod: kinde.TenantCredentials{
-					Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
-					ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
-					ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
-				},
-			},
-		}.Register(ctx)
-		return err
-	})
-}
-```
-
-### `infra/main.go` (`name: storefront`, deployed via `pm infra apply --env dev|stage|prod|preview`)
-
-```go
-package main
-
-import (
-	"os"
-
-	"github.com/cloudvoyant/openbase/libs/components/composite"
-	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-)
-
-func main() {
-	pulumi.Run(func(ctx *pulumi.Context) error {
-		_, err := composite.VercelNeonApp{
-			Name:       "web",
-			Project:    "storefront",
-			TeamID:     os.Getenv("VERCEL_TEAM_ID"),
-			TeamSlug:   "acme",
-			BaseDomain: "vercel.acme.io",
-			SourceDir:  "../apps/web",
-			Auth:       &composite.KindeAppConfig{},
-		}.Register(ctx)
-		return err
-	})
-}
-```
-
-`VercelNeonApp` automatically resolves `ProjectStackRef` to `<org>/<project>-shared/shared` — no Kinde M2M admin credentials or Neon org IDs are needed in `infra/main.go`. Swap `VercelNeonProject` + `VercelNeonApp` for `GcpCloudRunNeonProject` + `GcpCloudRunNeonApp` to target Cloud Run + GCS + Neon + Kinde with the exact same Premise stack lifecycle.
-
-## 4. Custom provider composition
-
-```go
-package main
-
-import (
-	"os"
-
+	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/core"
 	"github.com/cloudvoyant/openbase/libs/components/gcp"
 	"github.com/cloudvoyant/openbase/libs/components/kinde"
 	"github.com/cloudvoyant/openbase/libs/components/neon"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 )
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		env, err := core.ResolveEnvironment(ctx, "")
-		if err != nil {
-			return err
+		cfg := config.New(ctx, "")
+		vercelPlat := vercel.Platform{
+			TeamID:     "team_123",
+			TeamSlug:   "acme",
+			BaseDomain: "vercel.acme.io",
 		}
-		if env == core.EnvShared {
-			return deployProject(ctx)
-		}
-		return deployEnvironment(ctx, env)
+		_, err := openbase.Platform{
+			Org: "acme",
+			Resources: []core.PlatformSpecItem{
+				vercelPlat,
+				gcp.Platform{
+					GCPProject:         pulumi.String("acme-cloud"),
+					GCPProjectNumber:   "123456789012",
+					Links:              []core.OIDCProviderSource{vercelPlat, core.GitHubActionsOIDC("acme")},
+					BaseDomain:         "gcp.acme.io",
+					EnableLoadBalancer: true,
+				},
+				neon.Platform{
+					OrgID:    "org-acme",
+					RegionID: "aws-us-east-1",
+				},
+				kinde.Platform{
+					NonProd: kinde.TenantCredentials{
+						Domain:       "acme-nonprod.kinde.com",
+						ClientID:     cfg.Require("kindeNonProdClientId"),
+						ClientSecret: cfg.RequireSecret("kindeNonProdClientSecret"),
+					},
+					Prod: kinde.TenantCredentials{
+						Domain:       "acme.kinde.com",
+						ClientID:     cfg.Require("kindeProdClientId"),
+						ClientSecret: cfg.RequireSecret("kindeProdClientSecret"),
+					},
+				},
+			},
+		}.Register(ctx)
+		return err
 	})
-}
-
-func deployProject(ctx *pulumi.Context) error {
-	gcpProj, err := gcp.Project{
-		Name:             "gcp",
-		Project:          "storefront",
-		PlatformStackRef: "organization/platform/shared",
-		GCPProject:       pulumi.String(os.Getenv("GCP_PROJECT")),
-	}.Register(ctx)
-	if err != nil {
-		return err
-	}
-	vercelProj, err := vercel.Project{
-		Name:             "vercel",
-		Project:          "storefront",
-		PlatformStackRef: "organization/platform/shared",
-		EnableBlobStore:  true,
-	}.Register(ctx)
-	if err != nil {
-		return err
-	}
-	neonProj, err := neon.Project{
-		Name:             "neon",
-		Project:          "storefront",
-		PlatformStackRef: "organization/platform/shared",
-	}.Register(ctx)
-	if err != nil {
-		return err
-	}
-	kindeProj, err := kinde.Project{
-		Name:           "kinde",
-		Project:        "storefront",
-		VercelTeamSlug: "acme",
-		Dev: kinde.TenantCredentials{
-			Domain:       os.Getenv("KINDE_DEV_TENANT_DOMAIN"),
-			ClientID:     pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_ID")),
-			ClientSecret: pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_SECRET")),
-		},
-		Prod: kinde.TenantCredentials{
-			Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
-			ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
-			ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
-		},
-	}.Register(ctx)
-	if err != nil {
-		return err
-	}
-	ctx.Export("vercelProjectId", vercelProj.ProjectID)
-	ctx.Export("stageCustomEnvironmentId", vercelProj.StageCustomEnvironmentID)
-	ctx.Export("blobStoreId", vercelProj.BlobStoreID)
-	ctx.Export("neonProjectId", neonProj.ProjectID)
-	ctx.Export("neonDefaultBranchId", neonProj.DefaultBranchID)
-	ctx.Export("workloadIdentityPoolName", gcpProj.WorkloadIdentityPoolName)
-	ctx.Export("vercelOidcProviderName", gcpProj.VercelOIDCProviderName)
-	ctx.Export("devIssuerUrl", kindeProj.DevIssuerURL)
-	ctx.Export("devClientId", kindeProj.DevClientID)
-	ctx.Export("devClientSecret", kindeProj.DevClientSecret)
-	ctx.Export("prodIssuerUrl", kindeProj.ProdIssuerURL)
-	ctx.Export("prodClientId", kindeProj.ProdClientID)
-	ctx.Export("prodClientSecret", kindeProj.ProdClientSecret)
-	return nil
-}
-
-func deployEnvironment(ctx *pulumi.Context, env core.Environment) error {
-	branchFrom := ""
-	if env.IsPreview() {
-		branchFrom = "dev"
-	}
-	uploads, err := gcp.Bucket{
-		Name:            "uploads",
-		Project:         "storefront",
-		BranchFrom:      branchFrom,
-		BucketNamespace: os.Getenv("GCP_PROJECT"),
-	}.Register(ctx)
-	if err != nil {
-		return err
-	}
-	dbBranch := branchFrom
-	if env == core.EnvStage {
-		dbBranch = "prod"
-	}
-	db, err := neon.Database{
-		Name:            "db",
-		Project:         "storefront",
-		BranchFrom:      dbBranch,
-		ProjectStackRef: "organization/storefront/shared",
-	}.Register(ctx)
-	if err != nil {
-		return err
-	}
-	oidc, err := kinde.OidcApp{
-		Name:            "auth",
-		Project:         "storefront",
-		ProjectStackRef: "organization/storefront/shared",
-		VercelTeamSlug:  "acme",
-	}.Register(ctx)
-	if err != nil {
-		return err
-	}
-	api, err := gcp.CloudRunService{
-		Name:            "orders",
-		Project:         "storefront",
-		Links:           []core.Resource{uploads, db, oidc},
-		ProjectStackRef: "organization/storefront/shared",
-		Visibility:      gcp.VisibilityInternal,
-		Image:           pulumi.String("us-central1-docker.pkg.dev/my-proj/storefront/orders:latest"),
-	}.Register(ctx)
-	if err != nil {
-		return err
-	}
-	_, err = vercel.WebApp{
-		Name:            "web",
-		Project:         "storefront",
-		Links:           []core.Resource{api, uploads, db, oidc},
-		ProjectStackRef: "organization/storefront/shared",
-		TeamSlug:        "acme",
-		SourceDir:       "../apps/web",
-	}.Register(ctx)
-	return err
 }
 ```
 
-## 5. Zero-copy storage reads in Go
+## 3. Shared repository project (`infra/shared/main.go`)
 
-- **Google Cloud Storage (`libs/components/gcp/overlayfs`)**: Call `overlayfs.NewStoreFromEnv(storageClient, "STORAGE")` so `preview-*` reads fall back to `dev` on `storage.ErrObjectNotExist` while writes stay isolated in the preview bucket.
-- **Vercel Blob (`libs/components/vercel`)**: Call `vercel.NewBlobOverlayClient(baseURL, token, os.Getenv("BLOB_PREFIX"), os.Getenv("BLOB_FALLBACK_PREFIX"))` for prefix-isolated writes and fallback reads.
+Set `workspace.infra.directory: infra` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Register any combination of shared project resources with `openbase.NewProject` and `openbase.Add` (inheriting organization settings and Kinde tenant connections from `PlatformStackRef`):
+
+```go
+package main
+
+import (
+	openbase "github.com/cloudvoyant/openbase/libs/components"
+	"github.com/cloudvoyant/openbase/libs/components/kinde"
+	"github.com/cloudvoyant/openbase/libs/components/neon"
+	"github.com/cloudvoyant/openbase/libs/components/vercel"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+)
+
+func main() {
+	pulumi.Run(func(ctx *pulumi.Context) error {
+		proj, err := openbase.NewProject(ctx, openbase.Project{
+			Project:          "storefront",
+			PlatformStackRef: "acme/platform/platform",
+		})
+		if err != nil {
+			return err
+		}
+		authProj, err := openbase.Add(proj, kinde.Project{
+			VercelTeamSlug: "acme",
+			BaseDomain:     "vercel.acme.io",
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := openbase.Add(proj, neon.Project{}); err != nil {
+			return err
+		}
+		_, err = openbase.Add(proj, vercel.Project{
+			EnableBlobStore: true,
+			PreviewEnv: map[string]pulumi.StringInput{
+				"KINDE_ISSUER_URL": authProj.NonProdIssuerURL,
+				"KINDE_CLIENT_ID":  authProj.NonProdClientID,
+			},
+			PreviewSecrets: map[string]pulumi.StringInput{
+				"KINDE_CLIENT_SECRET": authProj.NonProdClientSecret,
+			},
+		})
+		return err
+	})
+}
+```
+
+## 4. Per-environment stack (`infra/main.go`)
+
+`openbase.NewEnvironment` resolves `<org>/<project>-shared/shared` automatically and sets default stateful branching (`stage` from `prod`, `preview-*` from `dev`). `Links` grants IAM and OIDC access, while callers wire their own `Env` and `Secrets` keys directly from typed resource outputs:
+
+```go
+package main
+
+import (
+	openbase "github.com/cloudvoyant/openbase/libs/components"
+	"github.com/cloudvoyant/openbase/libs/components/core"
+	"github.com/cloudvoyant/openbase/libs/components/kinde"
+	"github.com/cloudvoyant/openbase/libs/components/neon"
+	"github.com/cloudvoyant/openbase/libs/components/vercel"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
+)
+
+func main() {
+	pulumi.Run(func(ctx *pulumi.Context) error {
+		cfg := config.New(ctx, "")
+		env, err := openbase.NewEnvironment(ctx, openbase.Environment{
+			Project: "storefront",
+		})
+		if err != nil {
+			return err
+		}
+		db, err := openbase.Add(env, neon.Database{
+			Name:   "db",
+			APIKey: cfg.RequireSecret("neonApiKey"),
+		})
+		if err != nil {
+			return err
+		}
+		uploads, err := openbase.Add(env, vercel.BlobStore{
+			Name:               "uploads",
+			TeamID:             "team_123",
+			BlobReadWriteToken: cfg.RequireSecret("blobReadWriteToken"),
+		})
+		if err != nil {
+			return err
+		}
+		auth, err := openbase.Add(env, kinde.OidcApp{
+			Name:           "auth",
+			VercelTeamSlug: "acme",
+			BaseDomain:     "vercel.acme.io",
+		})
+		if err != nil {
+			return err
+		}
+		_, err = openbase.Add(env, vercel.WebApp{
+			Name:       "web",
+			TeamID:     "team_123",
+			TeamSlug:   "acme",
+			BaseDomain: "vercel.acme.io",
+			SourceDir:  "../apps/web",
+			Links:      []core.Resource{uploads},
+			Env: map[string]pulumi.StringInput{
+				"BLOB_BASE_URL":        uploads.BlobBaseURL,
+				"BLOB_PREFIX":          pulumi.String(uploads.BlobPrefix),
+				"BLOB_FALLBACK_PREFIX": pulumi.String(uploads.BlobFallbackPrefix),
+				"KINDE_ISSUER_URL":     auth.IssuerURL,
+				"KINDE_CLIENT_ID":      auth.ClientID,
+				"KINDE_REDIRECT_URL":   auth.RedirectURL,
+			},
+			Secrets: map[string]pulumi.StringInput{
+				"DATABASE_URL":          db.DatabaseURL,
+				"DIRECT_URL":            db.DirectURL,
+				"BLOB_READ_WRITE_TOKEN": cfg.RequireSecret("blobReadWriteToken"),
+				"KINDE_CLIENT_SECRET":   auth.ClientSecret,
+			},
+		})
+		return err
+	})
+}
+```
+
+## 5. Hybrid multi-app and cross-cloud WIF
+
+An `openbase.Environment` can host multiple apps and services (such as a `vercel.WebApp` frontend and an internal `gcp.CloudRunService` API) and link shared resources from `infra/shared`. Register `gcp.FederatedIdentity` (or `gcp.WIFBroker`) so external OIDC callers receive federated Google Cloud service accounts at the `Links` boundary while exposing typed service-account and WIF audience outputs:
+
+```go
+platRef, err := openbase.LookupPlatform(ctx, "acme/platform/platform")
+if err != nil {
+	return err
+}
+env, err := openbase.NewEnvironment(ctx, openbase.Environment{
+	Project:  "storefront",
+	Platform: platRef,
+})
+if err != nil {
+	return err
+}
+sharedAssets := env.Project().Resource(
+	"shared-assets",
+	core.WithRemoteKind("gcp-bucket"),
+)
+fed, err := openbase.Add(env, gcp.FederatedIdentity{
+	Name:           "web-wif",
+	GCPProject:     pulumi.String("acme-cloud"),
+	PoolName:       platRef.Output("workloadIdentityPoolName"),
+	OIDCProvider:   platRef.Output("vercelOidcProviderName"),
+	SourceProvider: "vercel",
+	ClaimKey:       "project_id",
+	ClaimValue:     env.Project().Output("vercelProjectId"),
+})
+if err != nil {
+	return err
+}
+ordersAPI, err := openbase.Add(env, gcp.CloudRunService{
+	Name:       "orders",
+	GCPProject: pulumi.String("acme-cloud"),
+	Visibility: gcp.VisibilityInternal,
+	Image:      pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
+	Links:      []core.Resource{sharedAssets},
+	Env: map[string]pulumi.StringInput{
+		"ASSETS_BUCKET": sharedAssets.Attr("bucketName"),
+	},
+	Secrets: map[string]pulumi.StringInput{
+		"DATABASE_URL": db.DatabaseURL,
+	},
+})
+if err != nil {
+	return err
+}
+_, err = openbase.Add(env, vercel.WebApp{
+	Name:      "web",
+	SourceDir: "../apps/web",
+	Links:     []core.Resource{ordersAPI, sharedAssets},
+	Brokers:   []core.IdentityBroker{fed},
+	Env: map[string]pulumi.StringInput{
+		"GCP_SERVICE_ACCOUNT_EMAIL":      fed.ServiceAccountEmail,
+		"GCP_WORKLOAD_IDENTITY_PROVIDER": fed.ProviderAudience,
+		"ORDERS_URL":                     ordersAPI.URL,
+		"ASSETS_BUCKET":                  sharedAssets.Attr("bucketName"),
+	},
+})
+```
+
+## 6. Zero-copy storage reads in Go
+
+1. For Google Cloud Storage (`libs/components/gcp/overlayfs`), call `overlayfs.NewStore(storageClient, primaryBucket, fallbackBucket)` so `preview-*` reads fall back to `dev` on `storage.ErrObjectNotExist` while writes stay isolated in the preview bucket.
+2. For Vercel Blob (`libs/components/vercel`), call `vercel.NewBlobOverlayClient(baseURL, token, primaryPrefix, fallbackPrefix)` for prefix-isolated writes and fallback reads.
 
 ## Further reading
 
 - [Architecture Overview](./architecture/index.md)
+- [Unified Scopes and Manifests](./architecture/scopes.md)
 - [Core Resources and Tier Contracts](./architecture/resources.md)
 - [GCP Provider](./architecture/providers/gcp/index.md)
 - [Vercel Provider](./architecture/providers/vercel/index.md)
 - [Neon Provider](./architecture/providers/neon/index.md)
 - [Kinde Provider](./architecture/providers/kinde/index.md)
-- [Composite Blueprints](./architecture/providers/composite/index.md)

@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/serviceaccount"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 	vercelprov "github.com/pulumiverse/pulumi-vercel/sdk/v5/go/vercel"
 
@@ -15,12 +14,15 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*WebAppResource)(nil)
+var (
+	_ core.StatelessResource             = (*WebAppResource)(nil)
+	_ core.ScopedSpecOf[*WebAppResource] = WebApp{}
+)
 
 // ErrProjectSourceRequired reports a missing Vercel project reference on WebApp.
 var ErrProjectSourceRequired = errors.New("vercel: vercelProject, projectStackRef, or vercelProjectId is required")
 
-// WebApp declares a per-environment Vercel WebApp deployment, aliases, env vars, and GCP OIDC federation.
+// WebApp declares a per-environment Vercel WebApp deployment, aliases, env vars, and OIDC identity brokering.
 type WebApp struct {
 	Name                     string
 	Project                  string
@@ -28,6 +30,7 @@ type WebApp struct {
 	Environment              string
 	Kind                     string
 	Links                    []core.Resource
+	Brokers                  []core.IdentityBroker
 	Env                      map[string]pulumi.StringInput
 	Secrets                  map[string]pulumi.StringInput
 	VercelProject            *ProjectResource
@@ -50,33 +53,31 @@ type WebApp struct {
 	StageDomain              string
 	PreviewAlias             string
 	ExtraDomains             []string
-	GCPProject               pulumi.StringPtrInput
-	GCPWorkloadIdentityPool  pulumi.StringInput
-	GCPVercelOIDCProvider    pulumi.StringInput
 }
 
-// WebAppResource is the provisioned Vercel WebApp handle with scoped env vars, GCP WIF identity, Deployment, and Aliases.
+// WebAppResource is the provisioned Vercel WebApp handle with scoped env vars, Deployment, and Aliases.
 type WebAppResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
-	FederatedGCPAccount *serviceaccount.Account
-	EnvVariables        []*vercelprov.ProjectEnvironmentVariable
-	Deployment          *vercelprov.Deployment
-	Alias               *vercelprov.Alias
-	Aliases             []*vercelprov.Alias
-	CustomDomains       []*vercelprov.ProjectDomain
-	URL                 pulumi.StringOutput
-	URLs                pulumi.StringArrayOutput
-	AliasHost           pulumi.StringOutput
-	DeploymentID        pulumi.StringOutput
-	FederatedSAEmail    pulumi.StringOutput
+	EnvVariables  []*vercelprov.ProjectEnvironmentVariable
+	Deployment    *vercelprov.Deployment
+	Alias         *vercelprov.Alias
+	Aliases       []*vercelprov.Alias
+	CustomDomains []*vercelprov.ProjectDomain
+	URL           pulumi.StringOutput
+	URLs          pulumi.StringArrayOutput
+	AliasHost     pulumi.StringOutput
+	DeploymentID  pulumi.StringOutput
 }
 
 // Register provisions a Vercel WebApp component satisfying core.StatelessResource.
 func (w WebApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*WebAppResource, error) {
 	if w.VercelProject == nil && w.ProjectStackRef == "" && w.VercelProjectID == nil {
 		return nil, ErrProjectSourceRequired
+	}
+	if w.SourceDir != "" && w.SourceDir != "." && w.PathPrefix == "" {
+		w.PathPrefix = w.SourceDir
 	}
 	res := &WebAppResource{}
 	meta, err := core.InitStateless(ctx, "openbase:vercel:WebApp", "vercel-webapp", res, &res.StatelessMeta, core.StatelessSpec{
@@ -86,8 +87,6 @@ func (w WebApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*W
 		Environment: w.Environment,
 		Kind:        w.Kind,
 		Links:       w.Links,
-		Env:         w.Env,
-		Secrets:     w.Secrets,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -95,16 +94,53 @@ func (w WebApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*W
 	if err := provisionWebApp(ctx, w.Name, meta, w, res); err != nil {
 		return nil, err
 	}
-	urlKey := strings.ToUpper(strings.ReplaceAll(meta.Name, "-", "_")) + "_URL"
 	res.SetLink(core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
-		Env:  map[string]pulumi.StringOutput{urlKey: res.URL},
+		Attributes: map[string]pulumi.StringOutput{
+			"url":          res.URL,
+			"aliasHost":    res.AliasHost,
+			"deploymentId": res.DeploymentID,
+		},
+		StackExports: map[string]pulumi.Input{
+			"url":          res.URL,
+			"urls":         res.URLs,
+			"aliasHost":    res.AliasHost,
+			"deploymentId": res.DeploymentID,
+		},
 	})
 	if err := registerWebAppOutputs(ctx, meta, res); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// RegisterInScope adapts vercel.WebApp to openbase.Project and openbase.Environment.
+func (w WebApp) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return w.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers vercel.WebApp with inherited Scope metadata, Brokers, and ProjectStackRef.
+func (w WebApp) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*WebAppResource, error) {
+	if w.Project == "" {
+		w.Project = scope.Project
+	}
+	if w.Repo == "" {
+		w.Repo = scope.Repo
+	}
+	if w.Environment == "" {
+		w.Environment = string(scope.Env)
+	}
+	if w.VercelProject == nil && scope.ProjectRef != nil {
+		if vp, ok := scope.ProjectRef.ResourceHandle("vercel-project").(*ProjectResource); ok {
+			w.VercelProject = vp
+		}
+	}
+	if w.ProjectStackRef == "" && w.VercelProject == nil && w.VercelProjectID == nil {
+		w.ProjectStackRef = scope.ProjectStackName()
+	}
+	w.Brokers = append(append([]core.IdentityBroker{}, scope.Brokers...), w.Brokers...)
+	return w.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -116,8 +152,6 @@ type webAppRefs struct {
 	baseDomain  pulumi.StringOutput
 	devEnvID    pulumi.StringOutput
 	stageEnvID  pulumi.StringOutput
-	wifPool     pulumi.StringOutput
-	wifProvider pulumi.StringOutput
 }
 
 func provisionWebApp(
@@ -131,13 +165,7 @@ func provisionWebApp(
 	if err != nil {
 		return err
 	}
-	saEmail, err := configureOptionalGCPFederation(ctx, name, meta, spec, refs, res)
-	if err != nil {
-		return err
-	}
-	res.FederatedSAEmail = saEmail
-
-	resolved, err := resolveWebAppLinks(ctx, meta, spec, refs, saEmail)
+	resolved, err := resolveWebAppLinks(ctx, meta, spec, refs)
 	if err != nil {
 		return err
 	}
@@ -232,12 +260,6 @@ func initExplicitWebRefs(meta core.ResourceMeta, spec WebApp) webAppRefs {
 	if spec.StageCustomEnvironmentID != nil {
 		refs.stageEnvID = spec.StageCustomEnvironmentID.ToStringOutput()
 	}
-	if spec.GCPWorkloadIdentityPool != nil {
-		refs.wifPool = spec.GCPWorkloadIdentityPool.ToStringOutput()
-	}
-	if spec.GCPVercelOIDCProvider != nil {
-		refs.wifProvider = spec.GCPVercelOIDCProvider.ToStringOutput()
-	}
 	return refs
 }
 
@@ -259,40 +281,9 @@ func applyProjectStructWebRefs(refs *webAppRefs, proj *ProjectResource) {
 	}
 }
 
-func configureOptionalGCPFederation(
-	ctx *pulumi.Context,
-	name string,
-	meta core.ResourceMeta,
-	spec WebApp,
-	refs webAppRefs,
-	res *WebAppResource,
-) (pulumi.StringOutput, error) {
-	if spec.GCPProject == nil || !isOutSet(refs.wifPool) {
-		return pulumi.StringOutput{}, nil
-	}
-	saID, err := core.ServiceAccountID(meta.Project, meta.Environment, name+"-v")
-	if err != nil {
-		return pulumi.StringOutput{}, err
-	}
-	sa, err := serviceaccount.NewAccount(ctx, name+"-gcp-wif-sa", &serviceaccount.AccountArgs{
-		Project:     spec.GCPProject,
-		AccountId:   pulumi.String(saID),
-		DisplayName: pulumi.String(core.BoundedName(meta.CanonicalName+"-vercel", 63)),
-	}, pulumi.Parent(res))
-	if err != nil {
-		return pulumi.StringOutput{}, err
-	}
-	member := pulumi.Sprintf("principalSet://iam.googleapis.com/%s/attribute.project_id/%s", refs.wifPool, refs.projectID)
-	_, err = serviceaccount.NewIAMMember(ctx, name+"-gcp-wif-user", &serviceaccount.IAMMemberArgs{
-		ServiceAccountId: sa.Name,
-		Role:             pulumi.String("roles/iam.workloadIdentityUser"),
-		Member:           member,
-	}, pulumi.Parent(res))
-	if err != nil {
-		return pulumi.StringOutput{}, err
-	}
-	res.FederatedGCPAccount = sa
-	return sa.Email, nil
+type webAppEnvVars struct {
+	plain   map[string]pulumi.StringOutput
+	secrets map[string]pulumi.StringOutput
 }
 
 func resolveWebAppLinks(
@@ -300,34 +291,35 @@ func resolveWebAppLinks(
 	meta core.ResourceMeta,
 	spec WebApp,
 	refs webAppRefs,
-	saEmail pulumi.StringOutput,
-) (core.ResolvedLinks, error) {
-	resolved, err := core.ResolveLinks(core.LinkGrantContext{
-		Ctx:                         ctx,
-		ConsumerName:                meta.CanonicalName,
-		Environment:                 meta.Environment,
-		GCPProject:                  spec.GCPProject,
-		GCPServiceAccountEmail:      saEmail,
-		GCPWorkloadIdentityPoolName: refs.wifPool,
-		VercelProjectID:             refs.projectID,
-		VercelTeamSlug:              refs.teamSlug,
-	}, spec.Links)
-	if err != nil {
-		return core.ResolvedLinks{}, err
+) (webAppEnvVars, error) {
+	if _, err := core.ResolveLinks(core.LinkGrantContext{
+		Ctx:          ctx,
+		ConsumerName: meta.CanonicalName,
+		ConsumerMeta: meta,
+		Environment:  meta.Environment,
+		Subject: core.Subject{
+			Provider: "vercel",
+			NativeID: refs.projectID,
+			Claims: map[string]pulumi.StringOutput{
+				"project_id": refs.projectID,
+				"owner":      refs.teamSlug,
+			},
+		},
+		Brokers: spec.Brokers,
+	}, spec.Links); err != nil {
+		return webAppEnvVars{}, err
 	}
-	if isOutSet(saEmail) {
-		resolved.Env["GCP_SERVICE_ACCOUNT_EMAIL"] = saEmail
-	}
-	if isOutSet(refs.wifProvider) {
-		resolved.Env["GCP_WORKLOAD_IDENTITY_PROVIDER"] = pulumi.Sprintf("//iam.googleapis.com/%s", refs.wifProvider)
+	vars := webAppEnvVars{
+		plain:   make(map[string]pulumi.StringOutput, len(spec.Env)),
+		secrets: make(map[string]pulumi.StringOutput, len(spec.Secrets)),
 	}
 	for k, v := range spec.Env {
-		resolved.Env[k] = v.ToStringOutput()
+		vars.plain[k] = v.ToStringOutput()
 	}
 	for k, v := range spec.Secrets {
-		resolved.Secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
+		vars.secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
 	}
-	return resolved, nil
+	return vars, nil
 }
 
 func createScopedProjectEnvVars(
@@ -336,7 +328,7 @@ func createScopedProjectEnvVars(
 	meta core.ResourceMeta,
 	spec WebApp,
 	refs webAppRefs,
-	resolved core.ResolvedLinks,
+	resolved webAppEnvVars,
 	res *WebAppResource,
 ) error {
 	if shouldSkipProjectEnvVars(meta.Environment, spec, refs) {
@@ -344,10 +336,10 @@ func createScopedProjectEnvVars(
 	}
 	useDevCustom := usesDevCustomEnv(spec)
 	skipKeys := blobManagedProjectEnvKeys(meta.Environment, useDevCustom, spec.Links)
-	if err := registerProjectEnvMap(ctx, name, resolved.Env, false, skipKeys, meta, spec, refs, res); err != nil {
+	if err := registerProjectEnvMap(ctx, name, resolved.plain, false, skipKeys, meta, spec, refs, res); err != nil {
 		return err
 	}
-	return registerProjectEnvMap(ctx, name, resolved.Secrets, true, skipKeys, meta, spec, refs, res)
+	return registerProjectEnvMap(ctx, name, resolved.secrets, true, skipKeys, meta, spec, refs, res)
 }
 
 func shouldSkipProjectEnvVars(env core.Environment, spec WebApp, refs webAppRefs) bool {
@@ -513,7 +505,7 @@ func createOptionalDeploymentAndAliases(
 	meta core.ResourceMeta,
 	spec WebApp,
 	refs webAppRefs,
-	resolved core.ResolvedLinks,
+	resolved webAppEnvVars,
 	aliasHost pulumi.StringOutput,
 	res *WebAppResource,
 ) error {
@@ -614,16 +606,14 @@ func buildDeploymentArgs(
 	meta core.ResourceMeta,
 	spec WebApp,
 	refs webAppRefs,
-	resolved core.ResolvedLinks,
+	resolved webAppEnvVars,
 	files map[string]string,
 ) *vercelprov.DeploymentArgs {
-	mergedEnv := pulumi.StringMap{
-		"OPENBASE_ENVIRONMENT": pulumi.String(meta.Environment.String()),
-	}
-	for k, v := range resolved.Env {
+	mergedEnv := make(pulumi.StringMap, len(resolved.plain)+len(resolved.secrets))
+	for k, v := range resolved.plain {
 		mergedEnv[k] = v
 	}
-	for k, v := range resolved.Secrets {
+	for k, v := range resolved.secrets {
 		mergedEnv[k] = v
 	}
 	depArgs := &vercelprov.DeploymentArgs{
@@ -664,12 +654,11 @@ func nonEmptyStringPtrOutput(out pulumi.StringOutput) pulumi.StringPtrOutput {
 
 func registerWebAppOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *WebAppResource) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
-		"canonicalName":    pulumi.String(meta.CanonicalName),
-		"url":              res.URL,
-		"urls":             res.URLs,
-		"aliasHost":        res.AliasHost,
-		"deploymentId":     res.DeploymentID,
-		"federatedSaEmail": res.FederatedSAEmail,
+		"canonicalName": pulumi.String(meta.CanonicalName),
+		"url":           res.URL,
+		"urls":          res.URLs,
+		"aliasHost":     res.AliasHost,
+		"deploymentId":  res.DeploymentID,
 	})
 }
 

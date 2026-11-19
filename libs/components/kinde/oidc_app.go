@@ -12,7 +12,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*OidcAppResource)(nil)
+var (
+	_ core.StatelessResource              = (*OidcAppResource)(nil)
+	_ core.ScopedSpecOf[*OidcAppResource] = OidcApp{}
+)
 
 // ErrOidcSourceRequired reports missing KindeProject / ProjectStackRef / explicit credentials on OidcApp.
 var ErrOidcSourceRequired = errors.New("kinde: kindeProject, projectStackRef, or explicit tenant outputs are required")
@@ -25,8 +28,6 @@ type OidcApp struct {
 	Environment       string
 	Kind              string
 	Links             []core.Resource
-	Env               map[string]pulumi.StringInput
-	Secrets           map[string]pulumi.StringInput
 	KindeProject      *ProjectResource
 	ProjectStackRef   string
 	IssuerURL         pulumi.StringInput
@@ -44,7 +45,7 @@ type OidcApp struct {
 	PostLogoutPath    string
 }
 
-// OidcAppResource resolves tier-appropriate Kinde tenant credentials and exports KINDE_* Links.
+// OidcAppResource resolves tier-appropriate Kinde tenant credentials and redirect URL outputs.
 type OidcAppResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
@@ -72,8 +73,6 @@ func (o OidcApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 		Environment: o.Environment,
 		Kind:        o.Kind,
 		Links:       o.Links,
-		Env:         o.Env,
-		Secrets:     o.Secrets,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -81,11 +80,38 @@ func (o OidcApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	if err := populateOidcOutputs(ctx, o.Name, meta, o, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildOidcLink(meta, o, res))
+	res.SetLink(buildOidcLink(meta, res))
 	if err := registerOidcOutputs(ctx, meta, res); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// RegisterInScope adapts kinde.OidcApp to openbase.Project and openbase.Environment.
+func (o OidcApp) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return o.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers kinde.OidcApp with inherited Scope metadata and ProjectStackRef.
+func (o OidcApp) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*OidcAppResource, error) {
+	if o.Project == "" {
+		o.Project = scope.Project
+	}
+	if o.Repo == "" {
+		o.Repo = scope.Repo
+	}
+	if o.Environment == "" {
+		o.Environment = string(scope.Env)
+	}
+	if o.KindeProject == nil && scope.ProjectRef != nil {
+		if kp, ok := scope.ProjectRef.ResourceHandle("kinde-project").(*ProjectResource); ok {
+			o.KindeProject = kp
+		}
+	}
+	if o.ProjectStackRef == "" && o.KindeProject == nil && o.IssuerURL == nil {
+		o.ProjectStackRef = scope.ProjectStackName()
+	}
+	return o.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -105,7 +131,7 @@ func populateOidcOutputs(
 	res *OidcAppResource,
 ) error {
 	useProd := meta.Environment == core.EnvStage || meta.Environment == core.EnvProd
-	res.Tenant = "dev"
+	res.Tenant = "non-prod"
 	if useProd {
 		res.Tenant = "prod"
 	}
@@ -145,9 +171,9 @@ func resolveTenantCredOutputs(
 		if useProd {
 			return spec.KindeProject.ProdIssuerURL, spec.KindeProject.ProdClientID, spec.KindeProject.ProdClientSecret
 		}
-		return spec.KindeProject.DevIssuerURL, spec.KindeProject.DevClientID, spec.KindeProject.DevClientSecret
+		return spec.KindeProject.NonProdIssuerURL, spec.KindeProject.NonProdClientID, spec.KindeProject.NonProdClientSecret
 	}
-	prefix := "dev"
+	prefix := "nonProd"
 	if useProd {
 		prefix = "prod"
 	}
@@ -238,29 +264,21 @@ func joinOriginPath(origin pulumi.StringOutput, path string) pulumi.StringOutput
 	}).(pulumi.StringOutput)
 }
 
-func buildOidcLink(meta core.ResourceMeta, spec OidcApp, res *OidcAppResource) core.LinkDescriptor {
-	envMap := map[string]pulumi.StringOutput{
-		"KINDE_ISSUER_URL":               res.IssuerURL,
-		"KINDE_CLIENT_ID":                res.ClientID,
-		"KINDE_SITE_URL":                 res.SiteURL,
-		"KINDE_REDIRECT_URL":             res.RedirectURL,
-		"KINDE_POST_LOGIN_REDIRECT_URL":  res.PostLoginRedirectURL,
-		"KINDE_POST_LOGOUT_REDIRECT_URL": res.PostLogoutRedirectURL,
-	}
-	for k, v := range spec.Env {
-		envMap[k] = v.ToStringOutput()
-	}
-	secrets := map[string]pulumi.StringOutput{
-		"KINDE_CLIENT_SECRET": res.ClientSecret,
-	}
-	for k, v := range spec.Secrets {
-		secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
-	}
+func buildOidcLink(meta core.ResourceMeta, res *OidcAppResource) core.LinkDescriptor {
 	return core.LinkDescriptor{
-		Name:    meta.Name,
-		Kind:    meta.Kind,
-		Env:     envMap,
-		Secrets: secrets,
+		Name: meta.Name,
+		Kind: meta.Kind,
+		Attributes: map[string]pulumi.StringOutput{
+			"tenant":      pulumi.String(res.Tenant).ToStringOutput(),
+			"issuerUrl":   res.IssuerURL,
+			"clientId":    res.ClientID,
+			"siteUrl":     res.SiteURL,
+			"redirectUrl": res.RedirectURL,
+		},
+		StackExports: map[string]pulumi.Input{
+			"kindeIssuerUrl":   res.IssuerURL,
+			"kindeRedirectUrl": res.RedirectURL,
+		},
 	}
 }
 

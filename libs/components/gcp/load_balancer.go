@@ -14,7 +14,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*CloudLoadBalancerResource)(nil)
+var (
+	_ core.StatelessResource                        = (*CloudLoadBalancerResource)(nil)
+	_ core.ScopedSpecOf[*CloudLoadBalancerResource] = CloudLoadBalancer{}
+)
 
 // ErrBaseDomainRequired reports a missing BaseDomain on CloudLoadBalancer.
 var ErrBaseDomainRequired = errors.New("gcp: baseDomain is required for CloudLoadBalancer")
@@ -80,14 +83,39 @@ func (lb CloudLoadBalancer) Register(
 	res.SetLink(core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
-		Env: map[string]pulumi.StringOutput{
-			"GCP_LOAD_BALANCER_IP":   res.IPAddress,
-			"GCP_BASE_DOMAIN":        pulumi.String(base).ToStringOutput(),
-			"GCP_DNS_AUTH_CNAME_KEY": res.DnsAuthRecordName,
-			"GCP_DNS_AUTH_CNAME_VAL": res.DnsAuthRecordData,
+		Attributes: map[string]pulumi.StringOutput{
+			"ipAddress":         res.IPAddress,
+			"baseDomain":        pulumi.String(base).ToStringOutput(),
+			"dnsAuthRecordName": res.DnsAuthRecordName,
+			"dnsAuthRecordData": res.DnsAuthRecordData,
+		},
+		StackExports: map[string]pulumi.Input{
+			"loadBalancerIp":    res.IPAddress,
+			"baseDomain":        pulumi.String(base),
+			"dnsAuthRecordName": res.DnsAuthRecordName,
+			"dnsAuthRecordData": res.DnsAuthRecordData,
 		},
 	})
 	return res, registerLoadBalancerOutputs(ctx, base, res)
+}
+
+// RegisterInScope adapts gcp.CloudLoadBalancer to openbase.Project and openbase.Environment.
+func (lb CloudLoadBalancer) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return lb.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers gcp.CloudLoadBalancer using inherited Scope metadata.
+func (lb CloudLoadBalancer) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*CloudLoadBalancerResource, error) {
+	if lb.Project == "" {
+		lb.Project = scope.Project
+	}
+	if lb.Repo == "" {
+		lb.Repo = scope.Repo
+	}
+	if lb.Environment == "" && scope.Env != "" {
+		lb.Environment = scope.Env.String()
+	}
+	return lb.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------

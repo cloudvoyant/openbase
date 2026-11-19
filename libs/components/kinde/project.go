@@ -12,9 +12,12 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*ProjectResource)(nil)
+var (
+	_ core.StatelessResource              = (*ProjectResource)(nil)
+	_ core.ScopedSpecOf[*ProjectResource] = Project{}
+)
 
-// Project declares an application's dev and prod Kinde OIDC Applications in Premise's infra/shared stack.
+// Project declares an application's nonProd and prod Kinde OIDC Applications in Premise's infra/shared stack.
 type Project struct {
 	Name                       string
 	Project                    string
@@ -22,7 +25,7 @@ type Project struct {
 	Platform                   *PlatformResource
 	PlatformStackRef           string
 	AppName                    string
-	Dev                        TenantCredentials
+	NonProd                    TenantCredentials
 	Prod                       TenantCredentials
 	VercelProjectName          string
 	VercelTeamSlug             string
@@ -34,38 +37,38 @@ type Project struct {
 	ExtraStageDomains          []string
 	ExtraProdDomains           []string
 	CallbackPath               string
-	ExtraDevRedirectURIs       []string
-	ExtraDevLogoutURIs         []string
+	ExtraNonProdRedirectURIs   []string
+	ExtraNonProdLogoutURIs     []string
 	ExtraProdRedirectURIs      []string
 	ExtraProdLogoutURIs        []string
-	ImportDevAppID             string
+	ImportNonProdAppID         string
 	ImportProdAppID            string
 	RetainApplicationsOnDelete bool
 	SkipEmailPasswordConn      bool
 }
 
-// ProjectResource is the provisioned handle for an application's dev and prod Kinde OIDC Applications.
+// ProjectResource is the provisioned handle for an application's nonProd and prod Kinde OIDC Applications.
 type ProjectResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
-	DevProvider       *kindeprov.Provider
-	ProdProvider      *kindeprov.Provider
-	DevApplication    *kindeprov.Application
-	ProdApplication   *kindeprov.Application
-	DevEmailConn      *kindeprov.ApplicationConnection
-	DevIssuerURL      pulumi.StringOutput
-	DevAppID          pulumi.StringOutput
-	DevClientID       pulumi.StringOutput
-	DevClientSecret   pulumi.StringOutput
-	ProdIssuerURL     pulumi.StringOutput
-	ProdAppID         pulumi.StringOutput
-	ProdClientID      pulumi.StringOutput
-	ProdClientSecret  pulumi.StringOutput
-	EmailPasswordConn string
+	NonProdProvider     *kindeprov.Provider
+	ProdProvider        *kindeprov.Provider
+	NonProdApplication  *kindeprov.Application
+	ProdApplication     *kindeprov.Application
+	NonProdEmailConn    *kindeprov.ApplicationConnection
+	NonProdIssuerURL    pulumi.StringOutput
+	NonProdAppID        pulumi.StringOutput
+	NonProdClientID     pulumi.StringOutput
+	NonProdClientSecret pulumi.StringOutput
+	ProdIssuerURL       pulumi.StringOutput
+	ProdAppID           pulumi.StringOutput
+	ProdClientID        pulumi.StringOutput
+	ProdClientSecret    pulumi.StringOutput
+	EmailPasswordConn   string
 }
 
-// Register provisions dev and prod Kinde OIDC Applications and exports credentials for per-environment kinde.OidcApp stacks.
+// Register provisions nonProd and prod Kinde OIDC Applications and exports credentials for per-environment kinde.OidcApp stacks.
 func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
 	if err := validateKindeProject(p); err != nil {
 		return nil, err
@@ -84,24 +87,44 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	if err := provisionTwoTenantApps(ctx, p.Name, meta, p, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
-		Env: map[string]pulumi.StringOutput{
-			"KINDE_DEV_ISSUER_URL":  res.DevIssuerURL,
-			"KINDE_PROD_ISSUER_URL": res.ProdIssuerURL,
-		},
-	})
+	res.SetLink(buildKindeProjectLink(meta, res))
 	return res, registerProjectOidcOutputs(ctx, res)
+}
+
+// RegisterInScope adapts kinde.Project to openbase.Project.
+func (p Project) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return p.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers kinde.Project with inherited Project and PlatformRef defaults.
+func (p Project) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
+	if p.Project == "" {
+		p.Project = scope.Project
+	}
+	if p.Repo == "" {
+		p.Repo = scope.Repo
+	}
+	if p.Platform == nil && scope.Platform != nil {
+		if plat, ok := scope.Platform.PlatformHandle("kinde-platform").(*PlatformResource); ok {
+			p.Platform = plat
+		}
+	}
+	if p.PlatformStackRef == "" {
+		p.PlatformStackRef = scope.PlatformStackName()
+	}
+	if p.VercelTeamSlug != "" && p.VercelProjectName == "" {
+		p.VercelProjectName = core.BoundedName("openbase-"+p.Project, 52)
+	}
+	return p.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
 
 func validateKindeProject(spec Project) error {
-	if spec.Platform != nil {
+	if spec.Platform != nil || spec.PlatformStackRef != "" {
 		return nil
 	}
-	if !hasTenantCreds(spec.Dev) || !hasTenantCreds(spec.Prod) {
+	if !hasTenantCreds(spec.NonProd) || !hasTenantCreds(spec.Prod) {
 		return ErrTenantCredentialsRequired
 	}
 	return nil
@@ -114,14 +137,14 @@ func provisionTwoTenantApps(
 	spec Project,
 	res *ProjectResource,
 ) error {
-	devProv, prodProv, err := resolveProjectTenantProviders(ctx, name, spec, res)
+	nonProdProv, prodProv, err := resolveProjectTenantProviders(ctx, name, spec, res)
 	if err != nil {
 		return err
 	}
-	res.DevProvider = devProv
+	res.NonProdProvider = nonProdProv
 	res.ProdProvider = prodProv
 	appName := defaultKindeStr(spec.AppName, "openbase-"+meta.Project)
-	if err := createDevApplication(ctx, name, appName, meta.Project, spec, devProv, res); err != nil {
+	if err := createNonProdApplication(ctx, name, appName, meta.Project, spec, nonProdProv, res); err != nil {
 		return err
 	}
 	return createProdApplication(ctx, name, appName, meta, spec, prodProv, res)
@@ -134,14 +157,26 @@ func resolveProjectTenantProviders(
 	res *ProjectResource,
 ) (*kindeprov.Provider, *kindeprov.Provider, error) {
 	if spec.Platform != nil {
-		res.DevIssuerURL = spec.Platform.DevIssuerURL
+		res.NonProdIssuerURL = spec.Platform.NonProdIssuerURL
 		res.ProdIssuerURL = spec.Platform.ProdIssuerURL
 		res.EmailPasswordConn = spec.Platform.EmailPasswordConn
-		return spec.Platform.DevProvider, spec.Platform.ProdProvider, nil
+		return spec.Platform.NonProdProvider, spec.Platform.ProdProvider, nil
 	}
-	devIssuer := NormalizeIssuerURL(spec.Dev.Domain)
+	if hasTenantCreds(spec.NonProd) && hasTenantCreds(spec.Prod) {
+		return createExplicitTenantProviders(ctx, name, spec, res)
+	}
+	return createStackRefTenantProviders(ctx, name, spec.PlatformStackRef, res)
+}
+
+func createExplicitTenantProviders(
+	ctx *pulumi.Context,
+	name string,
+	spec Project,
+	res *ProjectResource,
+) (*kindeprov.Provider, *kindeprov.Provider, error) {
+	nonProdIssuer := NormalizeIssuerURL(spec.NonProd.Domain)
 	prodIssuer := NormalizeIssuerURL(spec.Prod.Domain)
-	devProv, err := createTenantProvider(ctx, name+"-dev-prov", devIssuer, spec.Dev, res)
+	nonProdProv, err := createTenantProvider(ctx, name+"-nonprod-prov", nonProdIssuer, spec.NonProd, res)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -149,21 +184,55 @@ func resolveProjectTenantProviders(
 	if err != nil {
 		return nil, nil, err
 	}
-	res.DevIssuerURL = pulumi.String(devIssuer).ToStringOutput()
+	res.NonProdIssuerURL = pulumi.String(nonProdIssuer).ToStringOutput()
 	res.ProdIssuerURL = pulumi.String(prodIssuer).ToStringOutput()
-	return devProv, prodProv, nil
+	return nonProdProv, prodProv, nil
 }
 
-func createDevApplication(
+func createStackRefTenantProviders(
+	ctx *pulumi.Context,
+	name, stackRef string,
+	res *ProjectResource,
+) (*kindeprov.Provider, *kindeprov.Provider, error) {
+	sr, err := pulumi.NewStackReference(ctx, name+"-platform-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(stackRef)})
+	if err != nil {
+		return nil, nil, err
+	}
+	nonProdIssuer := sr.GetStringOutput(pulumi.String("nonProdIssuerUrl"))
+	prodIssuer := sr.GetStringOutput(pulumi.String("prodIssuerUrl"))
+	nonProdProv, err := kindeprov.NewProvider(ctx, name+"-nonprod-prov", &kindeprov.ProviderArgs{
+		Domain:       nonProdIssuer,
+		Audience:     pulumi.Sprintf("%s/api", nonProdIssuer),
+		ClientId:     sr.GetStringOutput(pulumi.String("kindeNonProdM2mClientId")),
+		ClientSecret: pulumi.ToSecret(sr.GetStringOutput(pulumi.String("kindeNonProdM2mClientSecret"))).(pulumi.StringOutput),
+	}, pulumi.Parent(res))
+	if err != nil {
+		return nil, nil, err
+	}
+	prodProv, err := kindeprov.NewProvider(ctx, name+"-prod-prov", &kindeprov.ProviderArgs{
+		Domain:       prodIssuer,
+		Audience:     pulumi.Sprintf("%s/api", prodIssuer),
+		ClientId:     sr.GetStringOutput(pulumi.String("kindeProdM2mClientId")),
+		ClientSecret: pulumi.ToSecret(sr.GetStringOutput(pulumi.String("kindeProdM2mClientSecret"))).(pulumi.StringOutput),
+	}, pulumi.Parent(res))
+	if err != nil {
+		return nil, nil, err
+	}
+	res.NonProdIssuerURL = nonProdIssuer
+	res.ProdIssuerURL = prodIssuer
+	return nonProdProv, prodProv, nil
+}
+
+func createNonProdApplication(
 	ctx *pulumi.Context,
 	name, appName, project string,
 	spec Project,
 	prov *kindeprov.Provider,
 	res *ProjectResource,
 ) error {
-	redirects, logouts := buildDevCallbacks(project, spec)
-	appOpts := buildKindeAppOptions(res, prov, spec.ImportDevAppID, spec.RetainApplicationsOnDelete)
-	app, err := kindeprov.NewApplication(ctx, name+"-dev-app", &kindeprov.ApplicationArgs{
+	redirects, logouts := buildNonProdCallbacks(project, spec)
+	appOpts := buildKindeAppOptions(res, prov, spec.ImportNonProdAppID, spec.RetainApplicationsOnDelete)
+	app, err := kindeprov.NewApplication(ctx, name+"-nonprod-app", &kindeprov.ApplicationArgs{
 		Name:         pulumi.String(appName),
 		Type:         pulumi.String("reg"),
 		RedirectUris: pulumi.ToStringArray(redirects),
@@ -172,14 +241,14 @@ func createDevApplication(
 	if err != nil {
 		return err
 	}
-	res.DevApplication = app
-	res.DevAppID = app.ID().ToStringOutput()
-	res.DevClientID = app.ClientId
-	res.DevClientSecret = pulumi.ToSecret(app.ClientSecret).(pulumi.StringOutput)
-	return attachDevEmailPassword(ctx, name, spec, prov, app, res)
+	res.NonProdApplication = app
+	res.NonProdAppID = app.ID().ToStringOutput()
+	res.NonProdClientID = app.ClientId
+	res.NonProdClientSecret = pulumi.ToSecret(app.ClientSecret).(pulumi.StringOutput)
+	return attachNonProdEmailPassword(ctx, name, spec, prov, app, res)
 }
 
-func attachDevEmailPassword(
+func attachNonProdEmailPassword(
 	ctx *pulumi.Context,
 	name string,
 	spec Project,
@@ -202,14 +271,14 @@ func attachDevEmailPassword(
 		return nil
 	}
 	res.EmailPasswordConn = connID
-	ac, err := kindeprov.NewApplicationConnection(ctx, name+"-dev-email-pw", &kindeprov.ApplicationConnectionArgs{
+	ac, err := kindeprov.NewApplicationConnection(ctx, name+"-nonprod-email-pw", &kindeprov.ApplicationConnectionArgs{
 		ApplicationId: app.ID(),
 		ConnectionId:  pulumi.String(connID),
 	}, pulumi.Parent(res), pulumi.Provider(prov), pulumi.RetainOnDelete(true))
 	if err != nil {
 		return err
 	}
-	res.DevEmailConn = ac
+	res.NonProdEmailConn = ac
 	return nil
 }
 
@@ -255,23 +324,23 @@ func buildKindeAppOptions(
 	return opts
 }
 
-func buildDevCallbacks(project string, spec Project) ([]string, []string) {
+func buildNonProdCallbacks(project string, spec Project) ([]string, []string) {
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	redirects := []string{"http://localhost:5173" + cb, "http://localhost:3000" + cb}
 	logouts := []string{"http://localhost:5173/", "http://localhost:3000/"}
 	vProj := defaultKindeStr(spec.VercelProjectName, project)
-	for _, host := range devCallbackHosts(project, vProj, spec) {
+	for _, host := range nonProdCallbackHosts(project, vProj, spec) {
 		origin := NormalizeIssuerURL(host)
 		redirects = append(redirects, origin+cb)
 		logouts = append(logouts, origin+"/")
 	}
-	redirects = append(redirects, spec.ExtraDevRedirectURIs...)
-	logouts = append(logouts, spec.ExtraDevLogoutURIs...)
+	redirects = append(redirects, spec.ExtraNonProdRedirectURIs...)
+	logouts = append(logouts, spec.ExtraNonProdLogoutURIs...)
 	return sortAndCompact(redirects), sortAndCompact(logouts)
 }
 
-func devCallbackHosts(project, vProj string, spec Project) []string {
-	hosts := devVercelHosts(vProj, spec.VercelTeamSlug)
+func nonProdCallbackHosts(project, vProj string, spec Project) []string {
+	hosts := nonProdVercelHosts(vProj, spec.VercelTeamSlug)
 	if base := core.NormalizeDomain(spec.BaseDomain); base != "" && project != "" {
 		hosts = append(hosts, "https://"+project+"-*."+base)
 	}
@@ -281,7 +350,7 @@ func devCallbackHosts(project, vProj string, spec Project) []string {
 	return hosts
 }
 
-func devVercelHosts(vProj, teamSlug string) []string {
+func nonProdVercelHosts(vProj, teamSlug string) []string {
 	if vProj == "" || teamSlug == "" {
 		return nil
 	}
@@ -339,16 +408,41 @@ func sortAndCompact(items []string) []string {
 	return slices.Compact(items)
 }
 
+func buildKindeProjectLink(meta core.ResourceMeta, res *ProjectResource) core.LinkDescriptor {
+	return core.LinkDescriptor{
+		Name: meta.Name,
+		Kind: meta.Kind,
+		Attributes: map[string]pulumi.StringOutput{
+			"nonProdIssuerUrl": res.NonProdIssuerURL,
+			"nonProdAppId":     res.NonProdAppID,
+			"nonProdClientId":  res.NonProdClientID,
+			"prodIssuerUrl":    res.ProdIssuerURL,
+			"prodAppId":        res.ProdAppID,
+			"prodClientId":     res.ProdClientID,
+		},
+		StackExports: map[string]pulumi.Input{
+			"nonProdIssuerUrl":    res.NonProdIssuerURL,
+			"nonProdAppId":        res.NonProdAppID,
+			"nonProdClientId":     res.NonProdClientID,
+			"nonProdClientSecret": res.NonProdClientSecret,
+			"prodIssuerUrl":       res.ProdIssuerURL,
+			"prodAppId":           res.ProdAppID,
+			"prodClientId":        res.ProdClientID,
+			"prodClientSecret":    res.ProdClientSecret,
+		},
+	}
+}
+
 func registerProjectOidcOutputs(ctx *pulumi.Context, res *ProjectResource) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
-		"devIssuerUrl":      res.DevIssuerURL,
-		"devAppId":          res.DevAppID,
-		"devClientId":       res.DevClientID,
-		"devClientSecret":   res.DevClientSecret,
-		"prodIssuerUrl":     res.ProdIssuerURL,
-		"prodAppId":         res.ProdAppID,
-		"prodClientId":      res.ProdClientID,
-		"prodClientSecret":  res.ProdClientSecret,
-		"emailPasswordConn": pulumi.String(res.EmailPasswordConn),
+		"nonProdIssuerUrl":    res.NonProdIssuerURL,
+		"nonProdAppId":        res.NonProdAppID,
+		"nonProdClientId":     res.NonProdClientID,
+		"nonProdClientSecret": res.NonProdClientSecret,
+		"prodIssuerUrl":       res.ProdIssuerURL,
+		"prodAppId":           res.ProdAppID,
+		"prodClientId":        res.ProdClientID,
+		"prodClientSecret":    res.ProdClientSecret,
+		"emailPasswordConn":   pulumi.String(res.EmailPasswordConn),
 	})
 }

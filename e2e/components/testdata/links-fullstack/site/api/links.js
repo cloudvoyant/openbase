@@ -1,5 +1,3 @@
-const crypto = require("node:crypto");
-
 async function exchangeVercelOIDCForSTS(oidcToken, wifProvider) {
   const resp = await fetch("https://sts.googleapis.com/v1/token", {
     method: "POST",
@@ -98,11 +96,12 @@ module.exports = async (req, res) => {
       process.env.STORAGE_FALLBACK_BUCKET || "",
       "seed.txt",
     );
-
-    const kindeSecretSha256 = crypto
-      .createHash("sha256")
-      .update(process.env.KINDE_CLIENT_SECRET || "")
-      .digest("hex");
+    const sharedAsset = await readGCSOverlay(
+      gcsAccessToken,
+      process.env.SHARED_ASSETS_BUCKET,
+      "",
+      "brand.txt",
+    );
 
     res.setHeader("Content-Type", "application/json");
     res.statusCode = 200;
@@ -112,15 +111,7 @@ module.exports = async (req, res) => {
         cloudRunStatus: crResp.status,
         cloudRun: crBody,
         gcsOverlay: overlay,
-        hasPooledDb: Boolean(
-          process.env.DATABASE_URL && process.env.DATABASE_URL.includes("-pooler"),
-        ),
-        hasDirectDb: Boolean(
-          process.env.DIRECT_URL && !process.env.DIRECT_URL.includes("-pooler"),
-        ),
-        kindeIssuer: process.env.KINDE_ISSUER_URL || "",
-        kindeClientId: process.env.KINDE_CLIENT_ID || "",
-        kindeSecretSha256,
+        sharedAsset,
       }),
     );
   } catch (err) {

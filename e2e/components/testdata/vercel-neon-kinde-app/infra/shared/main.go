@@ -5,48 +5,55 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	"github.com/cloudvoyant/openbase/libs/components/composite"
+	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/kinde"
+	"github.com/cloudvoyant/openbase/libs/components/neon"
+	"github.com/cloudvoyant/openbase/libs/components/vercel"
 )
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		appProject := envOrDefault("OPENBASE_APP_PROJECT", "OPENBASE_TEST_APP_PROJECT", "obvapp")
 		vProjName := "openbase-e2e-" + appProject
-		teamID := envOrDefault("VERCEL_TEAM_ID", "OPENBASE_TEST_VERCEL_TEAM_ID", "")
 		teamSlug := envOrDefault("VERCEL_TEAM_SLUG", "OPENBASE_TEST_VERCEL_TEAM_SLUG", "cloudvoyant")
+		baseDomain := os.Getenv("OPENBASE_BASE_DOMAIN")
+		platformRef := envOrDefault("OPENBASE_PLATFORM_STACK_REF", "", "organization/platform/platform")
 
-		_, err := composite.VercelNeonProject{
-			Project:           appProject,
-			PlatformStackRef:  os.Getenv("OPENBASE_PLATFORM_STACK_REF"),
+		proj, err := openbase.NewProject(ctx, openbase.Project{
+			Project:          appProject,
+			PlatformStackRef: platformRef,
+		})
+		if err != nil {
+			return err
+		}
+		authProj, err := openbase.Add(proj, kinde.Project{
+			AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", vProjName),
+			VercelProjectName:          vProjName,
+			VercelTeamSlug:             teamSlug,
+			BaseDomain:                 baseDomain,
+			ImportNonProdAppID:         envOrDefault("OPENBASE_IMPORT_NONPROD_APP_ID", "OPENBASE_TEST_IMPORT_NONPROD_APP_ID", ""),
+			ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),
+			RetainApplicationsOnDelete: os.Getenv("OPENBASE_RETAIN_KINDE_APPS") == "1" || os.Getenv("OPENBASE_TEST_RETAIN_KINDE_APPS") == "1",
+		})
+		if err != nil {
+			return err
+		}
+		if _, err := openbase.Add(proj, neon.Project{}); err != nil {
+			return err
+		}
+		_, err = openbase.Add(proj, vercel.Project{
 			VercelProjectName: vProjName,
-			TeamID:            teamID,
-			TeamSlug:          teamSlug,
-			BaseDomain:        os.Getenv("OPENBASE_BASE_DOMAIN"),
-			NeonOrgID:         os.Getenv("NEON_ORG_ID"),
-			Auth:              projectKindeConfig(vProjName),
-		}.Register(ctx)
+			EnableBlobStore:   true,
+			PreviewEnv: map[string]pulumi.StringInput{
+				"KINDE_ISSUER_URL": authProj.NonProdIssuerURL,
+				"KINDE_CLIENT_ID":  authProj.NonProdClientID,
+			},
+			PreviewSecrets: map[string]pulumi.StringInput{
+				"KINDE_CLIENT_SECRET": authProj.NonProdClientSecret,
+			},
+		})
 		return err
 	})
-}
-
-func projectKindeConfig(defaultAppName string) *composite.KindeProjectConfig {
-	return &composite.KindeProjectConfig{
-		AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", defaultAppName),
-		ImportDevAppID:             envOrDefault("OPENBASE_IMPORT_DEV_APP_ID", "OPENBASE_TEST_IMPORT_DEV_APP_ID", ""),
-		ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),
-		RetainApplicationsOnDelete: os.Getenv("OPENBASE_RETAIN_KINDE_APPS") == "1" || os.Getenv("OPENBASE_TEST_RETAIN_KINDE_APPS") == "1",
-		Dev: kinde.TenantCredentials{
-			Domain:       os.Getenv("KINDE_DEV_TENANT_DOMAIN"),
-			ClientID:     pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_ID")),
-			ClientSecret: pulumi.String(os.Getenv("KINDE_DEV_M2M_CLIENT_SECRET")),
-		},
-		Prod: kinde.TenantCredentials{
-			Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
-			ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
-			ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
-		},
-	}
 }
 
 func envOrDefault(primaryKey, secondaryKey, fallback string) string {

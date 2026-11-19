@@ -1,17 +1,17 @@
 # OpenBase
 
-OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs/components`) for declaring stateless and stateful cloud infrastructure across **Google Cloud Platform**, **Vercel**, **Neon**, and **Kinde** using a three-tier **Platform -> Project -> Environment** convention aligned with Premise (`infra/shared` + `infra`).
+OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs/components`) that declares stateless and stateful cloud infrastructure across Google Cloud Platform, Vercel, Neon, and Kinde. It models infrastructure as three scopes (`openbase.Platform`, `openbase.Project`, and `openbase.Environment`) aligned with Premise (`infra/shared` and `infra`).
 
 ```mermaid
 flowchart TD
-    OrgProg["Org Platform Repo (composite.Platform)"] --> OrgBlocks["gcp.Platform, vercel.Platform, neon.Platform, kinde.Platform"]
-    ProjProg["App Project Program (infra/shared/main.go)"] --> ProjComp["composite.VercelNeonProject / GcpCloudRunNeonProject"]
-    EnvProg["App Environment Program (infra/main.go)"] --> AppComp["composite.VercelNeonApp / GcpCloudRunNeonApp"]
-    OrgBlocks -->|"PlatformStackRef"| ProjComp
-    ProjComp -->|"ProjectStackRef"| AppComp
-    ProjComp --> Core["libs/components/core (StatelessResource & StatefulResource)"]
-    AppComp --> Core
-    Core --> GCP["libs/components/gcp (Platform, Project, CloudLoadBalancer, CloudRunService, Bucket, overlayfs)"]
+    OrgProg["Org Platform Repo (openbase.Platform)"] --> OrgBlocks["gcp.Platform, vercel.Platform, neon.Platform, kinde.Platform"]
+    ProjProg["App Shared Program (infra/shared/main.go)"] --> ProjScope["openbase.Project"]
+    EnvProg["App Environment Program (infra/main.go)"] --> EnvScope["openbase.Environment"]
+    OrgBlocks -->|"LookupPlatform / PlatformStackRef"| ProjScope
+    ProjScope -->|"LookupProject / openbaseManifest"| EnvScope
+    ProjScope --> Core["libs/components/core (PlatformResource, StatelessResource, StatefulResource)"]
+    EnvScope --> Core
+    Core --> GCP["libs/components/gcp (Platform, Project, CloudLoadBalancer, CloudRunService, Bucket, FederatedIdentity, WIFBroker, overlayfs)"]
     Core --> Vercel["libs/components/vercel (Platform, Project, WebApp, BlobStore)"]
     Core --> Neon["libs/components/neon (Platform, Project, Database)"]
     Core --> Kinde["libs/components/kinde (Platform, Project, OidcApp)"]
@@ -27,52 +27,53 @@ go get github.com/cloudvoyant/openbase/libs/components@latest
 
 | Import Path | Purpose | Declarative Specs |
 | :--- | :--- | :--- |
-| `github.com/cloudvoyant/openbase/libs/components/core` | `PlatformResource` vs `Resource` (`StatelessResource`, `StatefulResource`) contracts, `shared`/`dev`/`stage`/`prod`/`preview-<slug>` rules (`shared` omits `env` from naming), domain formulas, tags, and `Links` | `PlatformResource`, `StatelessResource`, `StatefulResource`, `Stateless`, `Stateful`, `ResolveLinks` |
-| `github.com/cloudvoyant/openbase/libs/components/gcp` | Org-wide WIF/APIs/KMS/wildcard HTTPS Load Balancers (`*.gcp.cloudvoyant.io`), per-app Artifact Registry projects, Cloud Run v2 services, and GCS buckets with zero-copy preview overlays | `Platform`, `Project`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs.Store` |
-| `github.com/cloudvoyant/openbase/libs/components/vercel` | Team-level settings, per-app Vercel Projects (`staging` CustomEnvironment, domains, bypass, shared Blob store), WebApp deployments/aliases, and keyless GCP OIDC federation | `Platform`, `Project`, `WebApp`, `BlobStore`, `BlobOverlayClient` |
+| `github.com/cloudvoyant/openbase/libs/components` | Unified `Platform`, `Project`, and `Environment` scopes, typed `Add`, cross-stack `LookupPlatform` and `LookupProject`, and `openbaseManifest` exports | `Platform`, `Project`, `Environment`, `NewProject`, `NewEnvironment`, `Add`, `LookupPlatform`, `LookupProject` |
+| `github.com/cloudvoyant/openbase/libs/components/core` | `PlatformResource` and `Resource` (`StatelessResource`, `StatefulResource`) contracts, environment rules, domain formulas, tags, `Links`, and `IdentityBroker` | `PlatformResource`, `StatelessResource`, `StatefulResource`, `Platform`, `Stateless`, `Stateful`, `ResolveLinks`, `IdentityBroker` |
+| `github.com/cloudvoyant/openbase/libs/components/gcp` | Org WIF, APIs, KMS, and wildcard HTTPS Load Balancers, per-app Artifact Registry projects, Cloud Run v2 services, `FederatedIdentity` and `WIFBroker` OIDC brokers, and GCS buckets with preview overlays | `Platform`, `Project`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `FederatedIdentity`, `WIFBroker`, `overlayfs.Store` |
+| `github.com/cloudvoyant/openbase/libs/components/vercel` | Team configuration, per-app Vercel Projects (`staging` CustomEnvironment, domains, bypass, shared Blob store), WebApp deployments, and OIDC subject claims | `Platform`, `Project`, `WebApp`, `BlobStore`, `BlobOverlayClient` |
 | `github.com/cloudvoyant/openbase/libs/components/neon` | Org defaults, per-app Neon Project clusters, and copy-on-write branched serverless PostgreSQL over `neondatabase/neon` | `Platform`, `Project`, `Database` |
-| `github.com/cloudvoyant/openbase/libs/components/kinde` | Org two-tenant (`dev` + `prod`) connections, per-app OIDC `Application` pairs, and per-environment tier routing over `kinde-oss/kinde` | `Platform`, `Project`, `OidcApp` |
-| `github.com/cloudvoyant/openbase/libs/components/composite` | Turnkey org `Platform`, Premise `infra/shared` `*Project`, and `infra/` per-environment `*App` blueprints wired via `StackReference` | `Platform`, `VercelNeonProject`, `VercelNeonApp`, `GcpCloudRunNeonProject`, `GcpCloudRunNeonApp` |
-| `github.com/cloudvoyant/openbase/libs/components/synthetic` | Offline deterministic doubles for `< 2s` unit tests | `Service`, `Storage` |
+| `github.com/cloudvoyant/openbase/libs/components/kinde` | Org two-tenant (`NonProd` and `Prod`) connections, per-app OIDC `Application` pairs, and per-environment tier routing over `kinde-oss/kinde` | `Platform`, `Project`, `OidcApp` |
+| `github.com/cloudvoyant/openbase/libs/components/synthetic` | Offline deterministic doubles for fast unit tests | `Service`, `Storage` |
 
 ## Development
 
 ```sh
-mise run install          # Install pinned Go, Pulumi, golangci-lint, and mmdc tools
-mise run generate:check   # Verify internal bridged Go SDKs (libs/internal/pulumi-{neon,kinde}-go-sdk) have zero drift
-mise run format:check     # Verify Go formatting
+mise run install          # Install pinned Go, Pulumi, and golangci-lint tools
+mise run generate:check   # Make sure that bridged Go SDKs have zero drift
+mise run format:check     # Make sure that Go formatting matches golangci-lint
 mise run lint             # Run golangci-lint across libs/components and e2e/components
-mise run test             # Run fast offline WithMocks + synthetic tests
+mise run test             # Run fast offline WithMocks and synthetic tests
 mise run e2e -- core      # Run offline standalone Go consumer fixture preview test
 ```
 
 ### Live Cloud E2E Tests
 
-Every module is verified against dedicated OpenBase cloud sandboxes (see [e2e/README.md](./e2e/README.md)):
+Run live end-to-end suites against dedicated OpenBase cloud sandboxes (see [e2e/README.md](./e2e/README.md)):
 
 ```sh
 mise run e2e:gcp
 mise run e2e:neon
 mise run e2e:kinde
 mise run e2e:vercel
+mise run e2e:apps
 mise run e2e:live
 ```
 
-## Publishing & Releases
+## Publishing and Releases
 
-`libs/components` is configured with `package.public: true` in `premise.yaml` (`package_managers: [go]`) and publishes directly from the repository's shared `vX.Y.Z` Git tag:
+`libs/components` sets `package.public: true` in `premise.yaml` (`package_managers: [go]`) and publishes from the shared `vX.Y.Z` Git tag:
 
-- Include `[publish-rc]` in a commit message on a pull request branch to publish a release-candidate tag (`vX.Y.Z-rc.N`) via `.github/workflows/on-commit.yml`.
-- Merging to `main` runs `.github/workflows/on-merge.yml` (`pm release publish`), tagging the next semantic version so Go consumers resolve `github.com/cloudvoyant/openbase@vX.Y.Z` immediately.
+- Include `[publish-rc]` in a commit message on a pull request branch to publish a release-candidate tag (`vX.Y.Z-rc.N`) through `.github/workflows/on-commit.yml`.
+- Merge to `main` to run `.github/workflows/on-merge.yml` (`pm release publish`), which tags the next semantic version so Go consumers resolve `github.com/cloudvoyant/openbase@vX.Y.Z`.
 
 ## Documentation
 
 - [User Guide](./docs/user-guide.md)
 - [Architecture Overview](./docs/architecture/index.md)
-- [Resource Contracts & Links](./docs/architecture/resources.md)
+- [Unified Scopes and Manifests](./docs/architecture/scopes.md)
+- [Resource Contracts and Links](./docs/architecture/resources.md)
 - [GCP Provider](./docs/architecture/providers/gcp/index.md)
 - [Vercel Provider](./docs/architecture/providers/vercel/index.md)
 - [Neon Provider](./docs/architecture/providers/neon/index.md)
 - [Kinde Provider](./docs/architecture/providers/kinde/index.md)
-- [Composite Blueprints](./docs/architecture/providers/composite/index.md)
 - [End-to-End Test Suite](./e2e/README.md)

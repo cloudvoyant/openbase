@@ -28,13 +28,13 @@ flowchart TD
     Proj --> Prod["neon.Database: prod (Protect=true, Role + Database + Endpoint)"]
     Prod -->|"BranchFrom: prod"| Stage["neon.Database: stage (Protect=true, CoW Branch + Endpoint)"]
     Dev -->|"BranchFrom: dev"| Prev["neon.Database: preview-pr-42 (CoW Branch + Endpoint)"]
-    Prev -->|"Links: DATABASE_URL (-pooler) + DIRECT_URL"| App["CloudRunService / WebApp"]
+    Prev -->|"DatabaseURL (-pooler) + DirectURL"| App["CloudRunService / WebApp"]
 ```
 
 - `neon.Branch` snapshots either `defaultBranchId` (root tier) or the `BranchFrom` stack `branchId` (child tier).
 - `neon.Endpoint` creates an isolated read-write compute endpoint with `-pooler` PgBouncer pooling (`HostPooler`).
 - `neon.Role` and `neon.Database` run only on root branches (`BranchFrom == ""`).
-- `revealRolePasswordOutput` fetches the role password from the Neon v2 `reveal_password` API on both root and child branches because `neondatabase/neon` `0.19.0-beta` omits role passwords from provider state.
+- `revealRolePasswordOutput` fetches the role password from the Neon v2 `reveal_password` API using the explicit `APIKey` input (inherited from `neon.Platform` or `neon.Project` when in-memory) because `neondatabase/neon` `0.19.0-beta` omits role passwords from provider state.
 
 ### Data and Control Flow
 
@@ -43,14 +43,14 @@ sequenceDiagram
     participant Pulumi as "Pulumi (preview-pr-42)"
     participant DevRef as "StackReference (dev)"
     participant Neon as "Neon API"
-    participant App as "Linked Workload"
+    participant App as "Caller Workload"
 
     Pulumi->>DevRef: 1. Read parent branchId
     Pulumi->>Neon: 2. Create CoW Branch (parentId = dev.branchId)
     Pulumi->>Neon: 3. Create read_write Endpoint
     Pulumi->>Neon: 4. Fetch role password via reveal_password
     Neon-->>Pulumi: 5. Return host, hostPooler, and password
-    Pulumi-->>App: 6. Inject secret DATABASE_URL + DIRECT_URL via Links
+    Pulumi-->>App: 6. Expose secret DatabaseURL + DirectURL outputs
 ```
 
 When `preview-pr-42` runs `pulumi up`, it branches instantaneously from `dev` with all schema migrations and seed rows intact. SQL writes on `preview-pr-42` stay isolated from `dev`, and `pulumi destroy` removes the preview branch and endpoint cleanly.
@@ -65,15 +65,16 @@ db, err := neon.Database{
 	BranchFrom:      "dev",
 	ProjectStackRef: "cloudvoyant/storefront-shared/shared",
 	BranchStackRef:  "cloudvoyant/storefront/dev",
+	APIKey:          cfg.RequireSecret("neonApiKey"),
 }.Register(ctx)
 ```
 
-| Link Key | Secret | Host Target | Purpose |
+| Output Field | Secret | Host Target | Purpose |
 | :--- | :--- | :--- | :--- |
-| `<PREFIX>_HOST` | No | `Endpoint.HostPooler` | Pooled PgBouncer hostname (`-pooler`) |
-| `<PREFIX>_NAME` | No | `DatabaseName` (`openbase`) | Logical PostgreSQL database name |
-| `DATABASE_URL` | Yes | `Endpoint.HostPooler` | Pooled connection URL for serverless workloads |
-| `DIRECT_URL` | Yes | `Endpoint.Host` | Direct connection URL for schema migrations (`pm migrate`) |
+| `PoolerHost` | No | `Endpoint.HostPooler` | Pooled PgBouncer hostname (`-pooler`) |
+| `Host` | No | `Endpoint.Host` | Direct unpooled PostgreSQL hostname |
+| `DatabaseURL` | Yes | `Endpoint.HostPooler` | Pooled connection URL for serverless workloads |
+| `DirectURL` | Yes | `Endpoint.Host` | Direct connection URL for schema migrations (`pm migrate`) |
 
 ## Implementation
 

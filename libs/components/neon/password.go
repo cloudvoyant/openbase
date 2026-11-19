@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -27,23 +26,30 @@ func revealRolePasswordOutput(
 	ctx *pulumi.Context,
 	projectID, branchID pulumi.StringOutput,
 	roleName string,
+	apiKeyInput pulumi.StringInput,
+	apiBaseURL string,
 ) pulumi.StringOutput {
-	isDryRun := ctx.DryRun()
-	raw := pulumi.All(projectID, branchID).ApplyTWithContext(
+	if ctx.DryRun() || apiKeyInput == nil {
+		raw := pulumi.All(projectID, branchID).ApplyT(func(_ []any) string {
+			return "mock-neon-role-password"
+		}).(pulumi.StringOutput)
+		return pulumi.ToSecret(raw).(pulumi.StringOutput)
+	}
+	raw := pulumi.All(projectID, branchID, apiKeyInput.ToStringOutput()).ApplyTWithContext(
 		context.Background(),
 		func(goCtx context.Context, vs []any) (string, error) {
-			apiKey := strings.TrimSpace(os.Getenv("NEON_API_KEY"))
-			if isDryRun || apiKey == "" {
+			apiKey := strings.TrimSpace(vs[2].(string))
+			if apiKey == "" {
 				return "mock-neon-role-password", nil
 			}
-			return fetchNeonRolePassword(goCtx, apiKey, vs[0].(string), vs[1].(string), roleName)
+			return fetchNeonRolePassword(goCtx, apiKey, apiBaseURL, vs[0].(string), vs[1].(string), roleName)
 		},
 	).(pulumi.StringOutput)
 	return pulumi.ToSecret(raw).(pulumi.StringOutput)
 }
 
-func fetchNeonRolePassword(ctx context.Context, apiKey, projectID, branchID, roleName string) (string, error) {
-	baseURL := strings.TrimRight(defaultIdentifier(os.Getenv("NEON_API_BASE_URL"), defaultNeonAPIBaseURL), "/")
+func fetchNeonRolePassword(ctx context.Context, apiKey, apiBaseURL, projectID, branchID, roleName string) (string, error) {
+	baseURL := strings.TrimRight(defaultIdentifier(apiBaseURL, defaultNeonAPIBaseURL), "/")
 	endpoint := fmt.Sprintf(
 		"%s/projects/%s/branches/%s/roles/%s/reveal_password",
 		baseURL,

@@ -36,8 +36,6 @@ var (
 	ErrInvalidBranchSource = errors.New("core: invalid branchFrom source (expected dev, stage, or prod distinct from target)")
 	// ErrInvalidIdentifier reports a malformed project or resource identifier.
 	ErrInvalidIdentifier = errors.New("core: invalid identifier (expected lowercase [a-z][a-z0-9-]*)")
-	// ErrDuplicateLinkEnvKey reports a collision across two linked resources.
-	ErrDuplicateLinkEnvKey = errors.New("core: duplicate environment variable key across links")
 )
 
 // ParseEnvironment validates and normalizes an OpenBase environment string.

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`vercel.WebApp` (`core.StatelessResource`) deploys per-environment Vercel web applications across `dev`, `stage`, `prod`, and `preview-<slug>` stacks. It scopes environment variables by tier, creates deployments, attaches deterministic `vercel.Alias` hostnames, and configures keyless GCP Workload Identity Federation when linked to Google Cloud resources.
+`vercel.WebApp` (`core.StatelessResource`) deploys per-environment Vercel web applications across `dev`, `stage`, `prod`, and `preview-<slug>` stacks. It scopes environment variables by tier, creates deployments, attaches deterministic `vercel.Alias` hostnames, and emits a provider-neutral Vercel OIDC `core.Subject` so `core.IdentityBroker` implementations (such as `gcp.WIFBroker`) can federate cross-cloud access without coupling `vercel` to other cloud SDKs.
 
 ## Requirement
 
@@ -11,13 +11,13 @@
 - Build and deploy web application directories to `dev`, `stage`, `prod`, and `preview-<slug>` environments.
 - Isolate environment variables and linked secrets per tier and per concurrent pull-request preview.
 - Bind deterministic environment domains and extra vanity aliases to each deployment.
-- Authenticate Vercel functions to private Google Cloud services and buckets when linked.
+- Authenticate Vercel functions to private external cloud services and buckets through `Brokers` (`core.IdentityBroker`).
 
 ### Non-Functional
 
-- Exchange short-lived Vercel OIDC tokens at runtime instead of storing static Google Cloud keys in Vercel.
+- Exchange short-lived Vercel OIDC tokens at runtime instead of storing static cloud keys in Vercel.
+- Keep `libs/components/vercel` free of `pulumi-gcp` or other external cloud provider SDK imports.
 - Keep concurrent pull-request deployments isolated so branch builds never overwrite each other's secrets or aliases.
-- Remove ephemeral preview deployments and aliases cleanly on teardown without disrupting `dev`, `stage`, or `prod`.
 
 ## Design
 
@@ -26,17 +26,19 @@
 ```mermaid
 flowchart TD
     Proj["vercel.Project (ProjectStackRef)"] --> Vars["ProjectEnvironmentVariable (prod / CustomEnvironment)"]
-    Links["Links (Database, BlobStore, OidcApp, CloudRunService)"] --> Vars
-    Links --> DepEnv["DeploymentArgs.Environment (runtime vars)"]
-    Dir["GetProjectDirectoryOutput (SourceDir)"] --> Dep["vercel.Deployment"]
+    Sub["core.Subject (provider: vercel, project_id, owner)"] --> Brokers["Brokers ([]core.IdentityBroker)"]
+    Brokers -->|"Principals"| Links["core.ResolveLinks (IAM Grants)"]
+    CallerEnv["Explicit Env + Secrets Maps"] --> Vars
+    CallerEnv --> DepEnv["DeploymentArgs.Environment (runtime vars)"]
+    Dir["GetProjectDirectory (SourceDir)"] --> Dep["vercel.Deployment"]
+    Links --> Dep
     Vars --> Dep
     DepEnv --> Dep
     Dep --> Alias["vercel.Alias (primary + ExtraDomains)"]
-    WIF["GCP ServiceAccount + WIF IAMMember"] --> DepEnv
 ```
 
-- `GetProjectDirectoryOutput` hashes application source files under `SourceDir`.
-- `ProjectEnvironmentVariable` persists tier-scoped configuration in Vercel project settings without colliding across `preview-*` branches.
+- `GetProjectDirectory` hashes application source files under `SourceDir`.
+- `ProjectEnvironmentVariable` persists caller `Env` and `Secrets` entries in Vercel project settings without colliding across `preview-*` branches.
 - `Deployment` builds and publishes the serverless bundle for the stack.
 - `Alias` maps `{project}-{dev|stage|prod|previewId}.{baseDomain}` (or team `.vercel.app` fallback) plus `ExtraDomains` to `Deployment.ID()`.
 
@@ -56,23 +58,32 @@ sequenceDiagram
     App->>API: 5. Call internal service with Authorization: Bearer <id_token>
 ```
 
-When a `vercel.WebApp` links an internal `gcp.CloudRunService` or private `gcp.Bucket`, `ResolveLinks` grants `roles/run.invoker` or `roles/storage.objectAdmin` to the federated GCP service account. At runtime, Vercel exchanges `x-vercel-oidc-token` for short-lived GCP credentials.
+When a `vercel.WebApp` links an internal `gcp.CloudRunService` or private `gcp.Bucket` with `gcp.FederatedIdentity` (or `gcp.WIFBroker`) in `Brokers`, `ResolveLinks` grants `roles/run.invoker` or `roles/storage.objectAdmin` to the federated service account, while the caller wires `fed.ServiceAccountEmail` and `fed.ProviderAudience` into `Env` under the variable names its runtime code reads. At runtime, Vercel exchanges `x-vercel-oidc-token` for short-lived GCP credentials.
 
 ### Interfaces and Contracts
 
 ```go
 web, err := vercel.WebApp{
-	Name:                    "web",
-	Project:                 "storefront",
-	Environment:             "preview-pr-20",
-	Links:                   []core.Resource{api, blobs, db, auth},
-	ProjectStackRef:         "cloudvoyant/storefront-shared/shared",
-	BaseDomain:              "vercel.cloudvoyant.io",
-	ExtraDomains:            []string{"pr20.storefront.io"},
-	SourceDir:               "../apps/web",
-	GCPProject:              pulumi.String("cloudvoyant-openbase"),
-	GCPWorkloadIdentityPool: poolName,
-	GCPVercelOIDCProvider:   vercelOidcProvider,
+	Name:            "web",
+	Project:         "storefront",
+	Environment:     "preview-pr-20",
+	Links:           []core.Resource{api, blobs},
+	Brokers:         []core.IdentityBroker{fed},
+	Env: map[string]pulumi.StringInput{
+		"GCP_SERVICE_ACCOUNT_EMAIL":      fed.ServiceAccountEmail,
+		"GCP_WORKLOAD_IDENTITY_PROVIDER": fed.ProviderAudience,
+		"API_URL":                        api.URL,
+		"BLOB_BASE_URL":                  blobs.BlobBaseURL,
+		"BLOB_PREFIX":                    pulumi.String(blobs.BlobPrefix),
+	},
+	Secrets: map[string]pulumi.StringInput{
+		"DATABASE_URL":        db.DatabaseURL,
+		"KINDE_CLIENT_SECRET": auth.ClientSecret,
+	},
+	ProjectStackRef: "cloudvoyant/storefront-shared/shared",
+	BaseDomain:      "vercel.cloudvoyant.io",
+	ExtraDomains:    []string{"pr20.storefront.io"},
+	SourceDir:       "../apps/web",
 }.Register(ctx)
 ```
 

@@ -1,86 +1,101 @@
 package core
 
-import (
-	"fmt"
-
-	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
-)
+import "github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
 // Public API -----------------------------------------------------------------
 
-// LinkGrantContext supplies consumer identity details to linked resources that grant IAM or OIDC access.
+// Subject identifies a workload caller across cloud providers without coupling core to provider SDKs.
+type Subject struct {
+	Provider string
+	NativeID pulumi.StringOutput
+	Claims   map[string]pulumi.StringOutput
+}
+
+// PrincipalGrant holds a federated cloud IAM member resolved for an external workload Subject.
+type PrincipalGrant struct {
+	Provider string
+	Member   pulumi.StringOutput
+}
+
+// IdentityBroker translates an external OIDC Subject into a target-cloud IAM member once per consumer.
+type IdentityBroker interface {
+	BrokerProvider() string
+	ResolvePrincipal(ctx *pulumi.Context, consumer ResourceMeta, sub Subject) (PrincipalGrant, error)
+}
+
+// LinkGrantContext supplies consumer identity details and brokered cloud principals to linked resources.
 type LinkGrantContext struct {
-	Ctx                         *pulumi.Context
-	ConsumerName                string
-	Environment                 Environment
-	GCPProject                  pulumi.StringPtrInput
-	GCPServiceAccountEmail      pulumi.StringOutput
-	GCPWorkloadIdentityPoolName pulumi.StringOutput
-	VercelProjectID             pulumi.StringOutput
-	VercelTeamSlug              pulumi.StringOutput
+	Ctx          *pulumi.Context
+	ConsumerName string
+	ConsumerMeta ResourceMeta
+	Environment  Environment
+	Subject      Subject
+	Principals   map[string]pulumi.StringOutput
+	Brokers      []IdentityBroker
 }
 
-// LinkDescriptor describes the environment variables, secrets, and access grants exported by a Resource.
+// LinkDescriptor describes the attributes, stack exports, and IAM/OIDC access grants of a Resource.
 type LinkDescriptor struct {
-	Name        string
-	Kind        string
-	Env         map[string]pulumi.StringOutput
-	Secrets     map[string]pulumi.StringOutput
-	GrantAccess func(LinkGrantContext) error
+	Name         string
+	Kind         string
+	Attributes   map[string]pulumi.StringOutput
+	StackExports map[string]pulumi.Input
+	GrantAccess  func(LinkGrantContext) error
 }
 
-// ResolvedLinks holds merged plain and secret environment variables across all Links on a consumer.
-type ResolvedLinks struct {
-	Env     map[string]pulumi.StringOutput
-	Secrets map[string]pulumi.StringOutput
-}
-
-// ResolveLinks merges environment variables and secrets from links and executes their GrantAccess hooks.
-func ResolveLinks(grantCtx LinkGrantContext, links []Resource) (ResolvedLinks, error) {
-	resolved := ResolvedLinks{
-		Env:     map[string]pulumi.StringOutput{},
-		Secrets: map[string]pulumi.StringOutput{},
+// ResolveLinks resolves brokered cloud principals for grantCtx and executes GrantAccess on every linked Resource.
+func ResolveLinks(grantCtx LinkGrantContext, links []Resource) (map[string]pulumi.StringOutput, error) {
+	if err := populatePrincipals(&grantCtx); err != nil {
+		return nil, err
 	}
-	seen := map[string]string{}
 	for _, res := range links {
 		if res == nil {
 			continue
 		}
 		desc := res.Link()
-		if err := mergeLinkOutputs(desc.Name, desc.Env, resolved.Env, seen, false); err != nil {
-			return ResolvedLinks{}, err
-		}
-		if err := mergeLinkOutputs(desc.Name, desc.Secrets, resolved.Secrets, seen, true); err != nil {
-			return ResolvedLinks{}, err
-		}
 		if desc.GrantAccess != nil && grantCtx.Ctx != nil {
 			if err := desc.GrantAccess(grantCtx); err != nil {
-				return ResolvedLinks{}, err
+				return nil, err
 			}
 		}
 	}
-	return resolved, nil
+	return grantCtx.Principals, nil
 }
 
 // Private helpers ------------------------------------------------------------
 
-func mergeLinkOutputs(
-	sourceName string,
-	incoming map[string]pulumi.StringOutput,
-	target map[string]pulumi.StringOutput,
-	seen map[string]string,
-	asSecret bool,
-) error {
-	for key, val := range incoming {
-		if prev, exists := seen[key]; exists {
-			return fmt.Errorf("%w: %q exported by both %q and %q", ErrDuplicateLinkEnvKey, key, prev, sourceName)
-		}
-		seen[key] = sourceName
-		if asSecret {
-			target[key] = pulumi.ToSecret(val).(pulumi.StringOutput)
-		} else {
-			target[key] = val
+func populatePrincipals(grantCtx *LinkGrantContext) error {
+	if grantCtx.Principals == nil {
+		grantCtx.Principals = map[string]pulumi.StringOutput{}
+	}
+	if grantCtx.Subject.Provider != "" {
+		if _, exists := grantCtx.Principals[grantCtx.Subject.Provider]; !exists {
+			grantCtx.Principals[grantCtx.Subject.Provider] = grantCtx.Subject.NativeID
 		}
 	}
+	if grantCtx.Ctx == nil || grantCtx.Subject.Provider == "" {
+		return nil
+	}
+	for _, broker := range grantCtx.Brokers {
+		if err := runSingleBroker(grantCtx, broker); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func runSingleBroker(grantCtx *LinkGrantContext, broker IdentityBroker) error {
+	if broker == nil {
+		return nil
+	}
+	target := broker.BrokerProvider()
+	if _, exists := grantCtx.Principals[target]; exists {
+		return nil
+	}
+	grant, err := broker.ResolvePrincipal(grantCtx.Ctx, grantCtx.ConsumerMeta, grantCtx.Subject)
+	if err != nil {
+		return err
+	}
+	grantCtx.Principals[target] = grant.Member
 	return nil
 }

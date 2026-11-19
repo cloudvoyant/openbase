@@ -66,7 +66,7 @@ uploads, err := gcp.Bucket{
 }.Register(ctx)
 
 // Application runtime
-store, err := overlayfs.NewStoreFromEnv(gcsClient, "STORAGE")
+store, err := overlayfs.NewStore(gcsClient, primaryBucket, fallbackBucket)
 ```
 
 | Environment Tier | `Protect` | `ForceDestroy` | `Versioning` | `SoftDeletePolicy` |
@@ -80,9 +80,9 @@ store, err := overlayfs.NewStoreFromEnv(gcsClient, "STORAGE")
 
 GCS bucket names share one global namespace. `BucketNamespace` prepends the organization or GCP project slug (`<namespace>-<project>-<env>-<name>`) bounded to `63` characters via `core.BucketName`.
 
-### Prefix customization
+### Explicit bucket outputs
 
-`EnvPrefix` defaults to `STORAGE` (exporting `STORAGE_BUCKET`, `STORAGE_BUCKET_URL`, and `STORAGE_FALLBACK_BUCKET`). Set `EnvPrefix` when linking multiple buckets to one service so link keys stay unique.
+`BucketResource` exposes typed `BucketName`, `BucketURL`, and `FallbackBucketName` outputs so callers wire whichever environment variable names their application expects while `Links` binds `roles/storage.objectAdmin` and `roles/storage.objectViewer` IAM permissions.
 
 ## References
 

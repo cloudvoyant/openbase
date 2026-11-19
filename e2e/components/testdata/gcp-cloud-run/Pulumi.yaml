@@ -1,3 +1,0 @@
-name: openbase-gcp-cloud-run-fixture
-runtime: go
-description: Standalone Go consumer fixture for OpenBase gcp.Project and gcp.CloudRunService E2E tests

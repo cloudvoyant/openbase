@@ -2,7 +2,6 @@ package synthetic
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
@@ -23,9 +22,6 @@ type Storage struct {
 	BranchFrom  string
 	Backup      *bool
 	Links       []core.Resource
-	Env         map[string]pulumi.StringInput
-	Secrets     map[string]pulumi.StringInput
-	SecretToken string
 }
 
 // StorageResource is the deterministic offline StatefulResource handle returned by Storage.Register.
@@ -49,8 +45,6 @@ func (s Storage) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 		BranchFrom:  s.BranchFrom,
 		Backup:      s.Backup,
 		Links:       s.Links,
-		Env:         s.Env,
-		Secrets:     s.Secrets,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -65,32 +59,20 @@ func (s Storage) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	}
 	st.BucketName = pulumi.String(bucket).ToStringOutput()
 	st.FallbackBucketName = pulumi.String(fallback).ToStringOutput()
-	prefix := strings.ToUpper(strings.ReplaceAll(s.Name, "-", "_"))
-	envMap := map[string]pulumi.StringOutput{
-		prefix + "_BUCKET": st.BucketName,
-	}
-	if fallback != "" {
-		envMap[prefix+"_FALLBACK_BUCKET"] = st.FallbackBucketName
-	}
-	secMap := map[string]pulumi.StringOutput{}
-	if s.SecretToken != "" {
-		secMap[prefix+"_TOKEN"] = pulumi.ToSecret(pulumi.String(s.SecretToken)).(pulumi.StringOutput)
-	}
 	st.SetLink(core.LinkDescriptor{
-		Name:    s.Name,
-		Kind:    meta.Kind,
-		Env:     envMap,
-		Secrets: secMap,
+		Name: s.Name,
+		Kind: meta.Kind,
+		Attributes: map[string]pulumi.StringOutput{
+			"bucketName":         st.BucketName,
+			"fallbackBucketName": st.FallbackBucketName,
+		},
 		GrantAccess: func(g core.LinkGrantContext) error {
 			st.GrantedConsumers = append(st.GrantedConsumers, fmt.Sprintf("%s:%s", g.Environment, g.ConsumerName))
 			return nil
 		},
 	})
-	if err := ctx.RegisterResourceOutputs(st, pulumi.Map{
+	return st, ctx.RegisterResourceOutputs(st, pulumi.Map{
 		"bucket":         st.BucketName,
 		"fallbackBucket": st.FallbackBucketName,
-	}); err != nil {
-		return nil, err
-	}
-	return st, nil
+	})
 }

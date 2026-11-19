@@ -7,6 +7,7 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
+	"github.com/cloudvoyant/openbase/libs/components/gcp"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
 )
 
@@ -14,7 +15,7 @@ import (
 
 func TestVercelWebApp(t *testing.T) {
 	t.Run("given vercel.WebApp specs", func(t *testing.T) {
-		t.Run("when deploying a preview WebApp with GCP Workload Identity Federation, then it creates a federated SA, Deployment, and squat-proof Alias", func(t *testing.T) {
+		t.Run("when deploying a preview WebApp with GCP WIFBroker, then it creates a federated SA, Deployment, and squat-proof Alias", func(t *testing.T) {
 			// Arrange.
 			mocks := newVercelMocks()
 			urlCh := make(chan string, 1)
@@ -22,17 +23,21 @@ func TestVercelWebApp(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				app, err := vercel.WebApp{
-					Name:                    "web",
-					Project:                 "storefront",
-					Environment:             "preview-pr-22",
-					Secrets:                 map[string]pulumi.StringInput{"SESSION_SECRET": pulumi.String("s3cr3t")},
-					VercelProjectID:         pulumi.String("prj_123"),
-					VercelProjectName:       "openbase-storefront",
-					TeamSlug:                "cloudvoyant",
-					SourceDir:               ".",
-					GCPProject:              pulumi.String("cloudvoyant-openbase"),
-					GCPWorkloadIdentityPool: pulumi.String("projects/123/locations/global/workloadIdentityPools/pool"),
-					GCPVercelOIDCProvider:   pulumi.String("projects/123/locations/global/workloadIdentityPools/pool/providers/vercel-oidc"),
+					Name:              "web",
+					Project:           "storefront",
+					Environment:       "preview-pr-22",
+					Secrets:           map[string]pulumi.StringInput{"SESSION_SECRET": pulumi.String("s3cr3t")},
+					VercelProjectID:   pulumi.String("prj_123"),
+					VercelProjectName: "openbase-storefront",
+					TeamSlug:          "cloudvoyant",
+					SourceDir:         ".",
+					Brokers: []core.IdentityBroker{
+						gcp.WIFBroker{
+							GCPProject:   pulumi.String("cloudvoyant-openbase"),
+							PoolName:     pulumi.String("projects/123/locations/global/workloadIdentityPools/pool"),
+							OIDCProvider: pulumi.String("projects/123/locations/global/workloadIdentityPools/pool/providers/vercel-oidc"),
+						},
+					},
 				}.Register(ctx)
 				if err != nil {
 					return err
@@ -91,7 +96,7 @@ func TestVercelWebApp(t *testing.T) {
 			}
 		})
 
-		t.Run("when linking BlobStore into a dev WebApp, then it skips duplicate BLOB_READ_WRITE_TOKEN ProjectEnvironmentVariable while keeping BLOB_PREFIX", func(t *testing.T) {
+		t.Run("when linking BlobStore into a dev WebApp with explicit env vars, then it skips duplicate BLOB_READ_WRITE_TOKEN ProjectEnvironmentVariable while keeping caller env keys", func(t *testing.T) {
 			// Arrange.
 			mocks := newVercelMocks()
 
@@ -108,10 +113,17 @@ func TestVercelWebApp(t *testing.T) {
 					return err
 				}
 				_, err = vercel.WebApp{
-					Name:            "web",
-					Project:         "storefront",
-					Environment:     "dev",
-					Links:           []core.Resource{blobs},
+					Name:        "web",
+					Project:     "storefront",
+					Environment: "dev",
+					Links:       []core.Resource{blobs},
+					Env: map[string]pulumi.StringInput{
+						"BLOB_BASE_URL": blobs.BlobBaseURL,
+						"BLOB_PREFIX":   pulumi.String(blobs.BlobPrefix),
+					},
+					Secrets: map[string]pulumi.StringInput{
+						"BLOB_READ_WRITE_TOKEN": pulumi.String("vercel_blob_rw_tok"),
+					},
 					ProjectStackRef: "org/storefront-shared/shared",
 				}.Register(ctx)
 				return err
@@ -119,7 +131,7 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Assert.
 			requireVercelNoErr(t, err)
-			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 3)
+			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 2)
 		})
 
 		t.Run("when deploying preview with BaseDomain and ExtraDomains, then it binds {project}-{previewId}.{baseDomain} and extra aliases without registering Production ProjectDomains", func(t *testing.T) {

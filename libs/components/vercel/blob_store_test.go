@@ -17,11 +17,10 @@ import (
 
 func TestBlobStoreAndOverlayClient(t *testing.T) {
 	t.Run("given vercel.BlobStore specs and BlobOverlayClient", func(t *testing.T) {
-		t.Run("when registering stage and preview BlobStores, then stage propagates CustomEnvironment vars and preview exports fallback prefixes", func(t *testing.T) {
+		t.Run("when registering stage and preview BlobStores, then stage propagates CustomEnvironment vars and preview computes fallback prefixes", func(t *testing.T) {
 			// Arrange.
 			mocks := newVercelMocks()
-			prefixCh := make(chan string, 1)
-			fallbackCh := make(chan string, 1)
+			var gotPrefix, gotFallback string
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
@@ -47,16 +46,16 @@ func TestBlobStoreAndOverlayClient(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				prev.Link().Env["BLOB_PREFIX"].ApplyT(func(v string) string { prefixCh <- v; return v })
-				prev.Link().Env["BLOB_FALLBACK_PREFIX"].ApplyT(func(v string) string { fallbackCh <- v; return v })
+				gotPrefix = prev.BlobPrefix
+				gotFallback = prev.BlobFallbackPrefix
 				return nil
 			}, pulumi.WithMocks("storefront", "stage", mocks))
 
 			// Assert.
 			requireVercelNoErr(t, err)
 			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 2)
-			assertVercelEq(t, "preview prefix", <-prefixCh, "preview-pr-9/")
-			assertVercelEq(t, "fallback prefix", <-fallbackCh, "dev/")
+			assertVercelEq(t, "preview prefix", gotPrefix, "preview-pr-9/")
+			assertVercelEq(t, "fallback prefix", gotFallback, "dev/")
 		})
 
 		t.Run("when primary prefix misses on BlobOverlayClient.Get, then it falls back to FallbackPrefix or returns ErrBlobNotFound", func(t *testing.T) {

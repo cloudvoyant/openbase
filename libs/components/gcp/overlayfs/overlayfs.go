@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"cloud.google.com/go/storage"
@@ -34,19 +33,6 @@ type Store struct {
 // NewStore constructs an overlay Store backed by a live *storage.Client.
 func NewStore(client *storage.Client, primaryBucket, fallbackBucket string) (*Store, error) {
 	return NewStoreWithBackend(&gcsBackend{client: client}, primaryBucket, fallbackBucket)
-}
-
-// NewStoreFromEnv constructs an overlay Store from <PREFIX>_BUCKET and <PREFIX>_FALLBACK_BUCKET env vars.
-func NewStoreFromEnv(client *storage.Client, envPrefix string) (*Store, error) {
-	prefix := strings.ToUpper(strings.TrimSpace(envPrefix))
-	if prefix == "" {
-		prefix = "STORAGE"
-	}
-	return NewStore(
-		client,
-		os.Getenv(prefix+"_BUCKET"),
-		os.Getenv(prefix+"_FALLBACK_BUCKET"),
-	)
 }
 
 // NewStoreWithBackend constructs an overlay Store over any Backend implementation.

@@ -9,7 +9,7 @@ pulumi = "3.200.0"
 [tasks.e2e]
 description = "Run E2E suite(s): mise run e2e [file_or_suite] [--no-cleanup | --keep | --offline]"
 usage = '''
-arg "[target]" help="Suite or test target (core, gcp, gcp_bucket, gcp_cloud_run, neon, kinde, vercel, vercel_blob_store, vercel_web_app, links, apps, vercel_neon_kinde_app, gcp_neon_kinde_app)"
+arg "[target]" help="Suite or test target (core, gcp, neon, kinde, vercel, links, apps, gcp_neon_kinde_app, vercel_neon_kinde_app)"
 flag "-k --keep" help="Keep cloud stacks & Pulumi state in e2e/outputs/components/<Test>/"
 flag "--no-cleanup" help="Keep cloud stacks & Pulumi state in e2e/outputs/components/<Test>/"
 flag "--cleanup" help="Destroy stacks after the test completes (default)"
@@ -51,38 +51,14 @@ else
       RUN_REGEX='^TestCoreLifecycle$'
       NEEDS_LIVE="0"
       ;;
-    gcp_bucket)
-      RUN_REGEX='^TestGCPBucket$'
-      ;;
-    gcp_cloud_run|gcp_cloud_run_service)
-      RUN_REGEX='^TestGCPCloudRunService$'
-      ;;
-    gcp_neon_kinde_app|gcp_app)
+    gcp|gcp_neon_kinde_app|gcp_app|neon)
       RUN_REGEX='^TestGCPNeonKindeApp$'
       ;;
-    vercel_neon_kinde_app|vercel_app)
+    vercel|vercel_neon_kinde_app|vercel_app|kinde)
       RUN_REGEX='^TestVercelNeonKindeApp$'
-      ;;
-    vercel_blob_store|vercel_blob)
-      RUN_REGEX='^TestVercelBlobStore$'
-      ;;
-    vercel_web_app|vercel_webapp)
-      RUN_REGEX='^TestVercelWebApp$'
-      ;;
-    neon_database|neon_db|neon)
-      RUN_REGEX='^TestNeonDatabase$'
-      ;;
-    kinde_oidc_app|kinde_oidc|kinde)
-      RUN_REGEX='^TestKindeOidcApp$'
       ;;
     links|links_fullstack)
       RUN_REGEX='^TestLinks$'
-      ;;
-    gcp)
-      RUN_REGEX='^TestGCP(Bucket|CloudRunService)$'
-      ;;
-    vercel)
-      RUN_REGEX='^TestVercel(BlobStore|WebApp)$'
       ;;
     apps)
       RUN_REGEX='^Test(VercelNeonKindeApp|GCPNeonKindeApp)$'
@@ -247,7 +223,9 @@ for manifest in "$OUTPUTS_ROOT"/*/run-manifest.json; do
       export PULUMI_SKIP_UPDATE_CHECK="true"
       eval "$(jq -r '(.env // {}) | to_entries[] | "export \(.key)=\(.value | @sh)"' "$manifest")"
       STACK_DIR="$WORKSPACE_DIR"
-      if [ "$stack" = "shared" ] && [ -f "$WORKSPACE_DIR/infra/shared/Pulumi.yaml" ]; then
+      if [ "$stack" = "platform" ] && [ -f "$WORKSPACE_DIR/platform/Pulumi.yaml" ]; then
+        STACK_DIR="$WORKSPACE_DIR/platform"
+      elif [ "$stack" = "shared" ] && [ -f "$WORKSPACE_DIR/infra/shared/Pulumi.yaml" ]; then
         STACK_DIR="$WORKSPACE_DIR/infra/shared"
       elif [ -f "$WORKSPACE_DIR/infra/Pulumi.yaml" ]; then
         STACK_DIR="$WORKSPACE_DIR/infra"
@@ -310,11 +288,11 @@ description = "Run live Vercel BlobStore and WebApp E2E suites"
 run = "mise run //e2e/components:e2e vercel"
 
 [tasks."e2e:apps"]
-description = "Run live composite Vercel+Neon+Kinde and GCP+Neon+Kinde app E2E suites"
+description = "Run live full-stack Vercel+Neon+Kinde and GCP+Neon+Kinde app E2E suites"
 run = "mise run //e2e/components:e2e apps"
 
 [tasks."e2e:live"]
-description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, Links, and composite apps"
+description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, Links, and full-stack apps"
 run = "mise run //e2e/components:e2e"
 
 [tasks.lint]

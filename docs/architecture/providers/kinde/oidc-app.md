@@ -2,13 +2,13 @@
 
 ## Overview
 
-`kinde.OidcApp` (`core.StatelessResource`) routes per-environment stacks (`dev`, `stage`, `prod`, and `preview-<slug>`) to the matching Kinde tenant credentials from `kinde.Project` (`ProjectStackRef`) and computes environment-specific OIDC callback and post-logout URLs. It creates zero duplicate Kinde applications per branch.
+`kinde.OidcApp` (`core.StatelessResource`) routes per-environment stacks (`dev`, `stage`, `prod`, and `preview-<slug>`) to the matching `NonProd` or `Prod` Kinde tenant credentials from `kinde.Project` (`ProjectStackRef`) and computes environment-specific OIDC callback and post-logout URLs. It creates zero duplicate Kinde applications per branch.
 
 ## Requirement
 
 ### Functional
 
-- Bind `dev` and `preview-<slug>` deployments to the `dev` Kinde tenant and `stage` and `prod` deployments to the `prod` Kinde tenant.
+- Bind `dev` and `preview-<slug>` deployments to the `NonProd` Kinde tenant and `stage` and `prod` deployments to the `Prod` Kinde tenant.
 - Compute environment-specific site, login callback, post-login, and post-logout URLs for each stack.
 - Deliver OIDC issuer, client ID, redirect URLs, and client secret to linked services.
 
@@ -23,16 +23,16 @@
 
 ```mermaid
 flowchart LR
-    Stack{"Environment Tier"} -->|"dev | preview-<slug>"| DevOut["ProjectStackRef: dev* outputs"]
+    Stack{"Environment Tier"} -->|"dev | preview-<slug>"| NonProdOut["ProjectStackRef: nonProd* outputs"]
     Stack -->|"stage | prod"| ProdOut["ProjectStackRef: prod* outputs"]
-    DevOut --> Oidc["kinde.OidcApp"]
+    NonProdOut --> Oidc["kinde.OidcApp"]
     ProdOut --> Oidc
-    Oidc -->|"LinkDescriptor (Env + Secret)"| App["vercel.WebApp / gcp.CloudRunService"]
+    Oidc -->|"Typed Outputs (IssuerURL, ClientID, ClientSecret, RedirectURL)"| App["vercel.WebApp / gcp.CloudRunService"]
 ```
 
-- `selectTenantOutputs` picks `dev` or `prod` credentials based on `meta.Environment`.
-- `resolveSiteURL` computes `https://{project}-{dev|stage|prod|previewId}.{baseDomain}` (or explicit `SiteURL` / `.vercel.app` fallback).
-- `SetLink` exports the standard Kinde SDK environment contract to linked workloads.
+- `resolveTenantCredOutputs` picks `nonProd` or `prod` credentials based on `meta.Environment`.
+- `resolveSiteURL` computes `https://{project}-{dev|stage|prod|previewId}.{baseDomain}` (or explicit `SiteURL` and `.vercel.app` fallback).
+- `OidcAppResource` exposes `IssuerURL`, `ClientID`, `ClientSecret`, `SiteURL`, `RedirectURL`, `PostLoginRedirectURL`, and `PostLogoutRedirectURL` so callers wire whichever OIDC environment variables their SDK expects.
 
 ### Data and Control Flow
 
@@ -40,7 +40,7 @@ flowchart LR
 sequenceDiagram
     participant Browser as "End User Browser"
     participant App as "Workload (KINDE_* env)"
-    participant Kinde as "Kinde OAuth2 Server (dev or prod)"
+    participant Kinde as "Kinde OAuth2 Server (NonProd or Prod)"
 
     Browser->>App: 1. GET /api/auth/login
     App-->>Browser: 2. 302 Redirect to KINDE_ISSUER_URL/oauth2/auth (redirect_uri = KINDE_REDIRECT_URL)
@@ -66,8 +66,8 @@ auth, err := kinde.OidcApp{
 
 | Environment | Selected Tenant | Exported `KINDE_REDIRECT_URL` (`BaseDomain = vercel.acme.io`) |
 | :--- | :--- | :--- |
-| `dev` | `dev` | `https://storefront-dev.vercel.acme.io/api/auth/kinde_callback` |
-| `preview-pr-20` | `dev` | `https://storefront-pr-20.vercel.acme.io/api/auth/kinde_callback` |
+| `dev` | `non-prod` | `https://storefront-dev.vercel.acme.io/api/auth/kinde_callback` |
+| `preview-pr-20` | `non-prod` | `https://storefront-pr-20.vercel.acme.io/api/auth/kinde_callback` |
 | `stage` | `prod` | `https://storefront-stage.vercel.acme.io/api/auth/kinde_callback` |
 | `prod` | `prod` | `https://storefront-prod.vercel.acme.io/api/auth/kinde_callback` |
 
@@ -75,11 +75,7 @@ auth, err := kinde.OidcApp{
 
 ### Explicit SiteURL override
 
-Cloud Run composite blueprints compute `siteURL` from `BaseDomain` or `gcp.CloudRunRegionalURL` and pass `SiteURL` directly to `kinde.OidcApp` so container environment variables match the deployed Cloud Run URL before the container starts.
-
-### Custom env prefix
-
-`EnvPrefix` defaults to `KINDE`. Override `EnvPrefix` only when a single workload links multiple OIDC clients simultaneously.
+Cloud Run `openbase.Environment` programs compute `siteURL` from `BaseDomain` or `gcp.CloudRunRegionalURL` and pass `SiteURL` directly to `kinde.OidcApp` so container environment variables match the deployed Cloud Run URL before the container starts.
 
 ## References
 

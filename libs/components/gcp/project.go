@@ -2,9 +2,6 @@ package gcp
 
 import (
 	"github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/artifactregistry"
-	"github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/iam"
-	"github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/kms"
-	"github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/projects"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
@@ -12,9 +9,12 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*ProjectResource)(nil)
+var (
+	_ core.StatelessResource              = (*ProjectResource)(nil)
+	_ core.ScopedSpecOf[*ProjectResource] = Project{}
+)
 
-// Project declares an application's shared GCP project assets (Docker Artifact Registry repository, optionally linked to gcp.Platform) in Premise's infra/shared stack.
+// Project declares an application's shared Docker Artifact Registry repository in Premise's infra/shared stack.
 type Project struct {
 	Name             string
 	Project          string
@@ -27,27 +27,18 @@ type Project struct {
 	ExtraLabels      map[string]string
 }
 
-// ProjectResource is the provisioned handle for an application's Artifact Registry repository and inherited GCP Platform references.
+// ProjectResource is the provisioned handle for an application's shared Docker Artifact Registry repository.
 type ProjectResource struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
-	EnabledServices          []*projects.Service
-	Repository               *artifactregistry.Repository
-	WorkloadIdentityPool     *iam.WorkloadIdentityPool
-	GitHubOIDCProvider       *iam.WorkloadIdentityPoolProvider
-	VercelOIDCProvider       *iam.WorkloadIdentityPoolProvider
-	KeyRing                  *kms.KeyRing
-	LoadBalancer             *CloudLoadBalancerResource
-	BaseDomain               pulumi.StringOutput
-	RepositoryID             pulumi.StringOutput
-	RepositoryURL            pulumi.StringOutput
-	WorkloadIdentityPoolName pulumi.StringOutput
-	VercelOIDCProviderName   pulumi.StringOutput
-	KeyRingID                pulumi.StringOutput
+	Repository    *artifactregistry.Repository
+	BaseDomain    pulumi.StringOutput
+	RepositoryID  pulumi.StringOutput
+	RepositoryURL pulumi.StringOutput
 }
 
-// Register provisions per-application shared GCP resources in Premise's infra/shared stack.
+// Register provisions per-application shared GCP Artifact Registry resources in Premise's infra/shared stack.
 func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
 	p.Name = defaultStr(p.Name, "gcp")
 	res := &ProjectResource{}
@@ -66,22 +57,64 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	res.SetLink(core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
-		Env: map[string]pulumi.StringOutput{
-			"GCP_ARTIFACT_REGISTRY_URL":  res.RepositoryURL,
-			"GCP_WORKLOAD_IDENTITY_POOL": res.WorkloadIdentityPoolName,
+		Attributes: map[string]pulumi.StringOutput{
+			"baseDomain":    res.BaseDomain,
+			"repositoryId":  res.RepositoryID,
+			"repositoryUrl": res.RepositoryURL,
+		},
+		StackExports: map[string]pulumi.Input{
+			"baseDomain":    res.BaseDomain,
+			"repositoryId":  res.RepositoryID,
+			"repositoryUrl": res.RepositoryURL,
 		},
 	})
-	return res, registerGCPProjectOutputs(ctx, res)
+	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
+		"baseDomain":    res.BaseDomain,
+		"repositoryId":  res.RepositoryID,
+		"repositoryUrl": res.RepositoryURL,
+	})
+}
+
+// RegisterInScope adapts gcp.Project to openbase.Project.
+func (p Project) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return p.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers gcp.Project with inherited Project and PlatformRef defaults.
+func (p Project) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
+	if p.Project == "" {
+		p.Project = scope.Project
+	}
+	if p.Repo == "" {
+		p.Repo = scope.Repo
+	}
+	if p.Platform == nil && scope.Platform != nil {
+		if plat, ok := scope.Platform.PlatformHandle("gcp-platform").(*PlatformResource); ok {
+			p.Platform = plat
+		}
+	}
+	if p.PlatformStackRef == "" {
+		p.PlatformStackRef = scope.PlatformStackName()
+	}
+	return p.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
 
 func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Project, res *ProjectResource) error {
 	location := defaultStr(spec.Location, "us-central1")
-	if err := bindPlatformRefsToProject(ctx, name, spec, res); err != nil {
+	baseDomain, gcpProj, deps, err := resolveProjectPlatformInputs(ctx, name, spec)
+	if err != nil {
 		return err
 	}
-	repo, err := createArtifactRepository(ctx, name, location, meta, spec, res)
+	res.BaseDomain = baseDomain
+	repo, err := artifactregistry.NewRepository(ctx, name+"-ar", &artifactregistry.RepositoryArgs{
+		Project:      gcpProj,
+		Location:     pulumi.String(location),
+		RepositoryId: pulumi.String(core.BoundedName(meta.CanonicalName, 63)),
+		Format:       pulumi.String("DOCKER"),
+		Labels:       core.GCPLabels(meta, spec.ExtraLabels),
+	}, pulumi.Parent(res), pulumi.DependsOn(deps))
 	if err != nil {
 		return err
 	}
@@ -91,65 +124,44 @@ func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMet
 	return nil
 }
 
-func bindPlatformRefsToProject(
+func resolveProjectPlatformInputs(
 	ctx *pulumi.Context,
 	name string,
 	spec Project,
-	res *ProjectResource,
-) error {
+) (pulumi.StringOutput, pulumi.StringPtrInput, []pulumi.Resource, error) {
+	var deps []pulumi.Resource
+	gcpProj := spec.GCPProject
 	if spec.Platform != nil {
-		copyPlatformOutputsToProject(spec.Platform, spec.BaseDomain, res)
-		return nil
+		for _, svc := range spec.Platform.EnabledServices {
+			deps = append(deps, svc)
+		}
+		if core.NormalizeDomain(spec.BaseDomain) == "" {
+			return spec.Platform.BaseDomain, gcpProj, deps, nil
+		}
 	}
-	if spec.PlatformStackRef != "" {
-		return loadPlatformStackRefIntoProject(ctx, name, spec, res)
+	if spec.PlatformStackRef == "" {
+		return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), gcpProj, deps, nil
 	}
-	res.WorkloadIdentityPoolName = pulumi.String("").ToStringOutput()
-	res.VercelOIDCProviderName = pulumi.String("").ToStringOutput()
-	res.KeyRingID = pulumi.String("").ToStringOutput()
-	res.BaseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
-	return nil
-}
-
-func copyPlatformOutputsToProject(plat *PlatformResource, explicitBase string, res *ProjectResource) {
-	res.EnabledServices = plat.EnabledServices
-	res.WorkloadIdentityPool = plat.WorkloadIdentityPool
-	res.GitHubOIDCProvider = plat.GitHubOIDCProvider
-	res.VercelOIDCProvider = plat.VercelOIDCProvider
-	res.KeyRing = plat.KeyRing
-	res.LoadBalancer = plat.LoadBalancer
-	res.WorkloadIdentityPoolName = plat.WorkloadIdentityPoolName
-	res.VercelOIDCProviderName = plat.VercelOIDCProviderName
-	res.KeyRingID = plat.KeyRingID
-	res.BaseDomain = plat.BaseDomain
-	if core.NormalizeDomain(explicitBase) != "" {
-		res.BaseDomain = pulumi.String(core.NormalizeDomain(explicitBase)).ToStringOutput()
-	}
-}
-
-func loadPlatformStackRefIntoProject(ctx *pulumi.Context, name string, spec Project, res *ProjectResource) error {
 	sr, err := pulumi.NewStackReference(ctx, name+"-platform-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.PlatformStackRef)})
 	if err != nil {
-		return err
+		return pulumi.StringOutput{}, nil, nil, err
 	}
-	res.WorkloadIdentityPoolName = optionalGCPStackStr(sr, "workloadIdentityPoolName")
-	res.VercelOIDCProviderName = optionalGCPStackStr(sr, "vercelOidcProviderName")
-	res.KeyRingID = optionalGCPStackStr(sr, "keyRingId")
+	if gcpProj == nil {
+		gcpProj = nonEmptyGCPPtr(sr, "gcpProject")
+	}
 	if core.NormalizeDomain(spec.BaseDomain) != "" {
-		res.BaseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
-	} else {
-		res.BaseDomain = preferGCPStackStr(sr, "gcpBaseDomain", "baseDomain")
+		return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), gcpProj, deps, nil
 	}
-	return nil
+	return preferGCPStackStr(sr, "gcpBaseDomain", "baseDomain"), gcpProj, deps, nil
 }
 
-func optionalGCPStackStr(sr *pulumi.StackReference, key string) pulumi.StringOutput {
-	return sr.GetOutput(pulumi.String(key)).ApplyT(func(v any) string {
-		if s, ok := v.(string); ok {
-			return s
+func nonEmptyGCPPtr(sr *pulumi.StackReference, key string) pulumi.StringPtrOutput {
+	return sr.GetOutput(pulumi.String(key)).ApplyT(func(v any) *string {
+		if s, ok := v.(string); ok && s != "" {
+			return &s
 		}
-		return ""
-	}).(pulumi.StringOutput)
+		return nil
+	}).(pulumi.StringPtrOutput)
 }
 
 func preferGCPStackStr(sr *pulumi.StackReference, primaryKey, fallbackKey string) pulumi.StringOutput {
@@ -165,41 +177,4 @@ func preferGCPStackStr(sr *pulumi.StackReference, primaryKey, fallbackKey string
 		}
 		return ""
 	}).(pulumi.StringOutput)
-}
-
-func createArtifactRepository(
-	ctx *pulumi.Context,
-	name, location string,
-	meta core.ResourceMeta,
-	spec Project,
-	parent *ProjectResource,
-) (*artifactregistry.Repository, error) {
-	var deps []pulumi.Resource
-	for _, s := range parent.EnabledServices {
-		deps = append(deps, s)
-	}
-	return artifactregistry.NewRepository(ctx, name+"-ar", &artifactregistry.RepositoryArgs{
-		Project:      spec.GCPProject,
-		Location:     pulumi.String(location),
-		RepositoryId: pulumi.String(core.BoundedName(meta.CanonicalName, 63)),
-		Format:       pulumi.String("DOCKER"),
-		Labels:       core.GCPLabels(meta, spec.ExtraLabels),
-	}, pulumi.Parent(parent), pulumi.DependsOn(deps))
-}
-
-func registerGCPProjectOutputs(ctx *pulumi.Context, res *ProjectResource) error {
-	outs := pulumi.Map{
-		"baseDomain":               res.BaseDomain,
-		"repositoryId":             res.RepositoryID,
-		"repositoryUrl":            res.RepositoryURL,
-		"workloadIdentityPoolName": res.WorkloadIdentityPoolName,
-		"vercelOidcProviderName":   res.VercelOIDCProviderName,
-		"keyRingId":                res.KeyRingID,
-	}
-	if res.LoadBalancer != nil {
-		outs["loadBalancerIp"] = res.LoadBalancer.IPAddress
-		outs["dnsAuthRecordName"] = res.LoadBalancer.DnsAuthRecordName
-		outs["dnsAuthRecordData"] = res.LoadBalancer.DnsAuthRecordData
-	}
-	return ctx.RegisterResourceOutputs(res, outs)
 }

@@ -15,9 +15,12 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.PlatformResource = (*PlatformResource)(nil)
+var (
+	_ core.PlatformResource = (*PlatformResource)(nil)
+	_ core.PlatformSpecItem = Platform{}
+)
 
-// Platform declares organization-level GCP prerequisites (APIs, Workload Identity Federation, KMS, and wildcard Load Balancer) provisioned once per org.
+// Platform declares account-level GCP prerequisites (APIs, Workload Identity Pool, linked OIDC issuers, KMS, and wildcard Load Balancer).
 type Platform struct {
 	Name               string
 	Org                string
@@ -25,9 +28,7 @@ type Platform struct {
 	GCPProjectNumber   string
 	Location           string
 	PoolSuffix         string
-	GitHubOrg          string
-	VercelTeamSlug     string
-	VercelIssuerMode   string
+	Links              []core.OIDCProviderSource
 	BaseDomain         string
 	EnableLoadBalancer bool
 	Services           []string
@@ -35,29 +36,31 @@ type Platform struct {
 	ExtraLabels        map[string]string
 }
 
-// PlatformResource holds org-level enabled GCP APIs, Workload Identity Pool/Providers, KMS KeyRing, and optional wildcard LoadBalancer.
+// PlatformResource holds account-level enabled GCP APIs, Workload Identity Pool, linked OIDC providers, KMS KeyRing, and optional LoadBalancer.
 type PlatformResource struct {
 	pulumi.ResourceState
 	core.PlatformMeta
 
 	EnabledServices          []*projects.Service
 	WorkloadIdentityPool     *iam.WorkloadIdentityPool
-	GitHubOIDCProvider       *iam.WorkloadIdentityPoolProvider
-	VercelOIDCProvider       *iam.WorkloadIdentityPoolProvider
+	OIDCProviders            map[string]*iam.WorkloadIdentityPoolProvider
+	OIDCProviderNames        map[string]pulumi.StringOutput
 	KeyRing                  *kms.KeyRing
 	LoadBalancer             *CloudLoadBalancerResource
 	BaseDomain               pulumi.StringOutput
 	Location                 pulumi.StringOutput
 	WorkloadIdentityPoolName pulumi.StringOutput
-	VercelOIDCProviderName   pulumi.StringOutput
 	KeyRingID                pulumi.StringOutput
 }
 
-// Register provisions org-level GCP prerequisites for consumption by per-repo gcp.Project stacks.
+// Register provisions account-level GCP prerequisites and attaches any linked OIDC issuers.
 func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	p.Name = defaultStr(p.Name, "gcp-platform")
-	orgScope := core.OrgScope(p.Org, p.GitHubOrg, p.VercelTeamSlug, ctx.Organization())
-	res := &PlatformResource{}
+	orgScope := core.OrgScope(p.Org, ctx.Organization())
+	res := &PlatformResource{
+		OIDCProviders:     map[string]*iam.WorkloadIdentityPoolProvider{},
+		OIDCProviderNames: map[string]pulumi.StringOutput{},
+	}
 	info, err := core.InitPlatform(ctx, "openbase:gcp:Platform", "gcp-platform", res, &res.PlatformMeta, core.PlatformSpec{
 		Name: p.Name,
 		Org:  orgScope,
@@ -68,15 +71,40 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 	if err := provisionGCPPlatform(ctx, p.Name, orgScope, info, p, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
-		Name: info.Name,
-		Kind: info.Kind,
-		Env: map[string]pulumi.StringOutput{
-			"GCP_WORKLOAD_IDENTITY_POOL": res.WorkloadIdentityPoolName,
-			"GCP_BASE_DOMAIN":            res.BaseDomain,
-		},
-	})
+	res.SetLink(buildGCPPlatformLink(info, p, res))
 	return res, registerPlatformOutputs(ctx, p, res)
+}
+
+// RegisterPlatformInScope adapts gcp.Platform to openbase.Platform.
+func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.PlatformResource, error) {
+	if p.Org == "" {
+		p.Org = scope.Org
+	}
+	return p.Register(ctx, opts...)
+}
+
+// OIDCProviderName returns the full GCP resource name of a linked OIDC provider by issuer ID (or "" when absent).
+func (r *PlatformResource) OIDCProviderName(id string) pulumi.StringOutput {
+	if r == nil {
+		return pulumi.String("").ToStringOutput()
+	}
+	if out, ok := r.OIDCProviderNames[id]; ok {
+		return out
+	}
+	return pulumi.String("").ToStringOutput()
+}
+
+// WIFBroker returns a core.IdentityBroker backed by this GCP Platform's Workload Identity Pool and linked OIDC providers.
+func (r *PlatformResource) WIFBroker(gcpProject pulumi.StringPtrInput) WIFBroker {
+	providers := map[string]pulumi.StringInput{}
+	for id, out := range r.OIDCProviderNames {
+		providers[id] = out
+	}
+	return WIFBroker{
+		GCPProject: gcpProject,
+		PoolName:   r.WorkloadIdentityPoolName,
+		Providers:  providers,
+	}
 }
 
 // Private helpers ------------------------------------------------------------
@@ -160,84 +188,68 @@ func createIdentityFederation(
 	}
 	res.WorkloadIdentityPool = pool
 	res.WorkloadIdentityPoolName = pool.Name
-	if err := attachGitHubWIFProvider(ctx, name, spec, pool, res); err != nil {
-		return err
+	for _, src := range spec.Links {
+		if err := attachLinkedOIDCProvider(ctx, name, spec.GCPProject, pool, src, res); err != nil {
+			return err
+		}
 	}
-	return attachVercelWIFProvider(ctx, name, spec, pool, res)
+	return nil
 }
 
-func attachGitHubWIFProvider(
+func attachLinkedOIDCProvider(
 	ctx *pulumi.Context,
 	name string,
-	spec Platform,
+	gcpProject pulumi.StringPtrInput,
 	pool *iam.WorkloadIdentityPool,
+	src core.OIDCProviderSource,
 	res *PlatformResource,
 ) error {
-	if spec.GitHubOrg == "" {
+	if src == nil {
 		return nil
 	}
-	prov, err := iam.NewWorkloadIdentityPoolProvider(ctx, name+"-github-oidc", &iam.WorkloadIdentityPoolProviderArgs{
-		Project:                        spec.GCPProject,
+	issuer, ok := src.OIDCIssuerSpec()
+	if !ok {
+		return nil
+	}
+	provID := issuer.ID
+	if !strings.HasSuffix(provID, "-oidc") {
+		provID += "-oidc"
+	}
+	prov, err := iam.NewWorkloadIdentityPoolProvider(ctx, name+"-"+provID, &iam.WorkloadIdentityPoolProviderArgs{
+		Project:                        gcpProject,
 		WorkloadIdentityPoolId:         pool.WorkloadIdentityPoolId,
-		WorkloadIdentityPoolProviderId: pulumi.String("github-oidc"),
-		DisplayName:                    pulumi.String("GitHub Actions OIDC"),
-		AttributeCondition:             pulumi.String(fmt.Sprintf("assertion.repository_owner == '%s'", spec.GitHubOrg)),
-		AttributeMapping: pulumi.StringMap{
-			"google.subject":       pulumi.String("assertion.sub"),
-			"attribute.actor":      pulumi.String("assertion.actor"),
-			"attribute.repository": pulumi.String("assertion.repository"),
-			"attribute.ref":        pulumi.String("assertion.ref"),
-		},
+		WorkloadIdentityPoolProviderId: pulumi.String(core.BoundedName(provID, 32)),
+		DisplayName:                    pulumi.String(core.BoundedName(defaultStr(issuer.DisplayName, issuer.ID), 32)),
+		AttributeCondition:             optionalCondition(issuer.AttributeCondition),
+		AttributeMapping:               buildGCPAttributeMapping(issuer),
 		Oidc: &iam.WorkloadIdentityPoolProviderOidcArgs{
-			IssuerUri: pulumi.String("https://token.actions.githubusercontent.com"),
+			IssuerUri:        pulumi.String(issuer.IssuerURI),
+			AllowedAudiences: toStringArrayOrNil(issuer.AllowedAudiences),
 		},
 	}, pulumi.Parent(res))
 	if err != nil {
 		return err
 	}
-	res.GitHubOIDCProvider = prov
+	res.OIDCProviders[issuer.ID] = prov
+	res.OIDCProviderNames[issuer.ID] = prov.Name
 	return nil
 }
 
-func attachVercelWIFProvider(
-	ctx *pulumi.Context,
-	name string,
-	spec Platform,
-	pool *iam.WorkloadIdentityPool,
-	res *PlatformResource,
-) error {
-	if spec.VercelTeamSlug == "" {
-		res.VercelOIDCProviderName = pulumi.String("").ToStringOutput()
+func buildGCPAttributeMapping(issuer core.OIDCIssuer) pulumi.StringMap {
+	mapping := pulumi.StringMap{
+		"google.subject": pulumi.String(defaultStr(issuer.SubjectExpr, "assertion.sub")),
+	}
+	for claim, expr := range issuer.Claims {
+		mapping["attribute."+claim] = pulumi.String(expr)
+	}
+	return mapping
+}
+
+func optionalCondition(cond string) pulumi.StringPtrInput {
+	if strings.TrimSpace(cond) == "" {
 		return nil
 	}
-	issuer := "https://oidc.vercel.com/" + spec.VercelTeamSlug
-	if spec.VercelIssuerMode == "global" {
-		issuer = "https://oidc.vercel.com"
-	}
-	prov, err := iam.NewWorkloadIdentityPoolProvider(ctx, name+"-vercel-oidc", &iam.WorkloadIdentityPoolProviderArgs{
-		Project:                        spec.GCPProject,
-		WorkloadIdentityPoolId:         pool.WorkloadIdentityPoolId,
-		WorkloadIdentityPoolProviderId: pulumi.String("vercel-oidc"),
-		DisplayName:                    pulumi.String("Vercel OIDC"),
-		AttributeCondition:             pulumi.String(fmt.Sprintf("assertion.owner == '%s'", spec.VercelTeamSlug)),
-		AttributeMapping: pulumi.StringMap{
-			"google.subject":        pulumi.String("assertion.sub"),
-			"attribute.project_id":  pulumi.String("assertion.project_id"),
-			"attribute.project":     pulumi.String("assertion.project"),
-			"attribute.owner":       pulumi.String("assertion.owner"),
-			"attribute.environment": pulumi.String("assertion.environment"),
-		},
-		Oidc: &iam.WorkloadIdentityPoolProviderOidcArgs{
-			IssuerUri:        pulumi.String(issuer),
-			AllowedAudiences: pulumi.ToStringArray([]string{"https://vercel.com/" + spec.VercelTeamSlug}),
-		},
-	}, pulumi.Parent(res))
-	if err != nil {
-		return err
-	}
-	res.VercelOIDCProvider = prov
-	res.VercelOIDCProviderName = prov.Name
-	return nil
+	return pulumi.String(cond)
 }
 
 func createOptionalKeyRing(
@@ -290,6 +302,48 @@ func createOptionalPlatformLB(
 	return nil
 }
 
+func buildGCPPlatformLink(info core.PlatformInfo, spec Platform, res *PlatformResource) core.LinkDescriptor {
+	attrs := map[string]pulumi.StringOutput{
+		"location":                 res.Location,
+		"baseDomain":               res.BaseDomain,
+		"workloadIdentityPoolName": res.WorkloadIdentityPoolName,
+		"keyRingId":                res.KeyRingID,
+	}
+	exports := collectGCPPlatformExports(spec, res)
+	for id, provName := range res.OIDCProviderNames {
+		key := id + "OidcProviderName"
+		attrs[key] = provName
+		exports[key] = provName
+	}
+	return core.LinkDescriptor{
+		Name:         info.Name,
+		Kind:         info.Kind,
+		Attributes:   attrs,
+		StackExports: exports,
+	}
+}
+
+func collectGCPPlatformExports(spec Platform, res *PlatformResource) map[string]pulumi.Input {
+	exports := map[string]pulumi.Input{
+		"location":                 res.Location,
+		"gcpBaseDomain":            res.BaseDomain,
+		"workloadIdentityPoolName": res.WorkloadIdentityPoolName,
+		"keyRingId":                res.KeyRingID,
+	}
+	if spec.GCPProject != nil {
+		exports["gcpProject"] = spec.GCPProject
+	}
+	if spec.GCPProjectNumber != "" {
+		exports["gcpProjectNumber"] = pulumi.String(spec.GCPProjectNumber)
+	}
+	if res.LoadBalancer != nil {
+		exports["loadBalancerIp"] = res.LoadBalancer.IPAddress
+		exports["dnsAuthRecordName"] = res.LoadBalancer.DnsAuthRecordName
+		exports["dnsAuthRecordData"] = res.LoadBalancer.DnsAuthRecordData
+	}
+	return exports
+}
+
 func registerPlatformOutputs(ctx *pulumi.Context, spec Platform, res *PlatformResource) error {
 	outs := pulumi.Map{
 		"gcpProjectNumber":         pulumi.String(spec.GCPProjectNumber),
@@ -297,8 +351,10 @@ func registerPlatformOutputs(ctx *pulumi.Context, spec Platform, res *PlatformRe
 		"baseDomain":               res.BaseDomain,
 		"gcpBaseDomain":            res.BaseDomain,
 		"workloadIdentityPoolName": res.WorkloadIdentityPoolName,
-		"vercelOidcProviderName":   res.VercelOIDCProviderName,
 		"keyRingId":                res.KeyRingID,
+	}
+	for id, provName := range res.OIDCProviderNames {
+		outs[id+"OidcProviderName"] = provName
 	}
 	if spec.GCPProject != nil {
 		outs["gcpProject"] = spec.GCPProject

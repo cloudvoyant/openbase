@@ -47,7 +47,7 @@ func TestBucketLifecycleAndBranchGrants(t *testing.T) {
 			}
 		})
 
-		t.Run("when branching a preview Bucket from dev and linking consumers, then it exports fallback env vars and binds primary/fallback IAM", func(t *testing.T) {
+		t.Run("when branching a preview Bucket from dev and linking consumers, then it resolves fallback bucket outputs and binds primary/fallback IAM", func(t *testing.T) {
 			// Arrange.
 			mocks := newGCPMocks()
 			primaryCh := make(chan string, 1)
@@ -65,17 +65,39 @@ func TestBucketLifecycleAndBranchGrants(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				desc := bkt.Link()
-				desc.Env["STORAGE_BUCKET"].ApplyT(func(v string) string { primaryCh <- v; return v })
-				desc.Env["STORAGE_FALLBACK_BUCKET"].ApplyT(func(v string) string { fallbackCh <- v; return v })
-				return desc.GrantAccess(core.LinkGrantContext{
-					Ctx:                         ctx,
-					ConsumerName:                "storefront-preview-pr-42-api",
-					Environment:                 "preview-pr-42",
-					GCPServiceAccountEmail:      pulumi.String("api@cloudvoyant-openbase.iam.gserviceaccount.com").ToStringOutput(),
-					GCPWorkloadIdentityPoolName: pulumi.String("projects/123/locations/global/workloadIdentityPools/pool").ToStringOutput(),
-					VercelProjectID:             pulumi.String("prj_123").ToStringOutput(),
-				})
+				bkt.BucketName.ApplyT(func(v string) string { primaryCh <- v; return v })
+				bkt.FallbackBucketName.ApplyT(func(v string) string { fallbackCh <- v; return v })
+				if _, err := core.ResolveLinks(core.LinkGrantContext{
+					Ctx:          ctx,
+					ConsumerName: "storefront-preview-pr-42-api",
+					Environment:  "preview-pr-42",
+					Subject: core.Subject{
+						Provider: "gcp",
+						NativeID: pulumi.String("serviceAccount:api@cloudvoyant-openbase.iam.gserviceaccount.com").ToStringOutput(),
+					},
+				}, []core.Resource{bkt}); err != nil {
+					return err
+				}
+				_, err = core.ResolveLinks(core.LinkGrantContext{
+					Ctx:          ctx,
+					ConsumerName: "storefront-preview-pr-42-web",
+					ConsumerMeta: core.ResourceMeta{
+						Name:          "web",
+						CanonicalName: "storefront-preview-pr-42-web",
+						Project:       "storefront",
+						Environment:   "preview-pr-42",
+					},
+					Environment: "preview-pr-42",
+					Subject: core.Subject{
+						Provider: "vercel",
+						Claims:   map[string]pulumi.StringOutput{"project_id": pulumi.String("prj_123").ToStringOutput()},
+					},
+					Brokers: []core.IdentityBroker{gcp.WIFBroker{
+						GCPProject: pulumi.String("cloudvoyant-openbase"),
+						PoolName:   pulumi.String("projects/123/locations/global/workloadIdentityPools/pool"),
+					}},
+				}, []core.Resource{bkt})
+				return err
 			}, pulumi.WithMocks("storefront", "preview-pr-42", mocks))
 
 			// Assert.

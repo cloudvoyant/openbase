@@ -2,7 +2,6 @@ package gcp
 
 import (
 	"reflect"
-	"strings"
 
 	"github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/storage"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -12,7 +11,14 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatefulResource = (*BucketResource)(nil)
+var (
+	_ core.StatefulResource              = (*BucketResource)(nil)
+	_ core.ScopedSpecOf[*BucketResource] = Bucket{}
+)
+
+func init() {
+	core.RegisterRemoteGrantHandler("gcp-bucket", grantRemoteBucketAccess)
+}
 
 // BucketCORSRule configures direct browser uploads or reads on a GCS bucket.
 type BucketCORSRule struct {
@@ -32,13 +38,10 @@ type Bucket struct {
 	BranchFrom         string
 	Backup             *bool
 	Links              []core.Resource
-	Env                map[string]pulumi.StringInput
-	Secrets            map[string]pulumi.StringInput
 	GCPProject         pulumi.StringPtrInput
 	BucketNamespace    string
 	Location           string
 	StorageClass       string
-	EnvPrefix          string
 	FallbackBucketName pulumi.StringInput
 	BranchStackRef     string
 	CORS               []BucketCORSRule
@@ -69,8 +72,6 @@ func (b Bucket) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*B
 		BranchFrom:  b.BranchFrom,
 		Backup:      b.Backup,
 		Links:       b.Links,
-		Env:         b.Env,
-		Secrets:     b.Secrets,
 	}, opts...)
 	if err != nil {
 		return nil, err
@@ -91,11 +92,22 @@ func (b Bucket) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*B
 	res.BucketName = bkt.Name
 	res.BucketURL = bkt.Url
 	res.FallbackBucketName = fallback
-	res.SetLink(buildBucketLink(b.Name, meta, b, res))
+	res.SetLink(buildBucketLink(b.Name, meta, res))
 	if err := registerBucketOutputs(ctx, meta, res); err != nil {
 		return nil, err
 	}
 	return res, nil
+}
+
+// RegisterInScope adapts gcp.Bucket to openbase.Project and openbase.Environment.
+func (b Bucket) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
+	return b.RegisterTypedInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedInScope registers gcp.Bucket with inherited Scope defaults.
+func (b Bucket) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*BucketResource, error) {
+	applyBucketScope(ctx, &b, scope)
+	return b.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -176,47 +188,60 @@ func resolveFallbackBucket(ctx *pulumi.Context, name string, meta core.ResourceM
 	return pulumi.String(derived).ToStringOutput(), nil
 }
 
-func buildBucketLink(name string, meta core.ResourceMeta, spec Bucket, res *BucketResource) core.LinkDescriptor {
-	prefix := envKeyPrefix(defaultStr(spec.EnvPrefix, "STORAGE"))
-	envMap := map[string]pulumi.StringOutput{
-		prefix + "_BUCKET": res.BucketName,
-	}
-	if meta.BranchFrom != "" {
-		envMap[prefix+"_FALLBACK_BUCKET"] = res.FallbackBucketName
-	}
-	for k, v := range spec.Env {
-		envMap[k] = v.ToStringOutput()
-	}
-	secrets := map[string]pulumi.StringOutput{}
-	for k, v := range spec.Secrets {
-		secrets[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
-	}
+func buildBucketLink(name string, meta core.ResourceMeta, res *BucketResource) core.LinkDescriptor {
 	return core.LinkDescriptor{
-		Name:    meta.Name,
-		Kind:    meta.Kind,
-		Env:     envMap,
-		Secrets: secrets,
+		Name: meta.Name,
+		Kind: meta.Kind,
+		Attributes: map[string]pulumi.StringOutput{
+			"bucketName":         res.BucketName,
+			"bucketUrl":          res.BucketURL,
+			"fallbackBucketName": res.FallbackBucketName,
+		},
+		StackExports: map[string]pulumi.Input{
+			"bucketName":         res.BucketName,
+			"fallbackBucketName": res.FallbackBucketName,
+		},
 		GrantAccess: func(g core.LinkGrantContext) error {
 			return grantBucketAccess(name, meta, res, g)
 		},
 	}
 }
 
+func applyBucketScope(ctx *pulumi.Context, b *Bucket, scope core.Scope) {
+	b.Project = defaultStr(b.Project, scope.Project)
+	b.Repo = defaultStr(b.Repo, scope.Repo)
+	b.Environment = defaultStr(b.Environment, string(scope.Env))
+	b.BranchFrom = defaultStr(b.BranchFrom, scope.DefaultStorageBranchFrom())
+	if b.BranchStackRef == "" && b.BranchFrom != "" {
+		b.BranchStackRef = scope.BranchStackRef(ctx, b.BranchFrom)
+	}
+}
+
 func grantBucketAccess(name string, meta core.ResourceMeta, res *BucketResource, g core.LinkGrantContext) error {
+	member, ok := g.Principals["gcp"]
+	if !ok || !isOutputSet(member) {
+		return nil
+	}
 	consumerSlug := core.BoundedName(g.ConsumerName, 24)
-	if isOutputSet(g.GCPServiceAccountEmail) {
-		member := pulumi.Sprintf("serviceAccount:%s", g.GCPServiceAccountEmail)
-		if err := bindBucketMember(g.Ctx, name+"-"+consumerSlug+"-sa", meta, res, member); err != nil {
-			return err
-		}
+	return bindBucketMember(g.Ctx, name+"-"+consumerSlug+"-gcp", meta, res, member)
+}
+
+func grantRemoteBucketAccess(g core.LinkGrantContext, remote *core.RemoteResource) error {
+	member, ok := g.Principals["gcp"]
+	if !ok || !isOutputSet(member) || g.Ctx == nil {
+		return nil
 	}
-	if isOutputSet(g.GCPWorkloadIdentityPoolName) && isOutputSet(g.VercelProjectID) {
-		member := pulumi.Sprintf("principalSet://iam.googleapis.com/%s/attribute.project_id/%s", g.GCPWorkloadIdentityPoolName, g.VercelProjectID)
-		if err := bindBucketMember(g.Ctx, name+"-"+consumerSlug+"-wif", meta, res, member); err != nil {
-			return err
-		}
+	bktName := remote.Attr("bucketName")
+	if !isOutputSet(bktName) {
+		return nil
 	}
-	return nil
+	slug := core.BoundedName(remote.Name()+"-"+g.ConsumerName, 36)
+	_, err := storage.NewBucketIAMMember(g.Ctx, slug+"-remote-admin", &storage.BucketIAMMemberArgs{
+		Bucket: bktName,
+		Role:   pulumi.String("roles/storage.objectAdmin"),
+		Member: member,
+	})
+	return err
 }
 
 func bindBucketMember(
@@ -253,12 +278,6 @@ func registerBucketOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *Buc
 		"fallbackBucketName": res.FallbackBucketName,
 		"branchFrom":         pulumi.String(meta.BranchFrom.String()),
 	})
-}
-
-func envKeyPrefix(raw string) string {
-	s := strings.ToUpper(strings.TrimSpace(raw))
-	s = strings.NewReplacer("-", "_", ".", "_", "/", "_").Replace(s)
-	return strings.Trim(s, "_")
 }
 
 func isOutputSet(out pulumi.StringOutput) bool {

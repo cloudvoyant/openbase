@@ -15,51 +15,56 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestNeonDatabase(t *testing.T) {
-	t.Setenv("NEON_API_KEY", "")
-	t.Run("given neon.Platform, neon.Project, and neon.Database specs", func(t *testing.T) {
-		t.Run("when registering Platform -> Project -> root prod Database, then it creates Role/Database and exports pooled and direct URLs", func(t *testing.T) {
+	t.Run("given separate neon.Platform (platform), neon.Project (shared), and neon.Database (env) stacks", func(t *testing.T) {
+		t.Run("when registering Platform on platform, Project on shared, and root Database on prod, then each stack creates its scoped resources and exposes pooled and direct URLs", func(t *testing.T) {
 			// Arrange.
-			mocks := newNeonMocks()
+			platMocks := newNeonMocks()
+			sharedMocks := newNeonMocks()
+			prodMocks := newNeonMocks()
 			pooledCh := make(chan string, 1)
 			directCh := make(chan string, 1)
 
 			// Act.
-			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				plat, err := neon.Platform{
+			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := neon.Platform{
 					OrgID:    "org-test",
 					RegionID: "aws-us-east-1",
 				}.Register(ctx)
-				if err != nil {
-					return err
-				}
-				proj, err := neon.Project{
-					Project:  "storefront",
-					Platform: plat,
+				return err
+			}, pulumi.WithMocks("platform", "platform", platMocks))
+
+			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				_, err := neon.Project{
+					Project:          "storefront",
+					PlatformStackRef: "organization/platform/platform",
 				}.Register(ctx)
-				if err != nil {
-					return err
-				}
+				return err
+			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
+
+			errProd := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				db, err := neon.Database{
-					Name:        "db",
-					Project:     "storefront",
-					Environment: "prod",
-					NeonProject: proj,
+					Name:            "db",
+					Project:         "storefront",
+					Environment:     "prod",
+					ProjectStackRef: "organization/storefront-shared/shared",
 				}.Register(ctx)
 				if err != nil {
 					return err
 				}
-				db.Link().Secrets["DATABASE_URL"].ApplyT(func(v string) string { pooledCh <- v; return v })
-				db.Link().Secrets["DIRECT_URL"].ApplyT(func(v string) string { directCh <- v; return v })
+				db.DatabaseURL.ApplyT(func(v string) string { pooledCh <- v; return v })
+				db.DirectURL.ApplyT(func(v string) string { directCh <- v; return v })
 				return nil
-			}, pulumi.WithMocks("storefront", "prod", mocks))
+			}, pulumi.WithMocks("storefront", "prod", prodMocks))
 
 			// Assert.
-			requireNeonNoErr(t, err)
-			mocks.assertCount(t, "neon:index/project:Project", 1)
-			mocks.assertCount(t, "neon:index/branch:Branch", 1)
-			mocks.assertCount(t, "neon:index/endpoint:Endpoint", 1)
-			mocks.assertCount(t, "neon:index/role:Role", 1)
-			mocks.assertCount(t, "neon:index/database:Database", 1)
+			requireNeonNoErr(t, errPlat)
+			requireNeonNoErr(t, errShared)
+			requireNeonNoErr(t, errProd)
+			sharedMocks.assertCount(t, "neon:index/project:Project", 1)
+			prodMocks.assertCount(t, "neon:index/branch:Branch", 1)
+			prodMocks.assertCount(t, "neon:index/endpoint:Endpoint", 1)
+			prodMocks.assertCount(t, "neon:index/role:Role", 1)
+			prodMocks.assertCount(t, "neon:index/database:Database", 1)
 			if pooled := <-pooledCh; !strings.Contains(pooled, "-pooler.neon.tech") {
 				t.Fatalf("expected pooled host in DATABASE_URL, got %q", pooled)
 			}
@@ -145,6 +150,13 @@ func (m *neonMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Pro
 	case "neon:index/endpoint:Endpoint":
 		outs["host"] = resource.NewStringProperty("ep-test.neon.tech")
 		outs["hostPooler"] = resource.NewStringProperty("ep-test-pooler.neon.tech")
+	case "pulumi:pulumi:StackReference":
+		outs["outputs"] = resource.NewObjectProperty(resource.PropertyMap{
+			"neonOrgId":           resource.NewStringProperty("org-test"),
+			"neonRegionId":        resource.NewStringProperty("aws-us-east-1"),
+			"neonProjectId":       resource.NewStringProperty("proj-from-ref"),
+			"neonDefaultBranchId": resource.NewStringProperty("br-main-ref"),
+		})
 	}
 	return a.Name + "_id", outs, nil
 }
