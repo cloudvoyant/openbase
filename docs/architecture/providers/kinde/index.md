@@ -2,7 +2,7 @@
 
 ## Overview
 
-`libs/components/kinde` separates organization two-tenant Kinde connections (`kinde.Platform`, `core.PlatformResource`) from shared OIDC client registrations (`kinde.Project`, `core.StatelessResource` with `Environment: "shared"`) over the bridged `kinde-oss/kinde` provider (`internal/providers/kinde`). `kinde.Platform` runs once per organization to configure `dev` and `prod` Kinde tenants and discover shared authentication connections. `kinde.Project` runs once per repository in `infra/shared` to register `dev` and `prod` OIDC applications.
+`libs/components/kinde` separates organization two-tenant Kinde connections (`kinde.Platform`, `core.PlatformResource`) from shared OIDC client registrations (`kinde.Project`, `core.StatelessResource` with `Environment: "shared"`) over the bridged `kinde-oss/kinde` provider (`libs/internal/pulumi-kinde-go-sdk`). `kinde.Platform` runs once per organization to configure `dev` and `prod` Kinde tenants and discover shared authentication connections. `kinde.Project` runs once per repository in `infra/shared` to register `dev` and `prod` OIDC applications.
 
 ## Requirement
 

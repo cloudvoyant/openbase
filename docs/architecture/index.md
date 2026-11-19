@@ -91,7 +91,7 @@ An organization deploys `Platform` once and exports shared identity and domain r
 
 ### Provider bindings
 
-`gcp` and `vercel` import `github.com/pulumi/pulumi-gcp/sdk/v9` and `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `neon` (`kislerdm/neon`) and `kinde` (`kinde-oss/kinde`) use generated Go packages in `internal/providers/{neon,kinde}`. Run `mise run generate:check` in CI to make sure that generated bindings have zero drift.
+`gcp` and `vercel` import `github.com/pulumi/pulumi-gcp/sdk/v9` and `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `neon` (`neondatabase/neon`) and `kinde` (`kinde-oss/kinde`) import internal generated Go SDK packages in `libs/internal/pulumi-neon-go-sdk` and `libs/internal/pulumi-kinde-go-sdk`. Run `mise run generate:check` in CI to make sure that generated bindings have zero drift.
 
 ### Shared vs environment naming
 

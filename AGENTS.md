@@ -5,7 +5,7 @@
 - Prefer the repository's existing Mise tasks in [mise.toml](./mise.toml), [libs/components/mise.toml](./libs/components/mise.toml), and [e2e/components/mise.toml](./e2e/components/mise.toml).
 - Manage monorepo projects and Go Git-tag releases through [premise.yaml](./premise.yaml).
 - Keep `libs/components` as a pure Go library inside the single root [go.mod](./go.mod) with `GOWORK=off`, no nested `go.mod` files, and no committed local `replace` directives.
-- Refresh Terraform-bridged Go bindings via `mise run generate` and verify zero drift with `mise run generate:check` ([scripts/generate-bridged.sh](./scripts/generate-bridged.sh)).
+- Refresh Terraform-bridged Go bindings via `mise run generate` and verify zero drift with `mise run generate:check` ([libs/internal/pulumi-neon-go-sdk/mise.toml](./libs/internal/pulumi-neon-go-sdk/mise.toml), [libs/internal/pulumi-kinde-go-sdk/mise.toml](./libs/internal/pulumi-kinde-go-sdk/mise.toml)).
 - Run live cloud end-to-end tests only against dedicated OpenBase cloud sandboxes (`cloudvoyant-openbase` on GCP and isolated `openbase-e2e-*` resources on Vercel, Neon, and Kinde); never use or mutate `neokit` projects.
 
 ## Organization

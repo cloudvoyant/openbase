@@ -15,6 +15,7 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestNeonDatabase(t *testing.T) {
+	t.Setenv("NEON_API_KEY", "")
 	t.Run("given neon.Platform, neon.Project, and neon.Database specs", func(t *testing.T) {
 		t.Run("when registering Platform -> Project -> root prod Database, then it creates Role/Database and exports pooled and direct URLs", func(t *testing.T) {
 			// Arrange.
@@ -67,7 +68,7 @@ func TestNeonDatabase(t *testing.T) {
 			}
 		})
 
-		t.Run("when branching a preview Database from dev, then it inherits parent Role/Database via GetBranchRolePassword", func(t *testing.T) {
+		t.Run("when branching a preview Database from dev, then it inherits parent Role/Database without recreating them", func(t *testing.T) {
 			// Arrange.
 			mocks := newNeonMocks()
 			urlCh := make(chan string, 1)
@@ -95,8 +96,8 @@ func TestNeonDatabase(t *testing.T) {
 			mocks.assertCount(t, "neon:index/endpoint:Endpoint", 1)
 			mocks.assertCount(t, "neon:index/role:Role", 0)
 			mocks.assertCount(t, "neon:index/database:Database", 0)
-			if got := <-urlCh; !strings.Contains(got, "inherited-secret") {
-				t.Fatalf("expected inherited role password in preview URL, got %q", got)
+			if got := <-urlCh; !strings.Contains(got, "mock-neon-role-password") {
+				t.Fatalf("expected role password in preview URL, got %q", got)
 			}
 		})
 
@@ -137,27 +138,18 @@ func (m *neonMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Pro
 	outs := a.Inputs.Copy()
 	switch a.TypeToken {
 	case "neon:index/project:Project":
-		outs["defaultBranchId"] = resource.NewStringProperty("br-main")
+		outs["branch"] = resource.NewObjectProperty(resource.PropertyMap{
+			"id": resource.NewStringProperty("br-main"),
+		})
 		outs["regionId"] = resource.NewStringProperty("aws-us-east-1")
 	case "neon:index/endpoint:Endpoint":
 		outs["host"] = resource.NewStringProperty("ep-test.neon.tech")
-		outs["hostPooling"] = resource.NewStringProperty("ep-test-pooler.neon.tech")
-	case "neon:index/role:Role":
-		outs["password"] = resource.NewStringProperty("root-secret")
+		outs["hostPooler"] = resource.NewStringProperty("ep-test-pooler.neon.tech")
 	}
 	return a.Name + "_id", outs, nil
 }
 
 func (*neonMocks) Call(a pulumi.MockCallArgs) (resource.PropertyMap, error) {
-	if a.Token == "neon:index/getBranchRolePassword:getBranchRolePassword" {
-		return resource.PropertyMap{
-			"branchId":  a.Args["branchId"],
-			"projectId": a.Args["projectId"],
-			"roleName":  a.Args["roleName"],
-			"password":  resource.NewStringProperty("inherited-secret"),
-			"id":        resource.NewStringProperty("pw-id"),
-		}, nil
-	}
 	return a.Args, nil
 }
 

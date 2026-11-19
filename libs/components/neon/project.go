@@ -5,7 +5,7 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	neonprov "github.com/cloudvoyant/openbase/internal/providers/neon"
+	neonprov "github.com/cloudvoyant/openbase/libs/internal/pulumi-neon-go-sdk"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
 )
@@ -57,7 +57,7 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	}
 	res.Project = proj
 	res.ProjectID = proj.ID().ToStringOutput()
-	res.DefaultBranchID = proj.DefaultBranchId
+	res.DefaultBranchID = proj.Branch.Id().Elem()
 	res.RegionID = proj.RegionId
 	res.SetLink(core.LinkDescriptor{
 		Name: meta.Name,
@@ -95,7 +95,7 @@ func createNeonProject(
 		RegionId:                regionOut,
 		PgVersion:               pulumi.Float64(float64(pgVer)),
 		HistoryRetentionSeconds: pulumi.Float64(float64(retention)),
-		StorePassword:           pulumi.String("yes"),
+		StorePassword:           pulumi.Bool(true),
 		OrgId:                   nonEmptyNeonPtrOutput(orgOut),
 	}
 	return neonprov.NewProject(ctx, name+"-project", projArgs, pulumi.Parent(parent))

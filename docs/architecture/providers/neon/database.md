@@ -32,9 +32,9 @@ flowchart TD
 ```
 
 - `neon.Branch` snapshots either `defaultBranchId` (root tier) or the `BranchFrom` stack `branchId` (child tier).
-- `neon.Endpoint` creates an isolated read-write compute endpoint with `-pooler` PgBouncer pooling.
+- `neon.Endpoint` creates an isolated read-write compute endpoint with `-pooler` PgBouncer pooling (`HostPooler`).
 - `neon.Role` and `neon.Database` run only on root branches (`BranchFrom == ""`).
-- `GetBranchRolePasswordOutput` fetches the inherited role password on child branches.
+- `revealRolePasswordOutput` fetches the role password from the Neon v2 `reveal_password` API on both root and child branches because `neondatabase/neon` `0.19.0-beta` omits role passwords from provider state.
 
 ### Data and Control Flow
 
@@ -48,8 +48,8 @@ sequenceDiagram
     Pulumi->>DevRef: 1. Read parent branchId
     Pulumi->>Neon: 2. Create CoW Branch (parentId = dev.branchId)
     Pulumi->>Neon: 3. Create read_write Endpoint
-    Pulumi->>Neon: 4. Call GetBranchRolePasswordOutput
-    Neon-->>Pulumi: 5. Return host, hostPooling, and password
+    Pulumi->>Neon: 4. Fetch role password via reveal_password
+    Neon-->>Pulumi: 5. Return host, hostPooler, and password
     Pulumi-->>App: 6. Inject secret DATABASE_URL + DIRECT_URL via Links
 ```
 
@@ -70,9 +70,9 @@ db, err := neon.Database{
 
 | Link Key | Secret | Host Target | Purpose |
 | :--- | :--- | :--- | :--- |
-| `<PREFIX>_HOST` | No | `Endpoint.HostPooling` | Pooled PgBouncer hostname (`-pooler`) |
+| `<PREFIX>_HOST` | No | `Endpoint.HostPooler` | Pooled PgBouncer hostname (`-pooler`) |
 | `<PREFIX>_NAME` | No | `DatabaseName` (`openbase`) | Logical PostgreSQL database name |
-| `DATABASE_URL` | Yes | `Endpoint.HostPooling` | Pooled connection URL for serverless workloads |
+| `DATABASE_URL` | Yes | `Endpoint.HostPooler` | Pooled connection URL for serverless workloads |
 | `DIRECT_URL` | Yes | `Endpoint.Host` | Direct connection URL for schema migrations (`pm migrate`) |
 
 ## Implementation

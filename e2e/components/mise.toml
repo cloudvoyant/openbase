@@ -6,46 +6,321 @@ go = "1.25.14"
 golangci-lint = "2.15.0"
 pulumi = "3.200.0"
 
-[tasks."e2e"]
+[tasks.e2e]
 description = "Run E2E suite(s): mise run e2e [file_or_suite] [--no-cleanup | --keep | --offline]"
-run = "sh ../../scripts/e2e-run.sh"
+usage = '''
+arg "[target]" help="Suite or test target (core, gcp, gcp_bucket, gcp_cloud_run, neon, kinde, vercel, vercel_blob_store, vercel_web_app, links, apps, vercel_neon_kinde_app, gcp_neon_kinde_app)"
+flag "-k --keep" help="Keep cloud stacks & Pulumi state in e2e/outputs/components/<Test>/"
+flag "--no-cleanup" help="Keep cloud stacks & Pulumi state in e2e/outputs/components/<Test>/"
+flag "--cleanup" help="Destroy stacks after the test completes (default)"
+flag "--offline" help="Run only offline E2E specs without cloud credentials"
+'''
+run = '''
+set -eu
+
+SUITE_DIR="{{config_root}}"
+KEEP="${OPENBASE_E2E_KEEP:-${OPENBASE_TEST_KEEP:-0}}"
+OFFLINE="${OPENBASE_E2E_OFFLINE:-0}"
+TARGET="${usage_target:-}"
+
+if [ "${usage_keep:-false}" = "true" ] || [ "${usage_no_cleanup:-false}" = "true" ]; then
+  KEEP="1"
+fi
+if [ "${usage_cleanup:-false}" = "true" ]; then
+  KEEP="0"
+fi
+if [ "${usage_offline:-false}" = "true" ]; then
+  OFFLINE="1"
+fi
+
+NEEDS_LIVE="1"
+RUN_REGEX=""
+
+if [ -z "$TARGET" ] || [ "$TARGET" = "all" ]; then
+  if [ "$OFFLINE" = "1" ]; then
+    RUN_REGEX='^TestCoreLifecycle$'
+    NEEDS_LIVE="0"
+  fi
+else
+  BASE="$(basename "$TARGET")"
+  BASE="${BASE%_test.go}"
+  BASE="${BASE%.go}"
+  NORM="$(printf '%s' "$BASE" | tr '-' '_')"
+  case "$NORM" in
+    core|core_lifecycle)
+      RUN_REGEX='^TestCoreLifecycle$'
+      NEEDS_LIVE="0"
+      ;;
+    gcp_bucket)
+      RUN_REGEX='^TestGCPBucket$'
+      ;;
+    gcp_cloud_run|gcp_cloud_run_service)
+      RUN_REGEX='^TestGCPCloudRunService$'
+      ;;
+    gcp_neon_kinde_app|gcp_app)
+      RUN_REGEX='^TestGCPNeonKindeApp$'
+      ;;
+    vercel_neon_kinde_app|vercel_app)
+      RUN_REGEX='^TestVercelNeonKindeApp$'
+      ;;
+    vercel_blob_store|vercel_blob)
+      RUN_REGEX='^TestVercelBlobStore$'
+      ;;
+    vercel_web_app|vercel_webapp)
+      RUN_REGEX='^TestVercelWebApp$'
+      ;;
+    neon_database|neon_db|neon)
+      RUN_REGEX='^TestNeonDatabase$'
+      ;;
+    kinde_oidc_app|kinde_oidc|kinde)
+      RUN_REGEX='^TestKindeOidcApp$'
+      ;;
+    links|links_fullstack)
+      RUN_REGEX='^TestLinks$'
+      ;;
+    gcp)
+      RUN_REGEX='^TestGCP(Bucket|CloudRunService)$'
+      ;;
+    vercel)
+      RUN_REGEX='^TestVercel(BlobStore|WebApp)$'
+      ;;
+    apps)
+      RUN_REGEX='^Test(VercelNeonKindeApp|GCPNeonKindeApp)$'
+      ;;
+    Test*)
+      RUN_REGEX="^${BASE}$"
+      ;;
+    *)
+      echo "Unknown E2E target: '$TARGET'" >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [ "$OFFLINE" = "1" ]; then
+  NEEDS_LIVE="0"
+fi
+
+if [ "$NEEDS_LIVE" = "1" ]; then
+  ENV_FILE="${OPENBASE_ENV_FILE:-$HOME/Projects/neokit/.env.bootstrap.consumed}"
+  if [ -z "${VERCEL_TOKEN:-}" ] && [ -z "${NEON_API_KEY:-}" ] && [ -f "$ENV_FILE" ]; then
+    set -a
+    . "$ENV_FILE"
+    set +a
+  fi
+  unset PROD_DOMAIN STAGE_DOMAIN VERCEL_PROJECT_ID NEON_PROJECT_ID
+  AUTH_ENV_FILE="${OPENBASE_AUTH_ENV_FILE:-$HOME/Projects/readership/apps/web/.env.e2e.local}"
+  if [ -z "${AGENTMAIL_API_KEY:-}" ] && [ -f "$AUTH_ENV_FILE" ]; then
+    AGENTMAIL_API_KEY="$(grep '^AGENTMAIL_API_KEY=' "$AUTH_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")"
+    E2E_P1_EMAIL="${E2E_P1_EMAIL:-$(grep '^E2E_P1_EMAIL=' "$AUTH_ENV_FILE" | head -n1 | cut -d= -f2- | tr -d '"' | tr -d "'")}"
+    export AGENTMAIL_API_KEY E2E_P1_EMAIL
+  fi
+  export OPENBASE_TEST_GCP_PROJECT="${OPENBASE_TEST_GCP_PROJECT:-cloudvoyant-openbase}"
+  export OPENBASE_TEST_LIVE="1"
+fi
+
+if [ "$KEEP" = "1" ]; then
+  export OPENBASE_E2E_KEEP="1"
+else
+  unset OPENBASE_E2E_KEEP OPENBASE_TEST_KEEP
+fi
+
+export GOWORK="off"
+cd "$SUITE_DIR"
+if [ -n "$RUN_REGEX" ]; then
+  exec go test . -run "$RUN_REGEX" -count=1 -timeout 60m -v
+fi
+exec go test . -count=1 -timeout 60m -v
+'''
 
 [tasks."e2e:cleanup"]
 description = "Destroy leftover/retained E2E stacks from e2e/outputs/components/*/run-manifest.json"
-run = "sh ../../scripts/e2e-cleanup.sh"
+usage = 'arg "[target]" help="Optional suite or fixture filter"'
+run = '''
+set -eu
+
+REPO_ROOT="$(CDPATH= cd -- "{{config_root}}/../.." && pwd)"
+OUTPUTS_ROOT="$REPO_ROOT/e2e/outputs/components"
+FILTER="${usage_target:-}"
+
+if [ ! -d "$OUTPUTS_ROOT" ]; then
+  echo "No E2E output directory found ($OUTPUTS_ROOT); nothing to clean up."
+  exit 0
+fi
+
+ENV_FILE="${OPENBASE_ENV_FILE:-$HOME/Projects/neokit/.env.bootstrap.consumed}"
+if [ -z "${VERCEL_TOKEN:-}" ] && [ -z "${NEON_API_KEY:-}" ] && [ -f "$ENV_FILE" ]; then
+  set -a
+  . "$ENV_FILE"
+  set +a
+fi
+unset PROD_DOMAIN STAGE_DOMAIN VERCEL_PROJECT_ID NEON_PROJECT_ID
+export OPENBASE_TEST_GCP_PROJECT="${OPENBASE_TEST_GCP_PROJECT:-cloudvoyant-openbase}"
+export GOOGLE_PROJECT="$OPENBASE_TEST_GCP_PROJECT"
+if [ -n "${VERCEL_TOKEN:-}" ]; then
+  export VERCEL_API_TOKEN="$VERCEL_TOKEN"
+fi
+
+matches_filter() {
+  target="$1"
+  test_name="$2"
+  fixture="$3"
+  if [ -z "$target" ] || [ "$target" = "all" ]; then
+    return 0
+  fi
+  norm_target="$(printf '%s' "$(basename "$target")" | sed 's/_test\.go$//; s/\.go$//' | tr '-' '_' | tr '[:upper:]' '[:lower:]')"
+  norm_test="$(printf '%s' "$test_name" | tr '-' '_' | tr '[:upper:]' '[:lower:]')"
+  norm_fix="$(printf '%s' "$fixture" | tr '-' '_' | tr '[:upper:]' '[:lower:]')"
+  case "$norm_test" in
+    *"$norm_target"*) return 0 ;;
+  esac
+  [ "$norm_fix" = "$norm_target" ]
+}
+
+purge_vercel_blobs() {
+  vpid="$1"
+  vtid="$2"
+  if [ -z "$vpid" ] || [ -z "${VERCEL_TOKEN:-}" ]; then
+    return 0
+  fi
+  team_q=""
+  if [ -n "$vtid" ]; then
+    team_q="?teamId=$vtid"
+  fi
+  env_id="$(curl -sf "https://api.vercel.com/v10/projects/${vpid}/env${team_q}" -H "Authorization: Bearer $VERCEL_TOKEN" 2>/dev/null | jq -r '.envs[] | select(.key=="BLOB_READ_WRITE_TOKEN" and (.target | index("development"))) | .id' | head -n1 || true)"
+  if [ -z "$env_id" ]; then
+    return 0
+  fi
+  rw_tok="$(curl -sf "https://api.vercel.com/v9/projects/${vpid}/env/${env_id}${team_q}" -H "Authorization: Bearer $VERCEL_TOKEN" 2>/dev/null | jq -r '.value // empty' || true)"
+  if [ -z "$rw_tok" ]; then
+    return 0
+  fi
+  urls="$(curl -sf "https://blob.vercel-storage.com?limit=1000" -H "Authorization: Bearer $rw_tok" -H "x-api-version: 7" 2>/dev/null | jq -c '{urls: [.blobs[]?.url]}' || true)"
+  if [ -n "$urls" ] && [ "$urls" != '{"urls":[]}' ]; then
+    curl -sf -X POST "https://blob.vercel-storage.com/delete" \
+      -H "Authorization: Bearer $rw_tok" \
+      -H "x-api-version: 7" \
+      -H "Content-Type: application/json" \
+      -d "$urls" >/dev/null || true
+  fi
+}
+
+CLEANED_COUNT=0
+FAILED=0
+
+for manifest in "$OUTPUTS_ROOT"/*/run-manifest.json; do
+  [ -f "$manifest" ] || continue
+  CLEANED_UP="$(jq -r '.cleanedUp // false' "$manifest")"
+  if [ "$CLEANED_UP" = "true" ]; then
+    continue
+  fi
+
+  TEST_NAME="$(jq -r '.testName' "$manifest")"
+  FIXTURE="$(jq -r '.fixture' "$manifest")"
+  if ! matches_filter "$FILTER" "$TEST_NAME" "$FIXTURE"; then
+    continue
+  fi
+
+  WORKSPACE_DIR="$(jq -r '.workspaceDir' "$manifest")"
+  PULUMI_HOME_DIR="$(jq -r '.pulumiHome' "$manifest")"
+  BACKEND_URL="$(jq -r '.backendUrl' "$manifest")"
+  VPID="$(jq -r '.vercelProjectId // empty' "$manifest")"
+  VTID="$(jq -r '.vercelTeamId // empty' "$manifest")"
+
+  if [ ! -d "$WORKSPACE_DIR" ]; then
+    echo "Skipping $TEST_NAME: workspace directory missing ($WORKSPACE_DIR)" >&2
+    continue
+  fi
+
+  echo "=== Cleaning up retained E2E stacks for $TEST_NAME ($FIXTURE) ==="
+  purge_vercel_blobs "$VPID" "$VTID"
+
+  SUITE_OK=1
+  STACKS_REV="$(jq -r '.stacks // [] | reverse[]' "$manifest")"
+  for stack in $STACKS_REV; do
+    echo "  -> Destroying stack '$stack'..."
+    if ! (
+      export GOWORK="off"
+      export PULUMI_HOME="$PULUMI_HOME_DIR"
+      export PULUMI_BACKEND_URL="$BACKEND_URL"
+      export PULUMI_CONFIG_PASSPHRASE=""
+      export PULUMI_SKIP_UPDATE_CHECK="true"
+      eval "$(jq -r '(.env // {}) | to_entries[] | "export \(.key)=\(.value | @sh)"' "$manifest")"
+      STACK_DIR="$WORKSPACE_DIR"
+      if [ "$stack" = "shared" ] && [ -f "$WORKSPACE_DIR/infra/shared/Pulumi.yaml" ]; then
+        STACK_DIR="$WORKSPACE_DIR/infra/shared"
+      elif [ -f "$WORKSPACE_DIR/infra/Pulumi.yaml" ]; then
+        STACK_DIR="$WORKSPACE_DIR/infra"
+      fi
+      cd "$STACK_DIR"
+      pulumi login "$BACKEND_URL" >/dev/null
+      if pulumi stack ls --json 2>/dev/null | jq -e --arg s "$stack" '.[] | select(.name == $s)' >/dev/null 2>&1; then
+        BKT="$(pulumi stack output bucketName --stack "$stack" 2>/dev/null || true)"
+        if [ -n "$BKT" ] && command -v gcloud >/dev/null 2>&1; then
+          gcloud storage rm --all-versions -r "gs://${BKT}/**" >/dev/null 2>&1 || true
+        fi
+        pulumi state unprotect --all --yes --stack "$stack" >/dev/null 2>&1 || true
+        pulumi destroy --stack "$stack" --yes --non-interactive --skip-preview &&
+          pulumi stack rm "$stack" --yes --non-interactive >/dev/null 2>&1
+      fi
+    ); then
+      echo "  !! Failed to destroy stack '$stack' in $TEST_NAME" >&2
+      SUITE_OK=0
+      FAILED=1
+      break
+    fi
+  done
+
+  if [ "$SUITE_OK" = "1" ]; then
+    NOW="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+    TMP_MANIFEST="${manifest}.tmp"
+    jq --arg now "$NOW" '.cleanedUp = true | .updatedAt = $now' "$manifest" >"$TMP_MANIFEST"
+    mv "$TMP_MANIFEST" "$manifest"
+    CLEANED_COUNT=$((CLEANED_COUNT + 1))
+    echo "=== Cleaned $TEST_NAME ==="
+  fi
+done
+
+if [ "$FAILED" != "0" ]; then
+  exit 1
+fi
+if [ "$CLEANED_COUNT" = "0" ]; then
+  echo "No leftover E2E stacks to clean up."
+fi
+'''
 
 [tasks."e2e:offline"]
 description = "Run offline standalone consumer fixture checks without cloud credentials"
-run = "sh ../../scripts/e2e-run.sh --offline"
+run = "mise run //e2e/components:e2e --offline"
 
 [tasks."e2e:gcp"]
 description = "Run live GCP Bucket and CloudRunService E2E suites"
-run = "sh ../../scripts/e2e-run.sh gcp"
+run = "mise run //e2e/components:e2e gcp"
 
 [tasks."e2e:neon"]
 description = "Run live Neon Database E2E suite"
-run = "sh ../../scripts/e2e-run.sh neon"
+run = "mise run //e2e/components:e2e neon"
 
 [tasks."e2e:kinde"]
 description = "Run live Kinde OidcApp E2E suite"
-run = "sh ../../scripts/e2e-run.sh kinde"
+run = "mise run //e2e/components:e2e kinde"
 
 [tasks."e2e:vercel"]
 description = "Run live Vercel BlobStore and WebApp E2E suites"
-run = "sh ../../scripts/e2e-run.sh vercel"
+run = "mise run //e2e/components:e2e vercel"
 
 [tasks."e2e:apps"]
 description = "Run live composite Vercel+Neon+Kinde and GCP+Neon+Kinde app E2E suites"
-run = "sh ../../scripts/e2e-run.sh apps"
+run = "mise run //e2e/components:e2e apps"
 
 [tasks."e2e:live"]
 description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, Links, and composite apps"
-run = "sh ../../scripts/e2e-run.sh"
+run = "mise run //e2e/components:e2e"
 
-[tasks."lint"]
+[tasks.lint]
 run = "golangci-lint run"
 
-[tasks."format"]
+[tasks.format]
 run = "golangci-lint fmt"
 
 [tasks."format:check"]

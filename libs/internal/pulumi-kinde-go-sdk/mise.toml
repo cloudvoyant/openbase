@@ -1,0 +1,63 @@
+[env]
+GOWORK = "off"
+
+[tools]
+go = "1.25.14"
+pulumi = "3.200.0"
+
+[tasks.generate]
+description = "Generate bridged Pulumi Go SDK for kinde-oss/kinde@0.1.1"
+run = '''
+set -eu
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+SCHEMA_FILE="$TMP_ROOT/kinde-schema.json"
+SDK_OUT="$TMP_ROOT/kinde-sdk"
+IMPORT_BASE="github.com/cloudvoyant/openbase/libs/internal/pulumi-kinde-go-sdk"
+
+PULUMI_SKIP_UPDATE_CHECK=true pulumi package get-schema terraform-provider registry.terraform.io/kinde-oss/kinde 0.1.1 >"$SCHEMA_FILE"
+python3 - "$SCHEMA_FILE" "$IMPORT_BASE" <<'PY'
+import json, sys
+schema_path, import_base = sys.argv[1], sys.argv[2]
+data = json.loads(open(schema_path, "r", encoding="utf-8").read())
+data.get("functions", {}).pop("pulumi:providers:kinde/terraformConfig", None)
+data.get("provider", {}).get("methods", {}).pop("terraformConfig", None)
+data.setdefault("language", {}).setdefault("go", {})["importBasePath"] = import_base
+open(schema_path, "w", encoding="utf-8").write(json.dumps(data, indent=2) + "\n")
+PY
+PULUMI_SKIP_UPDATE_CHECK=true pulumi package gen-sdk "$SCHEMA_FILE" --language go --out "$SDK_OUT"
+rm -f "$SDK_OUT/go/pulumi-kinde-go-sdk/go.mod" "$SDK_OUT/go/pulumi-kinde-go-sdk/go.sum"
+
+find "{{config_root}}" -mindepth 1 -maxdepth 1 ! -name 'mise.toml' ! -name 'README.md' -exec rm -rf {} +
+cp -R "$SDK_OUT/go/pulumi-kinde-go-sdk/." "{{config_root}}/"
+'''
+
+[tasks."generate:check"]
+description = "Verify generated Kinde Pulumi Go SDK has zero drift"
+run = '''
+set -eu
+TMP_ROOT="$(mktemp -d)"
+trap 'rm -rf "$TMP_ROOT"' EXIT
+SCHEMA_FILE="$TMP_ROOT/kinde-schema.json"
+SDK_OUT="$TMP_ROOT/kinde-sdk"
+ACTUAL_DIR="$TMP_ROOT/actual"
+IMPORT_BASE="github.com/cloudvoyant/openbase/libs/internal/pulumi-kinde-go-sdk"
+
+PULUMI_SKIP_UPDATE_CHECK=true pulumi package get-schema terraform-provider registry.terraform.io/kinde-oss/kinde 0.1.1 >"$SCHEMA_FILE"
+python3 - "$SCHEMA_FILE" "$IMPORT_BASE" <<'PY'
+import json, sys
+schema_path, import_base = sys.argv[1], sys.argv[2]
+data = json.loads(open(schema_path, "r", encoding="utf-8").read())
+data.get("functions", {}).pop("pulumi:providers:kinde/terraformConfig", None)
+data.get("provider", {}).get("methods", {}).pop("terraformConfig", None)
+data.setdefault("language", {}).setdefault("go", {})["importBasePath"] = import_base
+open(schema_path, "w", encoding="utf-8").write(json.dumps(data, indent=2) + "\n")
+PY
+PULUMI_SKIP_UPDATE_CHECK=true pulumi package gen-sdk "$SCHEMA_FILE" --language go --out "$SDK_OUT"
+rm -f "$SDK_OUT/go/pulumi-kinde-go-sdk/go.mod" "$SDK_OUT/go/pulumi-kinde-go-sdk/go.sum"
+
+mkdir -p "$ACTUAL_DIR"
+cp -R "{{config_root}}/." "$ACTUAL_DIR/"
+rm -f "$ACTUAL_DIR/mise.toml" "$ACTUAL_DIR/README.md"
+diff -ruN "$ACTUAL_DIR" "$SDK_OUT/go/pulumi-kinde-go-sdk"
+'''

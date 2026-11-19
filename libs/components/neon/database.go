@@ -8,7 +8,7 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	neonprov "github.com/cloudvoyant/openbase/internal/providers/neon"
+	neonprov "github.com/cloudvoyant/openbase/libs/internal/pulumi-neon-go-sdk"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
 )
@@ -126,7 +126,7 @@ func provisionNeonBranch(
 	}
 	res.Endpoint = ep
 	res.Host = ep.Host
-	res.PoolerHost = ep.HostPooling
+	res.PoolerHost = ep.HostPooler
 	return configureCredentialsAndURLs(ctx, name, meta, spec, refs.projectID, branch, ep, res)
 }
 
@@ -231,7 +231,7 @@ func configureCredentialsAndURLs(
 	if err != nil {
 		return err
 	}
-	res.DatabaseURL = formatPostgresURL(roleName, passwordOut, ep.HostPooling, dbName)
+	res.DatabaseURL = formatPostgresURL(roleName, passwordOut, ep.HostPooler, dbName)
 	res.DirectURL = formatPostgresURL(roleName, passwordOut, ep.Host, dbName)
 	return nil
 }
@@ -250,12 +250,7 @@ func ensureRoleAndDatabase(
 		readyBranchID := pulumi.All(branch.ID(), ep.ID()).ApplyT(func(vs []any) string {
 			return string(vs[0].(pulumi.ID))
 		}).(pulumi.StringOutput)
-		pw := neonprov.GetBranchRolePasswordOutput(ctx, neonprov.GetBranchRolePasswordOutputArgs{
-			ProjectId: projectID,
-			BranchId:  readyBranchID,
-			RoleName:  pulumi.String(roleName),
-		})
-		return pulumi.ToSecret(pw.Password()).(pulumi.StringOutput), nil
+		return revealRolePasswordOutput(ctx, projectID, readyBranchID, roleName), nil
 	}
 	role, err := neonprov.NewRole(ctx, name+"-role", &neonprov.RoleArgs{
 		ProjectId: projectID,
@@ -276,7 +271,10 @@ func ensureRoleAndDatabase(
 	}
 	res.Role = role
 	res.Database = db
-	return pulumi.ToSecret(role.Password).(pulumi.StringOutput), nil
+	readyBranchID := pulumi.All(branch.ID(), role.ID(), db.ID()).ApplyT(func(vs []any) string {
+		return string(vs[0].(pulumi.ID))
+	}).(pulumi.StringOutput)
+	return revealRolePasswordOutput(ctx, projectID, readyBranchID, roleName), nil
 }
 
 func formatPostgresURL(roleName string, password, host pulumi.StringOutput, dbName string) pulumi.StringOutput {

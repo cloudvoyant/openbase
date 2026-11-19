@@ -19,6 +19,7 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestPlatformComposite(t *testing.T) {
+	t.Setenv("NEON_API_KEY", "")
 	t.Run("given composite.Platform and downstream Project specs", func(t *testing.T) {
 		t.Run("when composite.Platform is registered on shared, then it provisions org-wide GCP, Vercel, Neon, and Kinde foundations once", func(t *testing.T) {
 			// Arrange.
@@ -71,6 +72,7 @@ func TestPlatformComposite(t *testing.T) {
 }
 
 func TestVercelComposite(t *testing.T) {
+	t.Setenv("NEON_API_KEY", "")
 	t.Run("given composite.VercelNeonProject and composite.VercelNeonApp specs", func(t *testing.T) {
 		t.Run("when VercelNeonProject is registered on shared, then it provisions vercel.Project, neon.Project, kinde.Project, and preview env vars", func(t *testing.T) {
 			// Arrange.
@@ -170,6 +172,7 @@ func TestVercelComposite(t *testing.T) {
 }
 
 func TestGCPComposite(t *testing.T) {
+	t.Setenv("NEON_API_KEY", "")
 	t.Run("given composite.GcpCloudRunNeonProject and composite.GcpCloudRunNeonApp specs", func(t *testing.T) {
 		t.Run("when GcpCloudRunNeonProject is registered on shared, then it provisions gcp.Project, neon.Project, and kinde.Project", func(t *testing.T) {
 			// Arrange.
@@ -389,12 +392,14 @@ func populateMockOutputs(a pulumi.MockResourceArgs) resource.PropertyMap {
 	case "vercel:index/projectProtectionBypass:ProjectProtectionBypass":
 		outs["secret"] = resource.NewStringProperty("bypass_secret_32_chars_000000000")
 	case "neon:index/project:Project":
-		outs["defaultBranchId"] = resource.NewStringProperty("br_main_123")
+		outs["branch"] = resource.NewObjectProperty(resource.PropertyMap{
+			"id": resource.NewStringProperty("br_main_123"),
+		})
 	case "neon:index/orgApiKey:OrgApiKey":
 		outs["key"] = resource.NewStringProperty("napi_org_mock_123")
 	case "neon:index/endpoint:Endpoint":
 		outs["host"] = resource.NewStringProperty("ep-test.us-east-1.aws.neon.tech")
-		outs["hostPooling"] = resource.NewStringProperty("ep-test-pooler.us-east-1.aws.neon.tech")
+		outs["hostPooler"] = resource.NewStringProperty("ep-test-pooler.us-east-1.aws.neon.tech")
 	case "kinde:index/application:Application":
 		outs["clientId"] = resource.NewStringProperty(a.Name + "_cid")
 		outs["clientSecret"] = resource.NewStringProperty(a.Name + "_csec")

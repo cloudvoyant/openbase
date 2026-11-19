@@ -1,0 +1,10 @@
+{
+  "resource": true,
+  "name": "terraform-provider",
+  "version": "1.4.0",
+  "parameterization": {
+    "name": "neon",
+    "version": "0.19.0-beta.3",
+    "value": "eyJyZW1vdGUiOnsidXJsIjoicmVnaXN0cnkudGVycmFmb3JtLmlvL25lb25kYXRhYmFzZS9uZW9uIiwidmVyc2lvbiI6IjAuMTkuMC1iZXRhLjMifX0="
+  }
+}

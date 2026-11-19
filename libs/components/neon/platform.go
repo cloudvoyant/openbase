@@ -6,7 +6,7 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	neonprov "github.com/cloudvoyant/openbase/internal/providers/neon"
+	neonprov "github.com/cloudvoyant/openbase/libs/internal/pulumi-neon-go-sdk"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
 )

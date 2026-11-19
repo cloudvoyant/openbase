@@ -2,7 +2,7 @@
 
 ## Overview
 
-`libs/components/neon` separates organization Neon configuration (`neon.Platform`, `core.PlatformResource`) from shared PostgreSQL clusters (`neon.Project`, `core.StatefulResource` with `Environment: "shared"`) over the bridged `kislerdm/neon` provider (`internal/providers/neon`). `neon.Platform` runs once per organization and exports organization, region, Postgres version, and retention defaults. `neon.Project` runs once per repository in `infra/shared` and creates the application Neon Project cluster (`<project>-neon`).
+`libs/components/neon` separates organization Neon configuration (`neon.Platform`, `core.PlatformResource`) from shared PostgreSQL clusters (`neon.Project`, `core.StatefulResource` with `Environment: "shared"`) over the official bridged `neondatabase/neon` provider (`libs/internal/pulumi-neon-go-sdk`). `neon.Platform` runs once per organization and exports organization, region, Postgres version, and retention defaults. `neon.Project` runs once per repository in `infra/shared` and creates the application Neon Project cluster (`<project>-neon`).
 
 ## Requirement
 
@@ -54,8 +54,8 @@ sequenceDiagram
     participant Neon as "Neon API"
 
     Plat-->>Proj: 1. Export neonOrgId + neonRegionId
-    Proj->>Neon: 2. Create Neon Project cluster (StorePassword: yes)
-    Neon-->>Proj: 3. Return projectId + defaultBranchId
+    Proj->>Neon: 2. Create Neon Project cluster (StorePassword: true)
+    Neon-->>Proj: 3. Return projectId + branch.id
     Proj-->>DB: 4. Export neonProjectId + neonDefaultBranchId
     DB->>Neon: 5. Create environment branch + compute endpoint
 ```
@@ -90,11 +90,11 @@ proj, err := neon.Project{
 
 ### Password persistence for branching
 
-`neon.Project` sets `StorePassword: "yes"` on the cluster. Child copy-on-write branches in [neon.Database](./database.md) retrieve inherited role passwords through `GetBranchRolePasswordOutput` without resetting credentials on parent branches.
+`neon.Project` sets `StorePassword: true` on the cluster. Because `neondatabase/neon` `0.19.0-beta` omits plaintext role passwords from Terraform state, [neon.Database](./database.md) fetches role passwords through the Neon v2 `reveal_password` endpoint during `pulumi up` and wraps them in Pulumi secrets without resetting parent branch credentials.
 
 ### Bridged provider SDK
 
-`internal/providers/neon` is generated from `kislerdm/neon` via `pulumi-terraform-provider` inside the root `go.mod` module.
+`libs/internal/pulumi-neon-go-sdk` is generated from `neondatabase/neon` (`0.19.0-beta.3`) via `pulumi-terraform-provider` inside the root `go.mod` module.
 
 ## References
 

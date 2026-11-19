@@ -7,7 +7,7 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	kindeprov "github.com/cloudvoyant/openbase/internal/providers/kinde"
+	kindeprov "github.com/cloudvoyant/openbase/libs/internal/pulumi-kinde-go-sdk"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
 )
