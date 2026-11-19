@@ -12,7 +12,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.ProjectResource = (*VercelNeonProjectResource)(nil)
+var _ core.StatelessResource = (*VercelNeonProjectResource)(nil)
 
 // VercelNeonProject declares cross-environment Vercel, Neon, and Kinde project assets in Premise's infra/shared program.
 type VercelNeonProject struct {
@@ -43,7 +43,7 @@ type VercelNeonProject struct {
 // VercelNeonProjectResource holds the application's Vercel Project, Neon Project, and Kinde OIDC applications exported for environment stacks.
 type VercelNeonProjectResource struct {
 	pulumi.ResourceState
-	core.ProjectMeta
+	core.StatelessMeta
 
 	Vercel      *vercel.ProjectResource
 	Neon        *neon.ProjectResource
@@ -55,11 +55,8 @@ type VercelNeonProjectResource struct {
 // Register provisions cross-environment Vercel, Neon, and Kinde project assets on Premise's "shared" stack.
 func (v VercelNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*VercelNeonProjectResource, error) {
 	v.Name = defaultCompStr(v.Name, "project")
-	if err := core.RequireProjectStack(ctx, "composite-vercel-neon-project"); err != nil {
-		return nil, err
-	}
 	res := &VercelNeonProjectResource{}
-	info, err := core.InitProject(ctx, "openbase:composite:VercelNeonProject", "composite-vercel-neon-project", res, &res.ProjectMeta, core.ProjectSpec{
+	meta, err := core.InitStateless(ctx, "openbase:composite:VercelNeonProject", "composite-vercel-neon-project", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:    v.Name,
 		Project: v.Project,
 		Repo:    v.Repo,
@@ -67,11 +64,14 @@ func (v VercelNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.Resource
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionVercelProjectStack(ctx, info, v, res); err != nil {
+	if err := requireSharedEnv(meta); err != nil {
+		return nil, err
+	}
+	if err := provisionVercelProjectStack(ctx, meta, v, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
-		"canonicalName": pulumi.String(info.CanonicalName),
+		"canonicalName": pulumi.String(meta.CanonicalName),
 		"prodUrl":       res.ProdURL,
 	})
 }
@@ -80,15 +80,15 @@ func (v VercelNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.Resource
 
 func provisionVercelProjectStack(
 	ctx *pulumi.Context,
-	info core.ProjectInfo,
+	meta core.ResourceMeta,
 	spec VercelNeonProject,
 	res *VercelNeonProjectResource,
 ) error {
-	vProjName := defaultCompStr(spec.VercelProjectName, "openbase-"+info.Project)
+	vProjName := defaultCompStr(spec.VercelProjectName, "openbase-"+meta.Project)
 	vProj, err := vercel.Project{
 		Name:                 "vercel",
-		Project:              info.Project,
-		Repo:                 info.Repo,
+		Project:              meta.Project,
+		Repo:                 meta.Repo,
 		Platform:             vercelPlatformFromComposite(spec.Platform),
 		PlatformStackRef:     spec.PlatformStackRef,
 		VercelProjectName:    vProjName,
@@ -110,8 +110,8 @@ func provisionVercelProjectStack(
 	}
 	nProj, err := neon.Project{
 		Name:             "neon",
-		Project:          info.Project,
-		Repo:             info.Repo,
+		Project:          meta.Project,
+		Repo:             meta.Repo,
 		Platform:         neonPlatformFromComposite(spec.Platform),
 		PlatformStackRef: spec.PlatformStackRef,
 		OrgID:            spec.NeonOrgID,
@@ -120,7 +120,7 @@ func provisionVercelProjectStack(
 	if err != nil {
 		return err
 	}
-	kProj, err := registerOptionalVercelProjectKinde(ctx, info, vProjName, spec, res)
+	kProj, err := registerOptionalVercelProjectKinde(ctx, meta, vProjName, spec, res)
 	if err != nil {
 		return err
 	}
@@ -153,7 +153,7 @@ func neonPlatformFromComposite(p *PlatformResource) *neon.PlatformResource {
 
 func registerOptionalVercelProjectKinde(
 	ctx *pulumi.Context,
-	info core.ProjectInfo,
+	meta core.ResourceMeta,
 	vProjName string,
 	spec VercelNeonProject,
 	parent pulumi.Resource,
@@ -164,8 +164,8 @@ func registerOptionalVercelProjectKinde(
 	cfg := spec.Auth
 	return kinde.Project{
 		Name:                       "kinde",
-		Project:                    info.Project,
-		Repo:                       info.Repo,
+		Project:                    meta.Project,
+		Repo:                       meta.Repo,
 		Platform:                   resolveKindePlatform(spec.Platform, cfg),
 		PlatformStackRef:           spec.PlatformStackRef,
 		AppName:                    defaultCompStr(cfg.AppName, vProjName),

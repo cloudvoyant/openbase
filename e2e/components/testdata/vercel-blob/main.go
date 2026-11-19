@@ -14,7 +14,11 @@ func main() {
 		appProject := os.Getenv("OPENBASE_TEST_APP_PROJECT")
 		teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
-		if core.IsProjectStack(ctx) {
+		env, err := core.ResolveEnvironment(ctx, "")
+		if err != nil {
+			return err
+		}
+		if env == core.EnvShared {
 			proj, err := vercel.Project{
 				Project:           appProject,
 				VercelProjectName: "openbase-e2e-" + appProject,
@@ -30,10 +34,6 @@ func main() {
 			ctx.Export("blobStoreId", proj.BlobStoreID)
 			ctx.Export("blobBaseUrl", proj.BlobBaseURL)
 			return nil
-		}
-		env, err := core.ResolveEnvironment(ctx, "")
-		if err != nil {
-			return err
 		}
 		branchFrom := ""
 		if env.IsPreview() {

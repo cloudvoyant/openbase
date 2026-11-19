@@ -18,7 +18,7 @@ func ValidateIdentifier(label, value string) error {
 	return nil
 }
 
-// CanonicalName returns deterministic "<project>-<env>-<name>" bounded to 63 characters.
+// CanonicalName returns deterministic "<project>-<env>-<name>" (or "<project>-<name>" when env is shared) bounded to 63 characters.
 func CanonicalName(project string, env Environment, name string) (string, error) {
 	if err := ValidateIdentifier("project", project); err != nil {
 		return "", err
@@ -28,6 +28,9 @@ func CanonicalName(project string, env Environment, name string) (string, error)
 	}
 	if err := ValidateIdentifier("name", name); err != nil {
 		return "", err
+	}
+	if env == EnvShared {
+		return BoundedName(fmt.Sprintf("%s-%s", project, name), 63), nil
 	}
 	return BoundedName(fmt.Sprintf("%s-%s-%s", project, env, name), 63), nil
 }

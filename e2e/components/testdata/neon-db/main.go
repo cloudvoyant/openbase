@@ -19,7 +19,11 @@ func main() {
 		if appProject == "" {
 			appProject = "obneon"
 		}
-		if core.IsProjectStack(ctx) {
+		env, err := core.ResolveEnvironment(ctx, "")
+		if err != nil {
+			return err
+		}
+		if env == core.EnvShared {
 			proj, err := neon.Project{
 				Project:  appProject,
 				OrgID:    os.Getenv("NEON_ORG_ID"),
@@ -31,10 +35,6 @@ func main() {
 			ctx.Export("projectId", proj.ProjectID)
 			ctx.Export("defaultBranchId", proj.DefaultBranchID)
 			return nil
-		}
-		env, err := core.ResolveEnvironment(ctx, "")
-		if err != nil {
-			return err
 		}
 		branchFrom := ""
 		if env == core.EnvStage {

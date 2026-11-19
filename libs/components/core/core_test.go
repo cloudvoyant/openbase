@@ -15,9 +15,9 @@ import (
 
 func TestEnvironmentContracts(t *testing.T) {
 	t.Run("given OpenBase environment strings", func(t *testing.T) {
-		t.Run("when parsing supported persistent and preview slugs, then ParseEnvironment succeeds", func(t *testing.T) {
+		t.Run("when parsing supported persistent, shared, and preview slugs, then ParseEnvironment succeeds", func(t *testing.T) {
 			// Arrange.
-			valid := []string{"dev", "stage", "prod", "preview-pr-42", "preview-a"}
+			valid := []string{"shared", "dev", "stage", "prod", "preview-pr-42", "preview-a"}
 
 			// Act / Assert.
 			for _, raw := range valid {
@@ -27,9 +27,9 @@ func TestEnvironmentContracts(t *testing.T) {
 			}
 		})
 
-		t.Run("when parsing shared, malformed, or unsupported tiers, then ParseEnvironment returns ErrInvalidEnvironment", func(t *testing.T) {
+		t.Run("when parsing malformed or unsupported tiers, then ParseEnvironment returns ErrInvalidEnvironment", func(t *testing.T) {
 			// Arrange.
-			invalid := []string{"", "shared", "project", "platform", "qa", "production", "staging", "preview-", "preview--bad-", "Preview-1", "preview-UPPER"}
+			invalid := []string{"", "project", "platform", "qa", "production", "staging", "preview-", "preview--bad-", "Preview-1", "preview-UPPER"}
 
 			// Act / Assert.
 			for _, raw := range invalid {
@@ -83,6 +83,21 @@ func TestNamingAndBranchValidation(t *testing.T) {
 			assertBoundedID(t, "long SA", saLongA, 6, 30)
 			assertEqual(t, "deterministic SA", saLongA, saLongB)
 			assertBoundedID(t, "bucket", bucket, 3, 63)
+		})
+
+		t.Run("when CanonicalName is called with EnvShared vs an environment, then shared omits env from naming", func(t *testing.T) {
+			// Arrange / Act.
+			sharedName, errShared := core.CanonicalName("storefront", core.EnvShared, "gcp")
+			devName, errDev := core.CanonicalName("storefront", core.EnvDev, "gcp")
+			sharedHost, errHost := core.HostLabel("storefront", core.EnvShared, "relay")
+
+			// Assert.
+			requireNoErr(t, errShared)
+			requireNoErr(t, errDev)
+			requireNoErr(t, errHost)
+			assertEqual(t, "shared canonical", sharedName, "storefront-gcp")
+			assertEqual(t, "dev canonical", devName, "storefront-dev-gcp")
+			assertEqual(t, "shared host label", sharedHost, "storefront-relay")
 		})
 
 		t.Run("when an identifier starts with a digit, then CanonicalName returns ErrInvalidIdentifier", func(t *testing.T) {
@@ -196,12 +211,11 @@ func TestLinksAndTags(t *testing.T) {
 	})
 }
 
-func TestTierContracts(t *testing.T) {
-	t.Run("given PlatformResource and ProjectResource registrations", func(t *testing.T) {
-		t.Run("when InitPlatform and InitProject run, then each populates org or project metadata without environment coupling", func(t *testing.T) {
+func TestPlatformContract(t *testing.T) {
+	t.Run("given a PlatformResource registration", func(t *testing.T) {
+		t.Run("when InitPlatform runs, then it populates org metadata distinct from ResourceMeta", func(t *testing.T) {
 			// Arrange.
 			var plat core.PlatformResource
-			var proj core.ProjectResource
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
@@ -213,24 +227,13 @@ func TestTierContracts(t *testing.T) {
 					return e
 				}
 				plat = tp
-				tpr := &testProject{}
-				if _, e := core.InitProject(ctx, "test:app:Project", "app-project", tpr, &tpr.ProjectMeta, core.ProjectSpec{
-					Name:    "gcp",
-					Project: "storefront",
-					Repo:    "cloudvoyant/storefront",
-				}); e != nil {
-					return e
-				}
-				proj = tpr
 				return nil
-			}, pulumi.WithMocks("storefront-shared", "shared", &noopMocks{}))
+			}, pulumi.WithMocks("platform", "shared", &noopMocks{}))
 
 			// Assert.
 			requireNoErr(t, err)
-			assertEqual(t, "platform canonical", plat.OpenBasePlatform().CanonicalName, "cloudvoyant-platform-gcp")
+			assertEqual(t, "platform canonical", plat.OpenBasePlatform().CanonicalName, "cloudvoyant-gcp")
 			assertEqual(t, "platform tier tag", plat.OpenBasePlatform().Tags[core.TagTier], core.TierPlatform)
-			assertEqual(t, "project canonical", proj.OpenBaseProject().CanonicalName, "storefront-project-gcp")
-			assertEqual(t, "project tier tag", proj.OpenBaseProject().Tags[core.TagTier], core.TierProject)
 		})
 	})
 }
@@ -240,11 +243,6 @@ func TestTierContracts(t *testing.T) {
 type testPlatform struct {
 	pulumi.ResourceState
 	core.PlatformMeta
-}
-
-type testProject struct {
-	pulumi.ResourceState
-	core.ProjectMeta
 }
 
 type noopMocks struct{}

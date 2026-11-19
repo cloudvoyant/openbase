@@ -14,15 +14,17 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.PlatformResource = (*CloudLoadBalancerResource)(nil)
+var _ core.StatelessResource = (*CloudLoadBalancerResource)(nil)
 
 // ErrBaseDomainRequired reports a missing BaseDomain on CloudLoadBalancer.
 var ErrBaseDomainRequired = errors.New("gcp: baseDomain is required for CloudLoadBalancer")
 
-// CloudLoadBalancer declares an org-wide GCP Global External Application Load Balancer routing *.{BaseDomain} to Cloud Run via Serverless NEG URL mask.
+// CloudLoadBalancer declares a GCP Global External Application Load Balancer routing *.{BaseDomain} to Cloud Run via Serverless NEG URL mask (org, shared, or environment scoped).
 type CloudLoadBalancer struct {
 	Name        string
-	Org         string
+	Project     string
+	Repo        string
+	Environment string
 	GCPProject  pulumi.StringPtrInput
 	Location    string
 	BaseDomain  string
@@ -32,7 +34,7 @@ type CloudLoadBalancer struct {
 // CloudLoadBalancerResource holds the Global IPv4, wildcard Certificate Manager TLS resources, and Serverless NEG URL-mask routing resources.
 type CloudLoadBalancerResource struct {
 	pulumi.ResourceState
-	core.PlatformMeta
+	core.StatelessMeta
 
 	Address           *compute.GlobalAddress
 	DnsAuthorization  *certificatemanager.DnsAuthorization
@@ -62,21 +64,22 @@ func (lb CloudLoadBalancer) Register(
 	}
 	lb.Name = defaultStr(lb.Name, "lb")
 	lb.Location = defaultStr(lb.Location, "us-central1")
-	orgScope := core.OrgScope(lb.Org, ctx.Organization())
 	res := &CloudLoadBalancerResource{BaseDomain: base, URLMask: "<service>." + base}
-	info, err := core.InitPlatform(ctx, "openbase:gcp:CloudLoadBalancer", "gcp-cloud-load-balancer", res, &res.PlatformMeta, core.PlatformSpec{
-		Name: lb.Name,
-		Org:  orgScope,
+	meta, err := core.InitStateless(ctx, "openbase:gcp:CloudLoadBalancer", "gcp-cloud-load-balancer", res, &res.StatelessMeta, core.StatelessSpec{
+		Name:        lb.Name,
+		Project:     lb.Project,
+		Repo:        lb.Repo,
+		Environment: lb.Environment,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionWildcardLoadBalancer(ctx, lb.Name, base, info, lb, res); err != nil {
+	if err := provisionWildcardLoadBalancer(ctx, lb.Name, base, meta, lb, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
-		Name: info.Name,
-		Kind: info.Kind,
+		Name: meta.Name,
+		Kind: meta.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"GCP_LOAD_BALANCER_IP":   res.IPAddress,
 			"GCP_BASE_DOMAIN":        pulumi.String(base).ToStringOutput(),
@@ -92,7 +95,7 @@ func (lb CloudLoadBalancer) Register(
 func provisionWildcardLoadBalancer(
 	ctx *pulumi.Context,
 	name, base string,
-	info core.PlatformInfo,
+	meta core.ResourceMeta,
 	spec CloudLoadBalancer,
 	res *CloudLoadBalancerResource,
 ) error {
@@ -102,10 +105,10 @@ func provisionWildcardLoadBalancer(
 	}
 	addr, err := compute.NewGlobalAddress(ctx, name+"-ip", &compute.GlobalAddressArgs{
 		Project:     spec.GCPProject,
-		Name:        pulumi.String(core.BoundedName(info.CanonicalName+"-ip", 63)),
+		Name:        pulumi.String(core.BoundedName(meta.CanonicalName+"-ip", 63)),
 		IpVersion:   pulumi.String("IPV4"),
 		AddressType: pulumi.String("EXTERNAL"),
-		Labels:      core.GCPPlatformLabels(info, spec.ExtraLabels),
+		Labels:      core.GCPLabels(meta, spec.ExtraLabels),
 	}, pulumi.Parent(res), pulumi.DependsOn(deps))
 	if err != nil {
 		return err
@@ -113,11 +116,11 @@ func provisionWildcardLoadBalancer(
 	res.Address = addr
 	res.IPAddress = addr.Address
 
-	certMapURI, err := createWildcardCertificateMap(ctx, name, base, info, spec, deps, res)
+	certMapURI, err := createWildcardCertificateMap(ctx, name, base, meta, spec, deps, res)
 	if err != nil {
 		return err
 	}
-	return createServerlessMaskFrontend(ctx, name, info, spec, addr, certMapURI, deps, res)
+	return createServerlessMaskFrontend(ctx, name, meta, spec, addr, certMapURI, deps, res)
 }
 
 func enableLoadBalancerAPIs(
@@ -146,15 +149,15 @@ func enableLoadBalancerAPIs(
 func createWildcardCertificateMap(
 	ctx *pulumi.Context,
 	name, base string,
-	info core.PlatformInfo,
+	meta core.ResourceMeta,
 	spec CloudLoadBalancer,
 	deps []pulumi.Resource,
 	res *CloudLoadBalancerResource,
 ) (pulumi.StringOutput, error) {
-	labels := core.GCPPlatformLabels(info, spec.ExtraLabels)
+	labels := core.GCPLabels(meta, spec.ExtraLabels)
 	dnsAuth, err := certificatemanager.NewDnsAuthorization(ctx, name+"-dns-auth", &certificatemanager.DnsAuthorizationArgs{
 		Project: spec.GCPProject,
-		Name:    pulumi.String(core.BoundedName(info.CanonicalName+"-dns", 63)),
+		Name:    pulumi.String(core.BoundedName(meta.CanonicalName+"-dns", 63)),
 		Domain:  pulumi.String(base),
 		Labels:  labels,
 	}, pulumi.Parent(res), pulumi.DependsOn(deps))
@@ -163,7 +166,7 @@ func createWildcardCertificateMap(
 	}
 	cert, err := certificatemanager.NewCertificate(ctx, name+"-wildcard-cert", &certificatemanager.CertificateArgs{
 		Project: spec.GCPProject,
-		Name:    pulumi.String(core.BoundedName(info.CanonicalName+"-cert", 63)),
+		Name:    pulumi.String(core.BoundedName(meta.CanonicalName+"-cert", 63)),
 		Labels:  labels,
 		Managed: &certificatemanager.CertificateManagedArgs{
 			Domains:           pulumi.ToStringArray([]string{base, "*." + base}),
@@ -176,7 +179,7 @@ func createWildcardCertificateMap(
 	res.DnsAuthorization = dnsAuth
 	res.Certificate = cert
 	res.DnsAuthRecordName, res.DnsAuthRecordData = extractDnsAuthRecordOutputs(dnsAuth)
-	return attachCertificateToMap(ctx, name, base, info, spec, cert, labels, res)
+	return attachCertificateToMap(ctx, name, base, meta, spec, cert, labels, res)
 }
 
 func extractDnsAuthRecordOutputs(dnsAuth *certificatemanager.DnsAuthorization) (pulumi.StringOutput, pulumi.StringOutput) {
@@ -198,7 +201,7 @@ func extractDnsAuthRecordOutputs(dnsAuth *certificatemanager.DnsAuthorization) (
 func attachCertificateToMap(
 	ctx *pulumi.Context,
 	name, base string,
-	info core.PlatformInfo,
+	meta core.ResourceMeta,
 	spec CloudLoadBalancer,
 	cert *certificatemanager.Certificate,
 	labels pulumi.StringMap,
@@ -206,7 +209,7 @@ func attachCertificateToMap(
 ) (pulumi.StringOutput, error) {
 	cmap, err := certificatemanager.NewCertificateMapResource(ctx, name+"-cert-map", &certificatemanager.CertificateMapResourceArgs{
 		Project: spec.GCPProject,
-		Name:    pulumi.String(core.BoundedName(info.CanonicalName+"-cmap", 63)),
+		Name:    pulumi.String(core.BoundedName(meta.CanonicalName+"-cmap", 63)),
 		Labels:  labels,
 	}, pulumi.Parent(res))
 	if err != nil {
@@ -214,7 +217,7 @@ func attachCertificateToMap(
 	}
 	entry, err := certificatemanager.NewCertificateMapEntry(ctx, name+"-wildcard-entry", &certificatemanager.CertificateMapEntryArgs{
 		Project:      spec.GCPProject,
-		Name:         pulumi.String(core.BoundedName(info.CanonicalName+"-wild", 63)),
+		Name:         pulumi.String(core.BoundedName(meta.CanonicalName+"-wild", 63)),
 		Map:          cmap.Name,
 		Hostname:     pulumi.String("*." + base),
 		Certificates: pulumi.StringArray{cert.ID()},
@@ -231,7 +234,7 @@ func attachCertificateToMap(
 func createServerlessMaskFrontend(
 	ctx *pulumi.Context,
 	name string,
-	info core.PlatformInfo,
+	meta core.ResourceMeta,
 	spec CloudLoadBalancer,
 	addr *compute.GlobalAddress,
 	certMapURI pulumi.StringOutput,
@@ -240,7 +243,7 @@ func createServerlessMaskFrontend(
 ) error {
 	neg, err := compute.NewRegionNetworkEndpointGroup(ctx, name+"-neg", &compute.RegionNetworkEndpointGroupArgs{
 		Project:             spec.GCPProject,
-		Name:                pulumi.String(core.BoundedName(info.CanonicalName+"-neg", 63)),
+		Name:                pulumi.String(core.BoundedName(meta.CanonicalName+"-neg", 63)),
 		Region:              pulumi.String(spec.Location),
 		NetworkEndpointType: pulumi.String("SERVERLESS"),
 		CloudRun: &compute.RegionNetworkEndpointGroupCloudRunArgs{
@@ -252,7 +255,7 @@ func createServerlessMaskFrontend(
 	}
 	backend, err := compute.NewBackendService(ctx, name+"-backend", &compute.BackendServiceArgs{
 		Project:             spec.GCPProject,
-		Name:                pulumi.String(core.BoundedName(info.CanonicalName+"-bs", 63)),
+		Name:                pulumi.String(core.BoundedName(meta.CanonicalName+"-bs", 63)),
 		LoadBalancingScheme: pulumi.String("EXTERNAL_MANAGED"),
 		Protocol:            pulumi.String("HTTP"),
 		Backends: compute.BackendServiceBackendArray{
@@ -264,13 +267,13 @@ func createServerlessMaskFrontend(
 	}
 	res.ServerlessNEG = neg
 	res.BackendService = backend
-	return wireHTTPSForwardingRule(ctx, name, info, spec, addr, backend, certMapURI, res)
+	return wireHTTPSForwardingRule(ctx, name, meta, spec, addr, backend, certMapURI, res)
 }
 
 func wireHTTPSForwardingRule(
 	ctx *pulumi.Context,
 	name string,
-	info core.PlatformInfo,
+	meta core.ResourceMeta,
 	spec CloudLoadBalancer,
 	addr *compute.GlobalAddress,
 	backend *compute.BackendService,
@@ -279,7 +282,7 @@ func wireHTTPSForwardingRule(
 ) error {
 	umap, err := compute.NewURLMap(ctx, name+"-urlmap", &compute.URLMapArgs{
 		Project:        spec.GCPProject,
-		Name:           pulumi.String(core.BoundedName(info.CanonicalName+"-umap", 63)),
+		Name:           pulumi.String(core.BoundedName(meta.CanonicalName+"-umap", 63)),
 		DefaultService: backend.ID(),
 	}, pulumi.Parent(res))
 	if err != nil {
@@ -287,7 +290,7 @@ func wireHTTPSForwardingRule(
 	}
 	proxy, err := compute.NewTargetHttpsProxy(ctx, name+"-https-proxy", &compute.TargetHttpsProxyArgs{
 		Project:        spec.GCPProject,
-		Name:           pulumi.String(core.BoundedName(info.CanonicalName+"-proxy", 63)),
+		Name:           pulumi.String(core.BoundedName(meta.CanonicalName+"-proxy", 63)),
 		UrlMap:         umap.ID(),
 		CertificateMap: certMapURI,
 	}, pulumi.Parent(res))
@@ -296,13 +299,13 @@ func wireHTTPSForwardingRule(
 	}
 	fwd, err := compute.NewGlobalForwardingRule(ctx, name+"-https-fwd", &compute.GlobalForwardingRuleArgs{
 		Project:             spec.GCPProject,
-		Name:                pulumi.String(core.BoundedName(info.CanonicalName+"-fwd", 63)),
+		Name:                pulumi.String(core.BoundedName(meta.CanonicalName+"-fwd", 63)),
 		IpAddress:           addr.Address,
 		IpProtocol:          pulumi.String("TCP"),
 		PortRange:           pulumi.String("443"),
 		LoadBalancingScheme: pulumi.String("EXTERNAL_MANAGED"),
 		Target:              proxy.ID(),
-		Labels:              core.GCPPlatformLabels(info, spec.ExtraLabels),
+		Labels:              core.GCPLabels(meta, spec.ExtraLabels),
 	}, pulumi.Parent(res))
 	if err != nil {
 		return err

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`libs/components/composite` provides turnkey multi-provider blueprints across the Organization (`composite.Platform`, `core.PlatformResource`) and Project (`composite.VercelNeonProject` and `composite.GcpCloudRunNeonProject`, `core.ProjectResource`) tiers. It aligns directly with Premise's `workspace.infra.shared_directory: infra/shared` and `workspace.infra.directory: infra` layout.
+`libs/components/composite` provides turnkey multi-provider blueprints separating the Organization foundation (`composite.Platform`, `core.PlatformResource`) from shared repository blueprints (`composite.VercelNeonProject` and `composite.GcpCloudRunNeonProject`, `core.StatelessResource` on `shared`). It aligns directly with Premise's `workspace.infra.shared_directory: infra/shared` and `workspace.infra.directory: infra` layout.
 
 ## Requirement
 
@@ -85,11 +85,11 @@ _, err := composite.VercelNeonProject{
 }.Register(ctx)
 ```
 
-| Blueprint | Tier Interface | Premise Directory | Underlying Components |
+| Blueprint | Contract | Premise Directory | Underlying Components |
 | :--- | :--- | :--- | :--- |
 | `composite.Platform` | `core.PlatformResource` | Central org repo | `gcp.Platform`, `vercel.Platform`, `neon.Platform`, `kinde.Platform` |
-| `composite.VercelNeonProject` | `core.ProjectResource` | `infra/shared` | `vercel.Project`, `neon.Project`, `kinde.Project` |
-| `composite.GcpCloudRunNeonProject` | `core.ProjectResource` | `infra/shared` | `gcp.Project`, `neon.Project`, `kinde.Project` |
+| `composite.VercelNeonProject` | `core.StatelessResource` (`shared`) | `infra/shared` | `vercel.Project`, `neon.Project`, `kinde.Project` |
+| `composite.GcpCloudRunNeonProject` | `core.StatelessResource` (`shared`) | `infra/shared` | `gcp.Project`, `neon.Project`, `kinde.Project` |
 
 ## Implementation
 

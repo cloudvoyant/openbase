@@ -1,15 +1,15 @@
-# Core resources and tier contracts - software architecture
+# Core resources and platform contracts - software architecture
 
 ## Overview
 
-`libs/components/core` defines the shared interfaces, metadata builders, naming rules, domain formulas, tags, and `Links` resolver used by every OpenBase package. It separates organization `PlatformResource`, repository `ProjectResource`, and per-stack `EnvironmentResource` (`StatelessResource` and `StatefulResource`) at compile time. It does not import any cloud provider SDK.
+`libs/components/core` defines two top-level contracts: `PlatformResource` for organization foundations and `Resource` (`StatelessResource` and `StatefulResource`) for all shared and per-environment resources. It owns naming rules, domain formulas, `openbase.io/*` tags, and typed `Links`. It does not import any cloud provider SDK.
 
 ## Requirement
 
 ### Functional
 
-- FR1: Provide `InitPlatform`, `InitProject`, `InitStateless`, and `InitStateful` lifecycle initializers with embedded metadata structs (`PlatformMeta`, `ProjectMeta`, `StatelessMeta`, `StatefulMeta`).
-- FR2: Format bounded `<project>-<env>-<name>` canonical names (`63` chars), GCP service-account IDs (`6-30` chars), GCS bucket names (`3-63` chars), and `{project}-{env}.{baseDomain}` hostnames.
+- FR1: Provide `InitPlatform` (`PlatformMeta`) for organization foundations and `InitStateless` / `InitStateful` (`StatelessMeta` / `StatefulMeta`) for resources across `shared`, `dev`, `stage`, `prod`, and `preview-<slug>`.
+- FR2: Format `<project>-<env>-<name>` canonical names on environment stacks and `<project>-<name>` canonical names (omitting `env`) when a resource declares `shared`.
 - FR3: Resolve `Links` into merged environment maps, secret maps, and least-privilege `GrantAccess` callbacks while rejecting duplicate variable keys.
 
 ### Non-Functional
@@ -23,21 +23,15 @@
 
 ```mermaid
 classDiagram
-    class Resource {
-        <<interface>>
-        +Link() LinkDescriptor
-    }
     class PlatformResource {
         <<interface>>
         +OpenBasePlatform() PlatformInfo
+        +Link() LinkDescriptor
     }
-    class ProjectResource {
-        <<interface>>
-        +OpenBaseProject() ProjectInfo
-    }
-    class EnvironmentResource {
+    class Resource {
         <<interface>>
         +OpenBaseMeta() ResourceMeta
+        +Link() LinkDescriptor
     }
     class StatelessResource {
         <<interface>>
@@ -46,18 +40,15 @@ classDiagram
         <<interface>>
         +BranchSource() string
     }
-    Resource <|-- PlatformResource
-    Resource <|-- ProjectResource
-    Resource <|-- EnvironmentResource
-    EnvironmentResource <|-- StatelessResource
-    EnvironmentResource <|-- StatefulResource
+    Resource <|-- StatelessResource
+    Resource <|-- StatefulResource
 ```
 
-- `tier.go` defines `PlatformResource`, `ProjectResource`, `InitPlatform`, `InitProject`, `GCPPlatformLabels`, and `GCPProjectLabels`.
-- `environment.go` parses `dev`, `stage`, `prod`, and `preview-<slug>` tiers and validates `BranchFrom` parents.
-- `resource.go` defines `EnvironmentResource`, `StatelessResource`, `StatefulResource`, and custom escape-hatch specs (`core.Stateless` and `core.Stateful`).
+- `tier.go` defines `PlatformResource`, `PlatformInfo`, `PlatformMeta`, `InitPlatform`, and `GCPPlatformLabels`.
+- `environment.go` parses `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` stacks and validates `BranchFrom` parents.
+- `resource.go` defines `Resource`, `StatelessResource`, `StatefulResource`, and custom escape-hatch specs (`core.Stateless` and `core.Stateful`).
 - `links.go` merges `Env` and `Secrets` outputs across linked resources and invokes `GrantAccess` callbacks.
-- `naming.go` and `domain.go` enforce cloud length bounds using deterministic SHA-256 truncation suffixes.
+- `naming.go` and `domain.go` omit `env` when `Environment` is `shared` and enforce cloud length bounds with deterministic SHA-256 truncation suffixes.
 
 ### Data and Control Flow
 
@@ -65,7 +56,7 @@ classDiagram
 flowchart LR
     Producer["Stateful / Stateless Producer"] -->|"SetLink(Env, Secrets, GrantAccess)"| Link["LinkDescriptor"]
     Link -->|"Links: []core.Resource"| Resolver["core.ResolveLinks"]
-    Resolver -->|"Check duplicate keys"| Merged["ResolvedLinks (Env + Secrets)"]
+    Resolver -->|"Make sure keys are unique"| Merged["ResolvedLinks (Env + Secrets)"]
     Resolver -->|"GrantAccess(ConsumerIdentity)"| IAM["Scoped IAM / OIDC Binding"]
     Merged --> Workload["CloudRunService / WebApp"]
 ```
@@ -75,50 +66,43 @@ A producer registers its `LinkDescriptor` with plain outputs, secret outputs, an
 ### Interfaces and Contracts
 
 ```go
-type Resource interface {
+type PlatformResource interface {
 	pulumi.Resource
+	OpenBasePlatform() PlatformInfo
 	Link() LinkDescriptor
 }
 
-type PlatformResource interface {
-	Resource
-	OpenBasePlatform() PlatformInfo
-}
-
-type ProjectResource interface {
-	Resource
-	OpenBaseProject() ProjectInfo
-}
-
-type EnvironmentResource interface {
-	Resource
+type Resource interface {
+	pulumi.Resource
 	OpenBaseMeta() ResourceMeta
+	Link() LinkDescriptor
 }
 
-type StatelessResource interface{ EnvironmentResource }
+type StatelessResource interface{ Resource }
 
 type StatefulResource interface {
-	EnvironmentResource
+	Resource
 	BranchSource() string
 }
 ```
 
-| Environment | `IsPersistent()` | `IsProtected()` | `IsEphemeral()` | Valid `BranchFrom` |
-| :--- | :--- | :--- | :--- | :--- |
-| `dev` | `true` | `false` | `false` | `""`, `"stage"`, `"prod"` |
-| `stage` | `true` | `true` | `false` | `""`, `"dev"`, `"prod"` |
-| `prod` | `true` | `true` | `false` | `""`, `"dev"`, `"stage"` |
-| `preview-<slug>` | `false` | `false` | `true` | `""`, `"dev"`, `"stage"`, `"prod"` |
+| Environment | Canonical Name | `IsPersistent()` | `IsProtected()` | `IsEphemeral()` | Valid `BranchFrom` |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `shared` | `<project>-<name>` | `false` | `false` | `false` | `""` |
+| `dev` | `<project>-dev-<name>` | `true` | `false` | `false` | `""`, `"stage"`, `"prod"` |
+| `stage` | `<project>-stage-<name>` | `true` | `true` | `false` | `""`, `"dev"`, `"prod"` |
+| `prod` | `<project>-prod-<name>` | `true` | `true` | `false` | `""`, `"dev"`, `"stage"` |
+| `preview-<slug>` | `<project>-preview-<slug>-<name>` | `false` | `false` | `true` | `""`, `"dev"`, `"stage"`, `"prod"` |
 
 ## Implementation
 
-### Deterministic identifier truncation
+### Shared naming rule
 
-`BoundedName(raw, maxLen)` sanitizes strings to lowercase `[a-z0-9-]` and returns `raw` unchanged when within `maxLen`. When `raw` exceeds `maxLen`, it truncates the prefix and appends an 8-character SHA-256 hex digest so long preview branch names never collide or violate GCP `30`-character service-account limits.
+When `env == EnvShared`, `CanonicalName` returns `<project>-<name>` instead of `<project>-shared-<name>`, and `HostLabel` returns `<project>` (for `web`) or `<project>-<service>` (for named services). Any concrete resource such as `gcp.CloudLoadBalancer` or `gcp.Bucket` can therefore deploy as a `shared` project resource or as an environment resource without redundant `-shared-` tokens in cloud names.
 
 ### Escape hatches
 
-Teams can wrap any raw Pulumi resource in `core.Stateless` or `core.Stateful` with a `RegisterFunc` callback. The wrapper applies the same environment checks, `Protect` flags, `openbase.io/*` tags, and `Links` contract as built-in provider components.
+Teams can wrap any raw Pulumi resource in `core.Stateless` or `core.Stateful` with a `RegisterFunc` callback. The wrapper applies the same environment rules, `Protect` flags, `openbase.io/*` tags, and `Links` contract as built-in provider components.
 
 ## References
 

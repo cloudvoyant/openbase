@@ -276,7 +276,8 @@ func createOptionalPlatformLB(
 	}
 	lb, err := CloudLoadBalancer{
 		Name:        name + "-lb",
-		Org:         orgScope,
+		Project:     orgScope,
+		Environment: string(core.EnvShared),
 		GCPProject:  spec.GCPProject,
 		Location:    location,
 		BaseDomain:  spec.BaseDomain,

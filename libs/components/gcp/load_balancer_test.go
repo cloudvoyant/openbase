@@ -21,7 +21,7 @@ func TestCloudLoadBalancer(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				lb, err := gcp.CloudLoadBalancer{
-					Org:        "cloudvoyant",
+					Project:    "storefront",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
 					BaseDomain: "gcp.cloudvoyant.io",
 				}.Register(ctx)
@@ -29,8 +29,11 @@ func TestCloudLoadBalancer(t *testing.T) {
 					return err
 				}
 				gotMask = lb.URLMask
+				if lb.OpenBaseMeta().CanonicalName != "storefront-lb" {
+					t.Fatalf("shared CanonicalName = %q, want storefront-lb", lb.OpenBaseMeta().CanonicalName)
+				}
 				return nil
-			}, pulumi.WithMocks("platform", "shared", mocks))
+			}, pulumi.WithMocks("storefront", "shared", mocks))
 
 			// Assert.
 			requireGCPNoErr(t, err)
@@ -52,9 +55,9 @@ func TestCloudLoadBalancer(t *testing.T) {
 		t.Run("when BaseDomain is empty, then Register rejects with ErrBaseDomainRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := gcp.CloudLoadBalancer{Org: "cloudvoyant"}.Register(ctx)
+				_, e := gcp.CloudLoadBalancer{Project: "storefront"}.Register(ctx)
 				return e
-			}, pulumi.WithMocks("platform", "shared", newGCPMocks()))
+			}, pulumi.WithMocks("storefront", "prod", newGCPMocks()))
 
 			// Assert.
 			if !errors.Is(err, gcp.ErrBaseDomainRequired) {

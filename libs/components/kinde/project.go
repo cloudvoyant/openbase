@@ -12,7 +12,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.ProjectResource = (*ProjectResource)(nil)
+var _ core.StatelessResource = (*ProjectResource)(nil)
 
 // Project declares an application's dev and prod Kinde OIDC Applications in Premise's infra/shared stack.
 type Project struct {
@@ -47,7 +47,7 @@ type Project struct {
 // ProjectResource is the provisioned handle for an application's dev and prod Kinde OIDC Applications.
 type ProjectResource struct {
 	pulumi.ResourceState
-	core.ProjectMeta
+	core.StatelessMeta
 
 	DevProvider       *kindeprov.Provider
 	ProdProvider      *kindeprov.Provider
@@ -72,20 +72,21 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	}
 	p.Name = defaultKindeStr(p.Name, "kinde")
 	res := &ProjectResource{}
-	info, err := core.InitProject(ctx, "openbase:kinde:Project", "kinde-project", res, &res.ProjectMeta, core.ProjectSpec{
-		Name:    p.Name,
-		Project: p.Project,
-		Repo:    p.Repo,
+	meta, err := core.InitStateless(ctx, "openbase:kinde:Project", "kinde-project", res, &res.StatelessMeta, core.StatelessSpec{
+		Name:        p.Name,
+		Project:     p.Project,
+		Repo:        p.Repo,
+		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionTwoTenantApps(ctx, p.Name, info, p, res); err != nil {
+	if err := provisionTwoTenantApps(ctx, p.Name, meta, p, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
-		Name: info.Name,
-		Kind: info.Kind,
+		Name: meta.Name,
+		Kind: meta.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"KINDE_DEV_ISSUER_URL":  res.DevIssuerURL,
 			"KINDE_PROD_ISSUER_URL": res.ProdIssuerURL,
@@ -109,7 +110,7 @@ func validateKindeProject(spec Project) error {
 func provisionTwoTenantApps(
 	ctx *pulumi.Context,
 	name string,
-	info core.ProjectInfo,
+	meta core.ResourceMeta,
 	spec Project,
 	res *ProjectResource,
 ) error {
@@ -119,11 +120,11 @@ func provisionTwoTenantApps(
 	}
 	res.DevProvider = devProv
 	res.ProdProvider = prodProv
-	appName := defaultKindeStr(spec.AppName, "openbase-"+info.Project)
-	if err := createDevApplication(ctx, name, appName, info.Project, spec, devProv, res); err != nil {
+	appName := defaultKindeStr(spec.AppName, "openbase-"+meta.Project)
+	if err := createDevApplication(ctx, name, appName, meta.Project, spec, devProv, res); err != nil {
 		return err
 	}
-	return createProdApplication(ctx, name, appName, info, spec, prodProv, res)
+	return createProdApplication(ctx, name, appName, meta, spec, prodProv, res)
 }
 
 func resolveProjectTenantProviders(
@@ -215,12 +216,12 @@ func attachDevEmailPassword(
 func createProdApplication(
 	ctx *pulumi.Context,
 	name, appName string,
-	info core.ProjectInfo,
+	meta core.ResourceMeta,
 	spec Project,
 	prov *kindeprov.Provider,
 	res *ProjectResource,
 ) error {
-	redirects, logouts := buildProdCallbacks(info.Project, spec)
+	redirects, logouts := buildProdCallbacks(meta.Project, spec)
 	appOpts := buildKindeAppOptions(res, prov, spec.ImportProdAppID, spec.RetainApplicationsOnDelete)
 	app, err := kindeprov.NewApplication(ctx, name+"-prod-app", &kindeprov.ApplicationArgs{
 		Name:         pulumi.String(appName),

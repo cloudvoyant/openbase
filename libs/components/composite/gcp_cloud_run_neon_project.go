@@ -14,7 +14,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.ProjectResource = (*GcpCloudRunNeonProjectResource)(nil)
+var _ core.StatelessResource = (*GcpCloudRunNeonProjectResource)(nil)
 
 // GcpCloudRunNeonProject declares cross-environment GCP, Neon, and Kinde project assets in Premise's infra/shared program.
 type GcpCloudRunNeonProject struct {
@@ -40,7 +40,7 @@ type GcpCloudRunNeonProject struct {
 // GcpCloudRunNeonProjectResource holds the application's GCP Artifact Registry, Neon Project, and Kinde OIDC applications.
 type GcpCloudRunNeonProjectResource struct {
 	pulumi.ResourceState
-	core.ProjectMeta
+	core.StatelessMeta
 
 	GCP           *gcp.ProjectResource
 	Neon          *neon.ProjectResource
@@ -53,11 +53,8 @@ func (g GcpCloudRunNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.Res
 	g.Name = defaultCompStr(g.Name, "project")
 	g.ServiceName = defaultCompStr(g.ServiceName, "web")
 	g.Location = defaultCompStr(g.Location, defaultGCPLocation)
-	if err := core.RequireProjectStack(ctx, "composite-gcp-cloud-run-neon-project"); err != nil {
-		return nil, err
-	}
 	res := &GcpCloudRunNeonProjectResource{}
-	info, err := core.InitProject(ctx, "openbase:composite:GcpCloudRunNeonProject", "composite-gcp-cloud-run-neon-project", res, &res.ProjectMeta, core.ProjectSpec{
+	meta, err := core.InitStateless(ctx, "openbase:composite:GcpCloudRunNeonProject", "composite-gcp-cloud-run-neon-project", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:    g.Name,
 		Project: g.Project,
 		Repo:    g.Repo,
@@ -65,11 +62,14 @@ func (g GcpCloudRunNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.Res
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionGCPProjectStack(ctx, info, g, res); err != nil {
+	if err := requireSharedEnv(meta); err != nil {
+		return nil, err
+	}
+	if err := provisionGCPProjectStack(ctx, meta, g, res); err != nil {
 		return nil, err
 	}
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
-		"canonicalName": pulumi.String(info.CanonicalName),
+		"canonicalName": pulumi.String(meta.CanonicalName),
 		"repositoryUrl": res.RepositoryURL,
 	})
 }
@@ -78,14 +78,14 @@ func (g GcpCloudRunNeonProject) Register(ctx *pulumi.Context, opts ...pulumi.Res
 
 func provisionGCPProjectStack(
 	ctx *pulumi.Context,
-	info core.ProjectInfo,
+	meta core.ResourceMeta,
 	spec GcpCloudRunNeonProject,
 	res *GcpCloudRunNeonProjectResource,
 ) error {
 	gProj, err := gcp.Project{
 		Name:             "gcp",
-		Project:          info.Project,
-		Repo:             info.Repo,
+		Project:          meta.Project,
+		Repo:             meta.Repo,
 		Platform:         gcpPlatformFromComposite(spec.Platform),
 		PlatformStackRef: spec.PlatformStackRef,
 		GCPProject:       optionalGCPProjectPtr(spec.GCPProject),
@@ -97,8 +97,8 @@ func provisionGCPProjectStack(
 	}
 	nProj, err := neon.Project{
 		Name:             "neon",
-		Project:          info.Project,
-		Repo:             info.Repo,
+		Project:          meta.Project,
+		Repo:             meta.Repo,
 		Platform:         neonPlatformFromComposite(spec.Platform),
 		PlatformStackRef: spec.PlatformStackRef,
 		OrgID:            spec.NeonOrgID,
@@ -107,7 +107,7 @@ func provisionGCPProjectStack(
 	if err != nil {
 		return err
 	}
-	kProj, err := registerOptionalGCPProjectKinde(ctx, info, spec, res)
+	kProj, err := registerOptionalGCPProjectKinde(ctx, meta, spec, res)
 	if err != nil {
 		return err
 	}
@@ -129,7 +129,7 @@ func gcpPlatformFromComposite(p *PlatformResource) *gcp.PlatformResource {
 
 func registerOptionalGCPProjectKinde(
 	ctx *pulumi.Context,
-	info core.ProjectInfo,
+	meta core.ResourceMeta,
 	spec GcpCloudRunNeonProject,
 	parent pulumi.Resource,
 ) (*kinde.ProjectResource, error) {
@@ -141,17 +141,17 @@ func registerOptionalGCPProjectKinde(
 	if !strings.HasPrefix(cb, "/") {
 		cb = "/" + cb
 	}
-	stageHost, prodHost, devRedirects, devLogouts, prodExtrasR, prodExtrasL, err := computeGCPKindeURLs(info.Project, spec, cb)
+	stageHost, prodHost, devRedirects, devLogouts, prodExtrasR, prodExtrasL, err := computeGCPKindeURLs(meta.Project, spec, cb)
 	if err != nil {
 		return nil, err
 	}
 	return kinde.Project{
 		Name:                       "kinde",
-		Project:                    info.Project,
-		Repo:                       info.Repo,
+		Project:                    meta.Project,
+		Repo:                       meta.Repo,
 		Platform:                   resolveKindePlatform(spec.Platform, cfg),
 		PlatformStackRef:           spec.PlatformStackRef,
-		AppName:                    defaultCompStr(cfg.AppName, "openbase-"+info.Project),
+		AppName:                    defaultCompStr(cfg.AppName, "openbase-"+meta.Project),
 		BaseDomain:                 spec.BaseDomain,
 		StageDomain:                stageHost,
 		ProdDomain:                 prodHost,

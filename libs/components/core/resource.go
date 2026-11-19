@@ -20,26 +20,21 @@ type ResourceMeta struct {
 	Tags          map[string]string
 }
 
-// Resource is satisfied by every OpenBase component handle across Platform, Project, and Environment tiers.
+// Resource is satisfied by every non-platform OpenBase resource handle (shared project assets and environment products).
 type Resource interface {
 	pulumi.Resource
+	OpenBaseMeta() ResourceMeta
 	Link() LinkDescriptor
 }
 
-// EnvironmentResource marks per-environment component handles deployed on dev, stage, prod, or preview-<slug>.
-type EnvironmentResource interface {
-	Resource
-	OpenBaseMeta() ResourceMeta
-}
-
-// StatelessResource marks ephemeral/replaceable environment-level compute or routing component handles.
+// StatelessResource marks replaceable compute, routing, or project configuration handles.
 type StatelessResource interface {
-	EnvironmentResource
+	Resource
 }
 
-// StatefulResource marks environment-level component handles that hold persistent data and support BranchFrom.
+// StatefulResource marks resource handles that hold persistent data and support BranchFrom.
 type StatefulResource interface {
-	EnvironmentResource
+	Resource
 	BranchSource() string
 }
 

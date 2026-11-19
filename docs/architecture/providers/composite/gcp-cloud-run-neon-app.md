@@ -59,7 +59,7 @@ app, err := composite.GcpCloudRunNeonApp{
 	GCPProject:       "cloudvoyant-openbase",
 	GCPProjectNumber: "785485436615",
 	BaseDomain:       "gcp.cloudvoyant.io",
-	Image:            pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/storefront-project-gcp/web:sha"),
+	Image:            pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/storefront-gcp/web:sha"),
 	Auth:             &composite.KindeAppConfig{},
 }.Register(ctx)
 ```

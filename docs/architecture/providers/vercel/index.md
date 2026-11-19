@@ -2,7 +2,7 @@
 
 ## Overview
 
-`libs/components/vercel` separates team-wide Vercel configuration (`vercel.Platform`, `core.PlatformResource`) from per-application repository setup (`vercel.Project`, `core.ProjectResource`) over `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `vercel.Platform` runs once per organization and owns team and base-domain defaults. `vercel.Project` runs once per repository in `infra/shared` and owns the Vercel Project, `staging` Custom Environment, attached domains, automation bypass secret, and optional shared Blob store.
+`libs/components/vercel` separates team-wide Vercel configuration (`vercel.Platform`, `core.PlatformResource`) from shared repository assets (`vercel.Project`, `core.StatelessResource` with `Environment: "shared"`) over `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `vercel.Platform` runs once per organization and owns team and base-domain defaults. `vercel.Project` runs once per repository in `infra/shared` and owns the Vercel Project, `staging` Custom Environment, attached domains, automation bypass secret, and optional shared Blob store.
 
 ## Requirement
 
@@ -74,7 +74,7 @@ plat, err := vercel.Platform{
 	BaseDomain: "vercel.cloudvoyant.io",
 }.Register(ctx)
 
-// Tier 2: Application Project in infra/shared (core.ProjectResource)
+// Shared Project Resource in infra/shared (core.StatelessResource)
 proj, err := vercel.Project{
 	Project:          "storefront",
 	Repo:             "cloudvoyant/storefront",

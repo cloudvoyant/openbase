@@ -2,7 +2,7 @@
 
 ## Overview
 
-`gcp.CloudLoadBalancer` (`core.PlatformResource`) provisions one organization Global External Application Load Balancer that routes `*.{baseDomain}` to Cloud Run services through a Serverless Network Endpoint Group (NEG) URL mask. It replaces slow per-hostname `cloudrun.DomainMapping` certificates with one wildcard Google Certificate Manager certificate.
+`gcp.CloudLoadBalancer` (`core.StatelessResource`) provisions a Global External Application Load Balancer that routes `*.{baseDomain}` to Cloud Run services through a Serverless Network Endpoint Group (NEG) URL mask. Teams can deploy it once per organization inside `gcp.Platform`, once per project on `shared` (`<project>-lb`), or per environment (`<project>-<env>-lb`).
 
 ## Requirement
 
@@ -58,10 +58,11 @@ DNS points `*.{baseDomain}` to `ipAddress` once. When `gcp.CloudRunService` depl
 
 ```go
 lb, err := gcp.CloudLoadBalancer{
-	Org:        "cloudvoyant",
-	GCPProject: pulumi.String("cloudvoyant-openbase"),
-	Location:   "us-central1",
-	BaseDomain: "gcp.cloudvoyant.io",
+	Project:     "storefront",
+	Environment: "shared",
+	GCPProject:  pulumi.String("cloudvoyant-openbase"),
+	Location:    "us-central1",
+	BaseDomain:  "gcp.cloudvoyant.io",
 }.Register(ctx)
 ```
 

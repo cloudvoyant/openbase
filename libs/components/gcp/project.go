@@ -12,7 +12,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.ProjectResource = (*ProjectResource)(nil)
+var _ core.StatelessResource = (*ProjectResource)(nil)
 
 // Project declares an application's shared GCP project assets (Docker Artifact Registry repository, optionally linked to gcp.Platform) in Premise's infra/shared stack.
 type Project struct {
@@ -30,7 +30,7 @@ type Project struct {
 // ProjectResource is the provisioned handle for an application's Artifact Registry repository and inherited GCP Platform references.
 type ProjectResource struct {
 	pulumi.ResourceState
-	core.ProjectMeta
+	core.StatelessMeta
 
 	EnabledServices          []*projects.Service
 	Repository               *artifactregistry.Repository
@@ -51,20 +51,21 @@ type ProjectResource struct {
 func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
 	p.Name = defaultStr(p.Name, "gcp")
 	res := &ProjectResource{}
-	info, err := core.InitProject(ctx, "openbase:gcp:Project", "gcp-project", res, &res.ProjectMeta, core.ProjectSpec{
-		Name:    p.Name,
-		Project: p.Project,
-		Repo:    p.Repo,
+	meta, err := core.InitStateless(ctx, "openbase:gcp:Project", "gcp-project", res, &res.StatelessMeta, core.StatelessSpec{
+		Name:        p.Name,
+		Project:     p.Project,
+		Repo:        p.Repo,
+		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionGCPProject(ctx, p.Name, info, p, res); err != nil {
+	if err := provisionGCPProject(ctx, p.Name, meta, p, res); err != nil {
 		return nil, err
 	}
 	res.SetLink(core.LinkDescriptor{
-		Name: info.Name,
-		Kind: info.Kind,
+		Name: meta.Name,
+		Kind: meta.Kind,
 		Env: map[string]pulumi.StringOutput{
 			"GCP_ARTIFACT_REGISTRY_URL":  res.RepositoryURL,
 			"GCP_WORKLOAD_IDENTITY_POOL": res.WorkloadIdentityPoolName,
@@ -75,12 +76,12 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 
 // Private helpers ------------------------------------------------------------
 
-func provisionGCPProject(ctx *pulumi.Context, name string, info core.ProjectInfo, spec Project, res *ProjectResource) error {
+func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Project, res *ProjectResource) error {
 	location := defaultStr(spec.Location, "us-central1")
 	if err := bindPlatformRefsToProject(ctx, name, spec, res); err != nil {
 		return err
 	}
-	repo, err := createArtifactRepository(ctx, name, location, info, spec, res)
+	repo, err := createArtifactRepository(ctx, name, location, meta, spec, res)
 	if err != nil {
 		return err
 	}
@@ -169,7 +170,7 @@ func preferGCPStackStr(sr *pulumi.StackReference, primaryKey, fallbackKey string
 func createArtifactRepository(
 	ctx *pulumi.Context,
 	name, location string,
-	info core.ProjectInfo,
+	meta core.ResourceMeta,
 	spec Project,
 	parent *ProjectResource,
 ) (*artifactregistry.Repository, error) {
@@ -180,9 +181,9 @@ func createArtifactRepository(
 	return artifactregistry.NewRepository(ctx, name+"-ar", &artifactregistry.RepositoryArgs{
 		Project:      spec.GCPProject,
 		Location:     pulumi.String(location),
-		RepositoryId: pulumi.String(core.BoundedName(info.CanonicalName, 63)),
+		RepositoryId: pulumi.String(core.BoundedName(meta.CanonicalName, 63)),
 		Format:       pulumi.String("DOCKER"),
-		Labels:       core.GCPProjectLabels(info, spec.ExtraLabels),
+		Labels:       core.GCPLabels(meta, spec.ExtraLabels),
 	}, pulumi.Parent(parent), pulumi.DependsOn(deps))
 }
 

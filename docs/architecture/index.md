@@ -8,7 +8,7 @@ OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi comp
 
 ### Functional
 
-- FR1: Enforce three distinct Go interfaces (`core.PlatformResource`, `core.ProjectResource`, and `core.EnvironmentResource`) so organization, project, and environment resources never mix concerns.
+- FR1: Separate organization foundations (`core.PlatformResource`) from application resources (`core.StatelessResource` and `core.StatefulResource`), where every resource either targets an environment (`dev`, `stage`, `prod`, `preview-<slug>`) or declares `shared` (omitting `env` from canonical naming).
 - FR2: Provision stateless compute (`gcp.CloudRunService`, `vercel.WebApp`), OIDC routing (`kinde.OidcApp`), and stateful data (`gcp.Bucket`, `vercel.BlobStore`, `neon.Database`) across `dev`, `stage`, `prod`, and `preview-<slug>` stacks.
 - FR3: Protect `prod` and `stage` stateful resources against deletion, branch `stage` off `prod` and `preview-<slug>` off `dev`, and bind environment variables, secrets, and IAM grants through `Links`.
 
@@ -79,12 +79,11 @@ An organization deploys `Platform` once and exports shared identity and domain r
 
 ### Interfaces and Contracts
 
-| Tier | Go Interface | Scope Fields | Canonical Name | Allowed Stacks |
+| Scope | Go Interface | Scope Fields | Canonical Name | Allowed Stacks |
 | :--- | :--- | :--- | :--- | :--- |
-| Organization | `core.PlatformResource` | `Name`, `Org` | `<org>-platform-<name>` | Central org stack |
-| Project | `core.ProjectResource` | `Name`, `Project`, `Repo` | `<project>-project-<name>` | `shared` (`infra/shared`) |
-| Environment (Stateless) | `core.StatelessResource` | `Name`, `Project`, `Repo`, `Environment`, `Links` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` |
-| Environment (Stateful) | `core.StatefulResource` | `Name`, `Project`, `Repo`, `Environment`, `BranchFrom`, `Links` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` |
+| Organization Platform | `core.PlatformResource` | `Name`, `Org` | `<org>-<name>` | Central org stack |
+| Shared Resource | `core.StatelessResource` / `core.StatefulResource` | `Name`, `Project`, `Repo`, `Environment: "shared"` | `<project>-<name>` | `shared` (`infra/shared`) |
+| Environment Resource | `core.StatelessResource` / `core.StatefulResource` | `Name`, `Project`, `Repo`, `Environment`, `BranchFrom`, `Links` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` |
 
 ## Implementation
 
@@ -92,9 +91,9 @@ An organization deploys `Platform` once and exports shared identity and domain r
 
 `gcp` and `vercel` import `github.com/pulumi/pulumi-gcp/sdk/v9` and `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `neon` (`kislerdm/neon`) and `kinde` (`kinde-oss/kinde`) use generated Go packages in `internal/providers/{neon,kinde}`. Run `mise run generate:check` in CI to make sure that generated bindings have zero drift.
 
-### Stack boundaries
+### Shared vs environment naming
 
-`core.ParseEnvironment` accepts only `dev`, `stage`, `prod`, and `preview-<slug>`. It rejects `shared`, `project`, and `platform` so environment components never deploy onto a project stack. `core.RequireProjectStack` rejects `dev`, `stage`, `prod`, and `preview-<slug>` so Premise `infra/shared` blueprints never deploy onto an environment stack.
+Every non-platform component satisfies `core.Resource` (`StatelessResource` or `StatefulResource`). When `Environment` is `dev`, `stage`, `prod`, or `preview-<slug>`, `core.CanonicalName` formats `<project>-<env>-<name>`. When `Environment` is `shared`, `core.CanonicalName` omits `env` and formats `<project>-<name>` so shared Artifact Registry repositories, Neon projects, and project load balancers stay concise.
 
 ## References
 

@@ -21,17 +21,14 @@ func EnvDomainLabel(env Environment) string {
 	}
 	pid := env.PreviewID()
 	switch Environment(pid) {
-	case EnvDev, EnvStage, EnvProd:
+	case EnvShared, EnvDev, EnvStage, EnvProd:
 		return string(env)
 	default:
-		if pid == "shared" || pid == "project" || pid == "platform" {
-			return string(env)
-		}
 		return pid
 	}
 }
 
-// HostLabel builds the DNS subdomain label "{project}-{dev|stage|prod|previewId}" (or "{project}-{service}-{env}" when service != "web").
+// HostLabel builds "{project}-{dev|stage|prod|previewId}" (omitting env when shared, and inserting "{service}" when service != "web").
 func HostLabel(project string, env Environment, serviceName string) (string, error) {
 	if err := ValidateIdentifier("project", project); err != nil {
 		return "", err
@@ -39,15 +36,23 @@ func HostLabel(project string, env Environment, serviceName string) (string, err
 	if _, err := ParseEnvironment(string(env)); err != nil {
 		return "", err
 	}
-	label := EnvDomainLabel(env)
-	raw := fmt.Sprintf("%s-%s", project, label)
-	if serviceName != "" && serviceName != "web" {
+	hasService := serviceName != "" && serviceName != "web"
+	if hasService {
 		if err := ValidateIdentifier("name", serviceName); err != nil {
 			return "", err
 		}
-		raw = fmt.Sprintf("%s-%s-%s", project, serviceName, label)
 	}
-	return BoundedName(raw, 49), nil
+	if env == EnvShared {
+		if hasService {
+			return BoundedName(fmt.Sprintf("%s-%s", project, serviceName), 49), nil
+		}
+		return BoundedName(project, 49), nil
+	}
+	label := EnvDomainLabel(env)
+	if hasService {
+		return BoundedName(fmt.Sprintf("%s-%s-%s", project, serviceName, label), 49), nil
+	}
+	return BoundedName(fmt.Sprintf("%s-%s", project, label), 49), nil
 }
 
 // EnvironmentDomain returns "{project}-{dev|stage|prod|previewId}.{baseDomain}" for a non-empty baseDomain.

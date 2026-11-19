@@ -15,7 +15,11 @@ func main() {
 		vProjName := "openbase-e2e-" + appProject
 		teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
-		if core.IsProjectStack(ctx) {
+		env, err := core.ResolveEnvironment(ctx, "")
+		if err != nil {
+			return err
+		}
+		if env == core.EnvShared {
 			proj, err := vercel.Project{
 				Project:           appProject,
 				VercelProjectName: vProjName,
@@ -31,10 +35,6 @@ func main() {
 			ctx.Export("prodDomainName", proj.ProdDomainName)
 			ctx.Export("stageDomainName", proj.StageDomainName)
 			return nil
-		}
-		env, err := core.ResolveEnvironment(ctx, "")
-		if err != nil {
-			return err
 		}
 		revision := os.Getenv("OPENBASE_TEST_REVISION")
 		if revision == "" {

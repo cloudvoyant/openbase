@@ -19,6 +19,7 @@ const LibraryName = "openbase-components"
 // SupportedEnvironments returns the fixed environment tiers plus the preview prefix.
 func SupportedEnvironments() []string {
 	return []string{
+		core.EnvShared.String(),
 		core.EnvDev.String(),
 		core.EnvStage.String(),
 		core.EnvProd.String(),

@@ -12,7 +12,7 @@ go get github.com/cloudvoyant/openbase/libs/components@v0.1.0
 
 | Package | Role | Declarative Specs |
 | --- | --- | --- |
-| `libs/components/core` | Tier interfaces (`PlatformResource`, `ProjectResource`, `StatelessResource`, `StatefulResource`), environment rules, domain formulas, naming, tags, and `Links` | `PlatformResource`, `ProjectResource`, `StatelessResource`, `StatefulResource`, `Stateless`, `Stateful`, `ResolveLinks` |
+| `libs/components/core` | `PlatformResource` vs `Resource` (`StatelessResource`, `StatefulResource`) contracts, environment rules, domain formulas, naming, tags, and `Links` | `PlatformResource`, `StatelessResource`, `StatefulResource`, `Stateless`, `Stateful`, `ResolveLinks` |
 | `libs/components/gcp` | GCP org platform, per-app Artifact Registry project, wildcard HTTPS load balancing, Cloud Run v2, and GCS storage | `Platform`, `Project`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `overlayfs` |
 | `libs/components/vercel` | Vercel team platform, per-app project (`staging` CustomEnvironment + domains + bypass), WebApp, and Blob storage | `Platform`, `Project`, `WebApp`, `BlobStore` |
 | `libs/components/neon` | Neon org defaults, per-app Neon Project cluster, and branched serverless PostgreSQL | `Platform`, `Project`, `Database` |

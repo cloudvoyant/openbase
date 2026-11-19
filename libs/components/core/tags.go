@@ -11,11 +11,11 @@ import (
 // Public API -----------------------------------------------------------------
 
 const (
-	// TagTier records the OpenBase tier ("platform", "project", "environment").
+	// TagTier records the OpenBase contract ("platform" or "resource").
 	TagTier = "openbase.io/tier"
 	// TagOrg records the organization slug on Platform resources.
 	TagOrg = "openbase.io/org"
-	// TagEnvironment records the OpenBase environment ("dev", "stage", "prod", "preview-*").
+	// TagEnvironment records the OpenBase environment ("shared", "dev", "stage", "prod", "preview-*").
 	TagEnvironment = "openbase.io/environment"
 	// TagProject records the logical OpenBase project name.
 	TagProject = "openbase.io/project"
@@ -32,7 +32,7 @@ const (
 // StandardTags returns the canonical openbase.io/* metadata map for a resource.
 func StandardTags(meta ResourceMeta) map[string]string {
 	tags := map[string]string{
-		TagTier:        TierEnvironment,
+		TagTier:        TierResource,
 		TagEnvironment: meta.Environment.String(),
 		TagProject:     meta.Project,
 		TagStateful:    strconv.FormatBool(meta.Stateful),

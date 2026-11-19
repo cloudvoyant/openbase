@@ -2,7 +2,7 @@
 
 ## Overview
 
-`libs/components/neon` separates organization Neon configuration (`neon.Platform`, `core.PlatformResource`) from per-application PostgreSQL clusters (`neon.Project`, `core.ProjectResource`) over the bridged `kislerdm/neon` provider (`internal/providers/neon`). `neon.Platform` runs once per organization and exports organization, region, Postgres version, and retention defaults. `neon.Project` runs once per repository in `infra/shared` and creates the application Neon Project cluster.
+`libs/components/neon` separates organization Neon configuration (`neon.Platform`, `core.PlatformResource`) from shared PostgreSQL clusters (`neon.Project`, `core.StatefulResource` with `Environment: "shared"`) over the bridged `kislerdm/neon` provider (`internal/providers/neon`). `neon.Platform` runs once per organization and exports organization, region, Postgres version, and retention defaults. `neon.Project` runs once per repository in `infra/shared` and creates the application Neon Project cluster (`<project>-neon`).
 
 ## Requirement
 
@@ -73,7 +73,7 @@ plat, err := neon.Platform{
 	PostgresVersion: 17,
 }.Register(ctx)
 
-// Tier 2: Application Project in infra/shared (core.ProjectResource)
+// Shared Project Resource in infra/shared (core.StatefulResource)
 proj, err := neon.Project{
 	Project:          "storefront",
 	Repo:             "cloudvoyant/storefront",
@@ -81,10 +81,10 @@ proj, err := neon.Project{
 }.Register(ctx)
 ```
 
-| Spec | Tier Interface | Synthesized `neon` Resources | Key Outputs |
+| Spec | Contract | Synthesized `neon` Resources | Key Outputs |
 | :--- | :--- | :--- | :--- |
 | `neon.Platform` | `core.PlatformResource` | Optional `neon.OrgApiKey` | `neonOrgId`, `neonRegionId`, `neonPostgresVersion`, `neonHistoryRetentionSeconds` |
-| `neon.Project` | `core.ProjectResource` | `neon.Project` | `projectId`, `neonProjectId`, `defaultBranchId`, `neonDefaultBranchId`, `regionId` |
+| `neon.Project` | `core.StatefulResource` (`shared`) | `neon.Project` | `projectId`, `neonProjectId`, `defaultBranchId`, `neonDefaultBranchId`, `regionId` |
 
 ## Implementation
 

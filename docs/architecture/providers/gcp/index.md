@@ -2,7 +2,7 @@
 
 ## Overview
 
-`libs/components/gcp` separates organization Google Cloud foundations (`gcp.Platform`, `core.PlatformResource`) from per-application repository assets (`gcp.Project`, `core.ProjectResource`) over `github.com/pulumi/pulumi-gcp/sdk/v9`. `gcp.Platform` runs once per organization and owns APIs, Workload Identity Federation, KMS, and wildcard load balancing. `gcp.Project` runs once per repository in `infra/shared` and owns the application Docker Artifact Registry.
+`libs/components/gcp` separates organization Google Cloud foundations (`gcp.Platform`, `core.PlatformResource`) from shared repository assets (`gcp.Project`, `core.StatelessResource` with `Environment: "shared"`) over `github.com/pulumi/pulumi-gcp/sdk/v9`. `gcp.Platform` runs once per organization and owns APIs, Workload Identity Federation, KMS, and wildcard load balancing. `gcp.Project` runs once per repository in `infra/shared` and owns the application Docker Artifact Registry (`<project>-gcp`).
 
 ## Requirement
 
@@ -51,7 +51,7 @@ flowchart TD
 ```
 
 - `gcp.Platform` enables `run`, `artifactregistry`, `iam`, `iamcredentials`, `sts`, `storage`, `secretmanager`, and `cloudkms` APIs, creates the OIDC pool and providers, and exports `workloadIdentityPoolName`, `vercelOidcProviderName`, `keyRingId`, and `gcpBaseDomain`.
-- `gcp.Project` creates `<project>-project-<name>` in Artifact Registry and forwards inherited `Platform` outputs to environment stacks.
+- `gcp.Project` creates `<project>-<name>` in Artifact Registry (omitting `shared` from the repository ID) and forwards inherited `Platform` outputs to environment stacks.
 - [gcp.CloudRunService](./cloud-run-service.md) and [gcp.Bucket](./bucket.md) consume `ProjectStackRef` on `dev`, `stage`, `prod`, and `preview-<slug>`.
 
 ### Data and Control Flow
@@ -86,7 +86,7 @@ plat, err := gcp.Platform{
 	EnableLoadBalancer: true,
 }.Register(ctx)
 
-// Tier 2: Application Project in infra/shared (core.ProjectResource)
+// Shared Project Resource in infra/shared (core.StatelessResource)
 proj, err := gcp.Project{
 	Project:          "storefront",
 	Repo:             "cloudvoyant/storefront",
@@ -95,10 +95,10 @@ proj, err := gcp.Project{
 }.Register(ctx)
 ```
 
-| Spec | Tier Interface | Synthesized `pulumi-gcp` Resources | Key Outputs |
+| Spec | Contract | Synthesized `pulumi-gcp` Resources | Key Outputs |
 | :--- | :--- | :--- | :--- |
 | `gcp.Platform` | `core.PlatformResource` | `projects.Service`, `iam.WorkloadIdentityPool`, `iam.WorkloadIdentityPoolProvider`, `kms.KeyRing`, optional `CloudLoadBalancer` | `workloadIdentityPoolName`, `vercelOidcProviderName`, `keyRingId`, `gcpBaseDomain` |
-| `gcp.Project` | `core.ProjectResource` | `artifactregistry.Repository` | `repositoryId`, `repositoryUrl`, `baseDomain`, `workloadIdentityPoolName` |
+| `gcp.Project` | `core.StatelessResource` (`shared`) | `artifactregistry.Repository` | `repositoryId`, `repositoryUrl`, `baseDomain`, `workloadIdentityPoolName` |
 
 ## Implementation
 

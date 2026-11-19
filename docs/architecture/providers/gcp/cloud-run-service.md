@@ -72,7 +72,7 @@ api, err := gcp.CloudRunService{
 	BaseDomain:      "gcp.cloudvoyant.io",
 	Domains:         []string{"stage.storefront.io"},
 	Visibility:      gcp.VisibilityPublic,
-	Image:           pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/storefront-project-gcp/web:sha"),
+	Image:           pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/storefront-gcp/web:sha"),
 }.Register(ctx)
 ```
 

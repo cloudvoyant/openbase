@@ -19,12 +19,12 @@ func main() {
 		if teamSlug == "" {
 			teamSlug = "cloudvoyant"
 		}
-		if core.IsProjectStack(ctx) {
-			return deployKindeProject(ctx, appProject, teamSlug)
-		}
 		env, err := core.ResolveEnvironment(ctx, "")
 		if err != nil {
 			return err
+		}
+		if env == core.EnvShared {
+			return deployKindeProject(ctx, appProject, teamSlug)
 		}
 		return deployEnvKinde(ctx, env, appProject, teamSlug)
 	})
