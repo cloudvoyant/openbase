@@ -88,6 +88,9 @@ module.exports = async (req, res) => {
       headers: { Authorization: `Bearer ${idToken}` },
     });
     const crBody = await crResp.json();
+    if (!crResp.ok) {
+      throw new Error(`Cloud Run /health failed (${crResp.status}): ${JSON.stringify(crBody)}`);
+    }
 
     const gcsAccessToken = await generateGoogleAccessToken(stsToken, saEmail);
     const overlay = await readGCSOverlay(

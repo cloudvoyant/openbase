@@ -37,6 +37,22 @@ func Add[S core.ScopedSpecOf[R], R core.Resource](
 	return res, nil
 }
 
+// AddPlatform registers a typed PlatformSpecItem inside a PlatformResource, forwarding per-account ResourceOptions (such as pulumi.Provider).
+func AddPlatform[S core.PlatformSpecItemOf[R], R core.PlatformResource](
+	plat *PlatformResource,
+	spec S,
+	opts ...pulumi.ResourceOption,
+) (R, error) {
+	childOpts := append([]pulumi.ResourceOption{pulumi.Parent(plat)}, opts...)
+	res, err := spec.RegisterTypedPlatformInScope(plat.ctx, core.Scope{Org: plat.Org}, childOpts...)
+	if err != nil {
+		var zero R
+		return zero, err
+	}
+	plat.recordPlatformResource(res)
+	return res, nil
+}
+
 // FindPlatform returns the first registered PlatformResource matching type R inside plat, or the zero value when absent.
 func FindPlatform[R core.PlatformResource](plat *PlatformResource) R {
 	var zero R
@@ -82,11 +98,15 @@ func defaultStr(val, fallback string) string {
 	return fallback
 }
 
-func exportDescriptorOutputs(ctx *pulumi.Context, skip bool, desc core.LinkDescriptor) {
+func exportDescriptorOutputs(ctx *pulumi.Context, skip bool, exported map[string]bool, desc core.LinkDescriptor) {
 	if skip {
 		return
 	}
 	for k, v := range desc.StackExports {
+		if exported[k] {
+			continue
+		}
+		exported[k] = true
 		ctx.Export(k, v)
 	}
 }

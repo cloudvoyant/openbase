@@ -163,7 +163,7 @@ func resolveNeonProjectPlatformInputs(
 			orgOut = spec.Platform.OrgID
 		}
 		if spec.RegionID == "" {
-			regionOut = spec.Platform.RegionID
+			regionOut = spec.Platform.DefaultRegionID
 		}
 	}
 	if spec.PlatformStackRef == "" {
@@ -177,7 +177,7 @@ func resolveNeonProjectPlatformInputs(
 		orgOut = optionalNeonStackStr(sr, "neonOrgId", "")
 	}
 	if spec.RegionID == "" && spec.Platform == nil {
-		regionOut = optionalNeonStackStr(sr, "neonRegionId", "aws-us-east-1")
+		regionOut = optionalNeonStackStr(sr, "neonDefaultRegionId", "aws-us-east-1")
 	}
 	return orgOut, regionOut, nil
 }

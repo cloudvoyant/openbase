@@ -15,8 +15,8 @@ import (
 // Public API -----------------------------------------------------------------
 
 var (
-	_ core.PlatformResource = (*PlatformResource)(nil)
-	_ core.PlatformSpecItem = Platform{}
+	_ core.PlatformResource                      = (*PlatformResource)(nil)
+	_ core.PlatformSpecItemOf[*PlatformResource] = Platform{}
 )
 
 // ErrTenantCredentialsRequired reports missing nonProd or prod Kinde tenant M2M credentials.
@@ -99,6 +99,11 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 
 // RegisterPlatformInScope adapts kinde.Platform to openbase.Platform.
 func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.PlatformResource, error) {
+	return p.RegisterTypedPlatformInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedPlatformInScope registers kinde.Platform with inherited Org defaults and explicit ResourceOptions.
+func (p Platform) RegisterTypedPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	if p.Org == "" {
 		p.Org = scope.Org
 	}

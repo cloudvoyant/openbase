@@ -13,10 +13,10 @@ import (
 // Public API -----------------------------------------------------------------
 
 var (
-	_ core.PlatformResource   = (*PlatformResource)(nil)
-	_ core.PlatformSpecItem   = Platform{}
-	_ core.OIDCProviderSource = Platform{}
-	_ core.OIDCProviderSource = (*PlatformResource)(nil)
+	_ core.PlatformResource                      = (*PlatformResource)(nil)
+	_ core.PlatformSpecItemOf[*PlatformResource] = Platform{}
+	_ core.OIDCProviderSource                    = Platform{}
+	_ core.OIDCProviderSource                    = (*PlatformResource)(nil)
 )
 
 // Platform declares account/team-level Vercel settings provisioned once per organization.
@@ -82,6 +82,11 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 
 // RegisterPlatformInScope adapts vercel.Platform to openbase.Platform.
 func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.PlatformResource, error) {
+	return p.RegisterTypedPlatformInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedPlatformInScope registers vercel.Platform with inherited Org defaults and explicit ResourceOptions.
+func (p Platform) RegisterTypedPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	if p.Org == "" {
 		p.Org = scope.Org
 	}

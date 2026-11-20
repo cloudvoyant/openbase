@@ -42,10 +42,10 @@ flowchart TD
     Shared -->|"LookupProject / openbaseManifest"| Remote
 ```
 
-- `platform.go` implements `openbase.Platform`, `PlatformResource`, and `LookupPlatform`.
+- `platform.go` implements `openbase.Platform`, `NewPlatform`, `PlatformResource`, and `LookupPlatform`.
 - `project.go` implements `openbase.Project`, `NewProject`, `ProjectResource`, and `LookupProject`.
 - `environment.go` implements `openbase.Environment`, `NewEnvironment`, and `EnvironmentResource`.
-- `component.go` implements generic `Add[S, R]`, `FindPlatform[R]`, and `FindResource[R]`.
+- `component.go` implements generic `Add[S, R]`, `AddPlatform[S, R]`, `FindPlatform[R]`, and `FindResource[R]`.
 
 ### Data and Control Flow
 
@@ -96,6 +96,11 @@ db, err := openbase.Add(env, neon.Database{Name: "db", APIKey: cfg.RequireSecret
 ### Remote resource grants
 
 Provider packages register remote access handlers with `core.RegisterRemoteGrantHandler` (for example `"gcp-bucket"` in `libs/components/gcp`). When a workload links `env.Project().Resource("assets", core.WithRemoteKind("gcp-bucket"))`, `GrantAccess` runs synchronously during resource registration and binds `storage.BucketIAMMember` against the remote bucket name from `openbaseManifest`.
+
+### Multi-account, multi-project, and raw Pulumi composition
+
+1. **Multiple cloud accounts and projects**: `openbase.AddPlatform(plat, spec, pulumi.Provider(p))` and `openbase.Add(scope, spec, pulumi.Provider(p))` forward standard `pulumi.ResourceOption` values (including explicit Pulumi provider instances for secondary GCP or AWS accounts). When multiple resources of the same kind register in one stack (for example `gcp-core` and `gcp-analytics`), the first claims unprefixed convenience stack outputs while every resource exports collision-free attributes under `openbaseManifest.resources[<name>].attributes` (selected via `PlatformResource` or `ScopeRef.Resource(name)`).
+2. **Raw Pulumi interoperability**: Scopes operate on the caller's `*pulumi.Context` and return concrete typed resource structs (for example `svc.ServiceAccountEmail`, `svc.Service`, `bucket.BucketName`). Callers can construct arbitrary raw Pulumi resources before or after `openbase.Add` and pass outputs in either direction within the same stack.
 
 ## References
 

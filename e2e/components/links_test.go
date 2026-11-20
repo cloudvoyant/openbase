@@ -64,6 +64,7 @@ func TestLinks(t *testing.T) {
 			previewSvc := h.Output(t, "preview-pr-99", "ordersServiceName")
 			previewBucket := h.Output(t, "preview-pr-99", "bucketName")
 			previewDeployID := h.Output(t, "preview-pr-99", "webDeploymentId")
+			rawSecretID := h.Output(t, "preview-pr-99", "rawSecretId")
 
 			t.Run("when probing the deployed preview WebApp", func(t *testing.T) {
 				// Arrange / Act.
@@ -72,12 +73,13 @@ func TestLinks(t *testing.T) {
 				h.WriteJSONArtifact(t, "hybrid-links-probe.json", payload)
 
 				// Assert.
-				t.Run("then direct unauthenticated Cloud Run requests return 403 while Vercel invokes Cloud Run via keyless GCP WIF OIDC", func(t *testing.T) {
+				t.Run("then direct unauthenticated Cloud Run requests return 403 while Vercel invokes Cloud Run via keyless GCP WIF OIDC and reads raw Pulumi infra", func(t *testing.T) {
 					if directOrdersStatus != http.StatusForbidden {
 						t.Fatalf("direct unauthenticated Cloud Run status = %d, want 403", directOrdersStatus)
 					}
 					assertEqualStr(t, "Cloud Run service", payload.CloudRun.Service, "orders")
 					assertEqualStr(t, "Cloud Run sharedAssetsBucket", payload.CloudRun.SharedAssetsBucket, sharedAssetsBucket)
+					assertEqualStr(t, "Cloud Run raw Pulumi secret", payload.CloudRun.RawSecretValue, "raw-pulumi-partner-v1")
 				})
 
 				t.Run("then Vercel reads both the dev BranchFrom overlay bucket and the remote shared-assets bucket from openbaseManifest", func(t *testing.T) {
@@ -88,7 +90,7 @@ func TestLinks(t *testing.T) {
 				})
 			})
 
-			t.Run("when destroying preview-pr-99 twice, then preview resources across GCP and Vercel return 404", func(t *testing.T) {
+			t.Run("when destroying preview-pr-99 twice, then OpenBase and raw Pulumi preview resources across GCP and Vercel return 404", func(t *testing.T) {
 				h.SkipIfKeep(t)
 				// Arrange / Act.
 				h.Pulumi(t, nil, "destroy", "--stack", "preview-pr-99", "--yes", "--non-interactive", "--skip-preview")
@@ -97,6 +99,7 @@ func TestLinks(t *testing.T) {
 				// Assert.
 				assertCloudRunAbsent(t, gcpProject, previewSvc)
 				assertBucketAbsent(t, previewBucket)
+				assertSecretAbsent(t, gcpProject, rawSecretID)
 				assertVercelStatus(t, fmt.Sprintf("https://api.vercel.com/v13/deployments/%s?teamId=%s", previewDeployID, teamID), http.StatusNotFound)
 			})
 		})
@@ -111,6 +114,7 @@ type hybridLinksProbePayload struct {
 	CloudRun       struct {
 		Service            string `json:"service"`
 		SharedAssetsBucket string `json:"sharedAssetsBucket"`
+		RawSecretValue     string `json:"rawSecretValue"`
 	} `json:"cloudRun"`
 	GCSOverlay struct {
 		SourceBucket string `json:"sourceBucket"`

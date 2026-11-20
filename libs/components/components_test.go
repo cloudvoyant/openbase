@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	gcpprov "github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp"
+	"github.com/pulumi/pulumi-gcp/sdk/v9/go/gcp/secretmanager"
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
@@ -35,6 +37,10 @@ func TestUnifiedScopes(t *testing.T) {
 
 		t.Run("when registering Project on a non-shared stack or Environment on the shared stack, then Register returns ErrInvalidEnvironment", func(t *testing.T) {
 			runStackGuardrailSpec(t)
+		})
+
+		t.Run("when registering multiple GCP projects/accounts and raw Pulumi resources alongside openbase.Add, then manifest lookups and explicit providers compose cleanly", func(t *testing.T) {
+			runMultiGCPAndRawPulumiSpec(t)
 		})
 	})
 }
@@ -92,7 +98,7 @@ func deployOrgPlatform(ctx *pulumi.Context) error {
 				Links:            []core.OIDCProviderSource{vercelPlat},
 				SkipKeyRing:      true,
 			},
-			neon.Platform{OrgID: "org-neon", RegionID: "aws-us-east-1"},
+			neon.Platform{OrgID: "org-neon", DefaultRegionID: "aws-us-east-1"},
 			sampleKindePlatform(),
 		},
 	}.Register(ctx)
@@ -440,13 +446,25 @@ func mockStackReferenceOutputs(stackName string) resource.PropertyValue {
 			"teamId":                      resource.NewStringProperty("team_123"),
 			"teamSlug":                    resource.NewStringProperty("cloudvoyant"),
 			"neonOrgId":                   resource.NewStringProperty("org-neon"),
-			"neonRegionId":                resource.NewStringProperty("aws-us-east-1"),
+			"neonDefaultRegionId":         resource.NewStringProperty("aws-us-east-1"),
 			"nonProdIssuerUrl":            resource.NewStringProperty("https://nonprod-ref.kinde.com"),
 			"prodIssuerUrl":               resource.NewStringProperty("https://prod-ref.kinde.com"),
 			"kindeNonProdM2mClientId":     resource.NewStringProperty("nonprod-m2m-id"),
 			"kindeNonProdM2mClientSecret": resource.NewStringProperty("nonprod-m2m-sec"),
 			"kindeProdM2mClientId":        resource.NewStringProperty("prod-m2m-id"),
 			"kindeProdM2mClientSecret":    resource.NewStringProperty("prod-m2m-sec"),
+			core.ManifestOutputKey: resource.NewObjectProperty(resource.PropertyMap{
+				"org": resource.NewStringProperty("cloudvoyant"),
+				"resources": resource.NewObjectProperty(resource.PropertyMap{
+					"gcp-analytics": resource.NewObjectProperty(resource.PropertyMap{
+						"kind": resource.NewStringProperty("gcp-platform"),
+						"attributes": resource.NewObjectProperty(resource.PropertyMap{
+							"gcpProject": resource.NewStringProperty("cloudvoyant-analytics"),
+							"baseDomain": resource.NewStringProperty("analytics.acme.io"),
+						}),
+					}),
+				}),
+			}),
 		})
 	}
 	return resource.NewObjectProperty(resource.PropertyMap{
@@ -504,4 +522,122 @@ func requireNoErr(t *testing.T, err error) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+}
+
+func runMultiGCPAndRawPulumiSpec(t *testing.T) {
+	t.Helper()
+	// Arrange.
+	platMocks := newScopeMocks()
+	sharedMocks := newScopeMocks()
+	envMocks := newScopeMocks()
+	analyticsRepoURL := make(chan string, 1)
+
+	// Act.
+	errPlat := pulumi.RunErr(deployMultiAccountGCPPlatform, pulumi.WithMocks("platform", "platform", platMocks))
+	errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		return deployMultiProjectGCPShared(ctx, analyticsRepoURL)
+	}, pulumi.WithMocks("orders-shared", "shared", sharedMocks))
+	errEnv := pulumi.RunErr(deployEnvWithRawPulumi, pulumi.WithMocks("orders", "dev", envMocks))
+
+	// Assert.
+	requireNoErr(t, errPlat)
+	requireNoErr(t, errShared)
+	requireNoErr(t, errEnv)
+	platMocks.assertCount(t, "pulumi:providers:gcp", 1)
+	platMocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 2)
+	sharedMocks.assertCount(t, "gcp:artifactregistry/repository:Repository", 2)
+	envMocks.assertCount(t, "gcp:storage/bucket:Bucket", 2)
+	envMocks.assertCount(t, "gcp:secretmanager/secret:Secret", 1)
+	envMocks.assertCount(t, "gcp:secretmanager/secretIamMember:SecretIamMember", 1)
+	if got := <-analyticsRepoURL; !strings.Contains(got, "/cloudvoyant-analytics/") {
+		t.Fatalf("expected analytics AR repo in cloudvoyant-analytics, got %q", got)
+	}
+}
+
+func deployMultiAccountGCPPlatform(ctx *pulumi.Context) error {
+	plat, err := openbase.NewPlatform(ctx, openbase.Platform{Org: "cloudvoyant"})
+	if err != nil {
+		return err
+	}
+	analyticsProv, err := gcpprov.NewProvider(ctx, "gcp-analytics-account", &gcpprov.ProviderArgs{
+		Project: pulumi.String("cloudvoyant-analytics"),
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := openbase.AddPlatform(plat, gcp.Platform{
+		Name:        "gcp-core",
+		GCPProject:  pulumi.String("cloudvoyant-openbase"),
+		SkipKeyRing: true,
+	}); err != nil {
+		return err
+	}
+	_, err = openbase.AddPlatform(plat, gcp.Platform{
+		Name:        "gcp-analytics",
+		GCPProject:  pulumi.String("cloudvoyant-analytics"),
+		BaseDomain:  "analytics.acme.io",
+		SkipKeyRing: true,
+	}, pulumi.Provider(analyticsProv))
+	return err
+}
+
+func deployMultiProjectGCPShared(ctx *pulumi.Context, analyticsRepoURL chan<- string) error {
+	proj, err := openbase.NewProject(ctx, openbase.Project{
+		Project:          "orders",
+		PlatformStackRef: "organization/platform/platform",
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := openbase.Add(proj, gcp.Project{Name: "gcp-core"}); err != nil {
+		return err
+	}
+	analyticsAR, err := openbase.Add(proj, gcp.Project{
+		Name:             "gcp-analytics",
+		PlatformResource: "gcp-analytics",
+	})
+	if err != nil {
+		return err
+	}
+	analyticsAR.RepositoryURL.ApplyT(func(v string) string { analyticsRepoURL <- v; return v })
+	return nil
+}
+
+func deployEnvWithRawPulumi(ctx *pulumi.Context) error {
+	env, err := openbase.NewEnvironment(ctx, openbase.Environment{Project: "orders"})
+	if err != nil {
+		return err
+	}
+	uploads, err := openbase.Add(env, gcp.Bucket{Name: "uploads", GCPProject: pulumi.String("cloudvoyant-openbase")})
+	if err != nil {
+		return err
+	}
+	if _, err := openbase.Add(env, gcp.Bucket{Name: "analytics-events", GCPProject: pulumi.String("cloudvoyant-analytics")}); err != nil {
+		return err
+	}
+	rawSecret, err := secretmanager.NewSecret(ctx, "raw-partner-key", &secretmanager.SecretArgs{
+		Project:     pulumi.String("cloudvoyant-openbase"),
+		SecretId:    pulumi.String("orders-dev-raw-partner-key"),
+		Replication: &secretmanager.SecretReplicationArgs{Auto: &secretmanager.SecretReplicationAutoArgs{}},
+	})
+	if err != nil {
+		return err
+	}
+	svc, err := openbase.Add(env, gcp.CloudRunService{
+		Name:       "api",
+		GCPProject: pulumi.String("cloudvoyant-openbase"),
+		Image:      pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/orders/api:v1"),
+		Links:      []core.Resource{uploads},
+		Env:        map[string]pulumi.StringInput{"RAW_SECRET_ID": rawSecret.SecretId},
+	})
+	if err != nil {
+		return err
+	}
+	_, err = secretmanager.NewSecretIamMember(ctx, "raw-partner-key-accessor", &secretmanager.SecretIamMemberArgs{
+		Project:  pulumi.String("cloudvoyant-openbase"),
+		SecretId: rawSecret.SecretId,
+		Role:     pulumi.String("roles/secretmanager.secretAccessor"),
+		Member:   pulumi.Sprintf("serviceAccount:%s", svc.ServiceAccountEmail),
+	})
+	return err
 }

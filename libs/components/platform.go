@@ -28,6 +28,16 @@ type PlatformResource struct {
 	Org       string
 	Items     []core.PlatformResource
 	Resources map[string]core.PlatformResource
+
+	ctx         *pulumi.Context
+	skipExports bool
+	exported    map[string]bool
+	descriptors []core.LinkDescriptor
+}
+
+// NewPlatform initializes an openbase.Platform scope for incremental openbase.AddPlatform registrations.
+func NewPlatform(ctx *pulumi.Context, spec Platform, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
+	return spec.Register(ctx, opts...)
 }
 
 // Register provisions every PlatformSpecItem in Resources, exports stack outputs and openbaseManifest, and returns PlatformResource.
@@ -35,8 +45,11 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 	p.Name = defaultStr(p.Name, "platform")
 	orgScope := core.OrgScope(p.Org, ctx.Organization())
 	res := &PlatformResource{
-		Org:       orgScope,
-		Resources: map[string]core.PlatformResource{},
+		Org:         orgScope,
+		Resources:   map[string]core.PlatformResource{},
+		ctx:         ctx,
+		skipExports: p.SkipStackExports,
+		exported:    map[string]bool{},
 	}
 	info, err := core.InitPlatform(ctx, "openbase:components:Platform", "openbase-platform", res, &res.PlatformMeta, core.PlatformSpec{
 		Name: p.Name,
@@ -93,9 +106,19 @@ func LookupPlatform(ctx *pulumi.Context, stackRef ...string) (*core.PlatformRef,
 
 // Private helpers ------------------------------------------------------------
 
+func (r *PlatformResource) recordPlatformResource(item core.PlatformResource) {
+	info := item.OpenBasePlatform()
+	desc := item.Link()
+	r.Items = append(r.Items, item)
+	r.Resources[info.Name] = item
+	r.descriptors = append(r.descriptors, desc)
+	exportDescriptorOutputs(r.ctx, r.skipExports, r.exported, desc)
+	exportScopeManifest(r.ctx, r.skipExports, r.Org, "", "", r.descriptors)
+}
+
 func registerPlatformItems(ctx *pulumi.Context, orgScope string, spec Platform, res *PlatformResource) error {
 	scope := core.Scope{Org: orgScope}
-	var descriptors []core.LinkDescriptor
+	exportScopeManifest(ctx, spec.SkipStackExports, orgScope, "", "", nil)
 	for _, itemSpec := range spec.Resources {
 		if itemSpec == nil {
 			continue
@@ -104,13 +127,7 @@ func registerPlatformItems(ctx *pulumi.Context, orgScope string, spec Platform, 
 		if err != nil {
 			return err
 		}
-		info := item.OpenBasePlatform()
-		desc := item.Link()
-		res.Items = append(res.Items, item)
-		res.Resources[info.Name] = item
-		descriptors = append(descriptors, desc)
-		exportDescriptorOutputs(ctx, spec.SkipStackExports, desc)
+		res.recordPlatformResource(item)
 	}
-	exportScopeManifest(ctx, spec.SkipStackExports, orgScope, "", "", descriptors)
 	return nil
 }

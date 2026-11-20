@@ -21,6 +21,7 @@ type Project struct {
 	Repo             string
 	Platform         *PlatformResource
 	PlatformStackRef string
+	PlatformResource string
 	GCPProject       pulumi.StringPtrInput
 	Location         string
 	BaseDomain       string
@@ -89,9 +90,7 @@ func (p Project) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opt
 		p.Repo = scope.Repo
 	}
 	if p.Platform == nil && scope.Platform != nil {
-		if plat, ok := scope.Platform.PlatformHandle("gcp-platform").(*PlatformResource); ok {
-			p.Platform = plat
-		}
+		p.Platform = resolveInMemoryGCPPlatform(scope.Platform, p.PlatformResource)
 	}
 	if p.PlatformStackRef == "" {
 		p.PlatformStackRef = scope.PlatformStackName()
@@ -100,6 +99,17 @@ func (p Project) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opt
 }
 
 // Private helpers ------------------------------------------------------------
+
+func resolveInMemoryGCPPlatform(ref *core.PlatformRef, resName string) *PlatformResource {
+	if resName != "" {
+		if plat, ok := ref.PlatformHandleByName(resName).(*PlatformResource); ok {
+			return plat
+		}
+		return nil
+	}
+	plat, _ := ref.PlatformHandle("gcp-platform").(*PlatformResource)
+	return plat
+}
 
 func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Project, res *ProjectResource) error {
 	location := defaultStr(spec.Location, "us-central1")
@@ -129,30 +139,68 @@ func resolveProjectPlatformInputs(
 	name string,
 	spec Project,
 ) (pulumi.StringOutput, pulumi.StringPtrInput, []pulumi.Resource, error) {
-	var deps []pulumi.Resource
-	gcpProj := spec.GCPProject
 	if spec.Platform != nil {
-		for _, svc := range spec.Platform.EnabledServices {
-			deps = append(deps, svc)
-		}
-		if core.NormalizeDomain(spec.BaseDomain) == "" {
-			return spec.Platform.BaseDomain, gcpProj, deps, nil
-		}
+		return resolveDirectPlatformInputs(spec)
 	}
 	if spec.PlatformStackRef == "" {
-		return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), gcpProj, deps, nil
+		return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), spec.GCPProject, nil, nil
 	}
+	return resolveRemotePlatformInputs(ctx, name, spec)
+}
+
+func resolveDirectPlatformInputs(spec Project) (pulumi.StringOutput, pulumi.StringPtrInput, []pulumi.Resource, error) {
+	deps := make([]pulumi.Resource, 0, len(spec.Platform.EnabledServices))
+	for _, svc := range spec.Platform.EnabledServices {
+		deps = append(deps, svc)
+	}
+	gcpProj := spec.GCPProject
+	if gcpProj == nil {
+		if out, ok := spec.Platform.Link().Attributes["gcpProject"]; ok {
+			gcpProj = nonEmptyStrPtrOutput(out)
+		}
+	}
+	if core.NormalizeDomain(spec.BaseDomain) == "" {
+		return spec.Platform.BaseDomain, gcpProj, deps, nil
+	}
+	return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), gcpProj, deps, nil
+}
+
+func resolveRemotePlatformInputs(
+	ctx *pulumi.Context,
+	name string,
+	spec Project,
+) (pulumi.StringOutput, pulumi.StringPtrInput, []pulumi.Resource, error) {
 	sr, err := pulumi.NewStackReference(ctx, name+"-platform-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.PlatformStackRef)})
 	if err != nil {
 		return pulumi.StringOutput{}, nil, nil, err
 	}
+	gcpProj := spec.GCPProject
 	if gcpProj == nil {
-		gcpProj = nonEmptyGCPPtr(sr, "gcpProject")
+		gcpProj = resolveStackGCPProjectPtr(sr, spec.PlatformResource)
 	}
 	if core.NormalizeDomain(spec.BaseDomain) != "" {
-		return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), gcpProj, deps, nil
+		return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), gcpProj, nil, nil
 	}
-	return preferGCPStackStr(sr, "gcpBaseDomain", "baseDomain"), gcpProj, deps, nil
+	if spec.PlatformResource != "" {
+		return core.LookupManifestAttr(sr, spec.PlatformResource, "baseDomain"), gcpProj, nil, nil
+	}
+	return preferGCPStackStr(sr, "gcpBaseDomain", "baseDomain"), gcpProj, nil, nil
+}
+
+func resolveStackGCPProjectPtr(sr *pulumi.StackReference, platResource string) pulumi.StringPtrOutput {
+	if platResource != "" {
+		return nonEmptyStrPtrOutput(core.LookupManifestAttr(sr, platResource, "gcpProject"))
+	}
+	return nonEmptyGCPPtr(sr, "gcpProject")
+}
+
+func nonEmptyStrPtrOutput(out pulumi.StringOutput) pulumi.StringPtrOutput {
+	return out.ApplyT(func(s string) *string {
+		if s == "" {
+			return nil
+		}
+		return &s
+	}).(pulumi.StringPtrOutput)
 }
 
 func nonEmptyGCPPtr(sr *pulumi.StackReference, key string) pulumi.StringPtrOutput {

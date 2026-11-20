@@ -204,6 +204,21 @@ func assertCloudRunAbsent(t *testing.T, gcpProject, serviceName string) {
 	}
 }
 
+func assertSecretAbsent(t *testing.T, gcpProject, secretID string) {
+	t.Helper()
+	out := commandFailureEnv(
+		t,
+		repositoryRoot(t),
+		nil,
+		"gcloud", "secrets", "describe", secretID,
+		"--project="+gcpProject,
+	)
+	lower := strings.ToLower(out)
+	if !strings.Contains(lower, "not found") && !strings.Contains(lower, "404") {
+		t.Fatalf("expected Secret Manager secret %s absent, got:\n%s", secretID, out)
+	}
+}
+
 func assertServiceAccountAbsent(t *testing.T, gcpProject, email string) {
 	t.Helper()
 	var listed string

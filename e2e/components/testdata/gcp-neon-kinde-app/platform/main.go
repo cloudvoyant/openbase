@@ -29,8 +29,8 @@ func main() {
 					SkipKeyRing:      true,
 				},
 				neon.Platform{
-					OrgID:    os.Getenv("NEON_ORG_ID"),
-					RegionID: "aws-us-east-1",
+					OrgID:           os.Getenv("NEON_ORG_ID"),
+					DefaultRegionID: "aws-us-east-1",
 				},
 				kinde.Platform{
 					NonProd: kinde.TenantCredentials{

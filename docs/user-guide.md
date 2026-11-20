@@ -67,8 +67,8 @@ func main() {
 					EnableLoadBalancer: true,
 				},
 				neon.Platform{
-					OrgID:    "org-acme",
-					RegionID: "aws-us-east-1",
+					OrgID:           "org-acme",
+					DefaultRegionID: "aws-us-east-1",
 				},
 				kinde.Platform{
 					NonProd: kinde.TenantCredentials{
@@ -276,7 +276,86 @@ _, err = openbase.Add(env, vercel.WebApp{
 })
 ```
 
-## 6. Zero-copy storage reads in Go
+## 6. Mixing raw Pulumi resources and multiple cloud accounts
+
+OpenBase scopes wrap standard `*pulumi.Context` programs rather than replacing them. In any `infra/main.go` (or `infra/shared/main.go`), you can declare native Pulumi SDK resources directly alongside `openbase.Add` and wire outputs in both directions:
+
+```go
+env, err := openbase.NewEnvironment(ctx, openbase.Environment{Project: "storefront"})
+if err != nil {
+	return err
+}
+
+// 1. Raw Pulumi resource created directly on ctx.
+rawSecret, err := secretmanager.NewSecret(ctx, "raw-partner-key", &secretmanager.SecretArgs{
+	Project:     pulumi.String("acme-cloud"),
+	SecretId:    pulumi.String("storefront-" + env.OpenBaseMeta().Environment.String() + "-partner-key"),
+	Replication: &secretmanager.SecretReplicationArgs{Auto: &secretmanager.SecretReplicationAutoArgs{}},
+})
+if err != nil {
+	return err
+}
+rawSecretVer, err := secretmanager.NewSecretVersion(ctx, "raw-partner-key-v1", &secretmanager.SecretVersionArgs{
+	Secret:     rawSecret.ID(),
+	SecretData: cfg.RequireSecret("partnerApiKey"),
+})
+if err != nil {
+	return err
+}
+
+// 2. Pass raw Pulumi outputs into an OpenBase resource.
+api, err := openbase.Add(env, gcp.CloudRunService{
+	Name:       "orders",
+	GCPProject: pulumi.String("acme-cloud"),
+	Image:      pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
+	Env: map[string]pulumi.StringInput{
+		"RAW_SECRET_VERSION": rawSecretVer.Name,
+	},
+})
+if err != nil {
+	return err
+}
+
+// 3. Pass typed OpenBase outputs (such as ServiceAccountEmail) into raw Pulumi IAM resources.
+_, err = secretmanager.NewSecretIamMember(ctx, "raw-partner-key-accessor", &secretmanager.SecretIamMemberArgs{
+	Project:  pulumi.String("acme-cloud"),
+	SecretId: rawSecret.SecretId,
+	Role:     pulumi.String("roles/secretmanager.secretAccessor"),
+	Member:   pulumi.Sprintf("serviceAccount:%s", api.ServiceAccountEmail),
+})
+```
+
+When an organization spans multiple Google Cloud projects or multiple cloud accounts (for example separate GCP or AWS provider credentials), register distinct named specs with `openbase.AddPlatform` and `openbase.Add`, passing explicit `pulumi.Provider(...)` options:
+
+```go
+// platform/main.go: multiple GCP projects or accounts
+plat, err := openbase.NewPlatform(ctx, openbase.Platform{Org: "acme"})
+analyticsGCP, err := gcpprov.NewProvider(ctx, "gcp-analytics", &gcpprov.ProviderArgs{
+	Project: pulumi.String("acme-analytics"),
+})
+_, err = openbase.AddPlatform(plat, gcp.Platform{
+	Name:       "gcp-core",
+	GCPProject: pulumi.String("acme-cloud"),
+})
+_, err = openbase.AddPlatform(plat, gcp.Platform{
+	Name:       "gcp-analytics",
+	GCPProject: pulumi.String("acme-analytics"),
+}, pulumi.Provider(analyticsGCP))
+
+// infra/shared/main.go: target a specific named platform entry via PlatformResource
+_, err = openbase.Add(proj, gcp.Project{
+	Name:             "ar-analytics",
+	PlatformResource: "gcp-analytics",
+}, pulumi.Provider(analyticsGCP))
+
+// infra/main.go: target multiple GCP projects or accounts in one environment
+_, err = openbase.Add(env, gcp.Bucket{
+	Name:       "analytics-events",
+	GCPProject: pulumi.String("acme-analytics"),
+}, pulumi.Provider(analyticsGCP))
+```
+
+## 7. Zero-copy storage reads in Go
 
 1. For Google Cloud Storage (`libs/components/gcp/overlayfs`), call `overlayfs.NewStore(storageClient, primaryBucket, fallbackBucket)` so `preview-*` reads fall back to `dev` on `storage.ErrObjectNotExist` while writes stay isolated in the preview bucket.
 2. For Vercel Blob (`libs/components/vercel`), call `vercel.NewBlobOverlayClient(baseURL, token, primaryPrefix, fallbackPrefix)` for prefix-isolated writes and fallback reads.

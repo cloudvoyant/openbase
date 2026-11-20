@@ -27,8 +27,8 @@ func TestNeonDatabase(t *testing.T) {
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				_, err := neon.Platform{
-					OrgID:    "org-test",
-					RegionID: "aws-us-east-1",
+					OrgID:           "org-test",
+					DefaultRegionID: "aws-us-east-1",
 				}.Register(ctx)
 				return err
 			}, pulumi.WithMocks("platform", "platform", platMocks))
@@ -153,7 +153,7 @@ func (m *neonMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Pro
 	case "pulumi:pulumi:StackReference":
 		outs["outputs"] = resource.NewObjectProperty(resource.PropertyMap{
 			"neonOrgId":           resource.NewStringProperty("org-test"),
-			"neonRegionId":        resource.NewStringProperty("aws-us-east-1"),
+			"neonDefaultRegionId": resource.NewStringProperty("aws-us-east-1"),
 			"neonProjectId":       resource.NewStringProperty("proj-from-ref"),
 			"neonDefaultBranchId": resource.NewStringProperty("br-main-ref"),
 		})

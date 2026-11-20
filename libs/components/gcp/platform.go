@@ -16,8 +16,8 @@ import (
 // Public API -----------------------------------------------------------------
 
 var (
-	_ core.PlatformResource = (*PlatformResource)(nil)
-	_ core.PlatformSpecItem = Platform{}
+	_ core.PlatformResource                      = (*PlatformResource)(nil)
+	_ core.PlatformSpecItemOf[*PlatformResource] = Platform{}
 )
 
 // Platform declares account-level GCP prerequisites (APIs, Workload Identity Pool, linked OIDC issuers, KMS, and wildcard Load Balancer).
@@ -77,6 +77,11 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 
 // RegisterPlatformInScope adapts gcp.Platform to openbase.Platform.
 func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.PlatformResource, error) {
+	return p.RegisterTypedPlatformInScope(ctx, scope, opts...)
+}
+
+// RegisterTypedPlatformInScope registers gcp.Platform with inherited Org defaults and explicit ResourceOptions.
+func (p Platform) RegisterTypedPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
 	if p.Org == "" {
 		p.Org = scope.Org
 	}
@@ -304,10 +309,19 @@ func createOptionalPlatformLB(
 
 func buildGCPPlatformLink(info core.PlatformInfo, spec Platform, res *PlatformResource) core.LinkDescriptor {
 	attrs := map[string]pulumi.StringOutput{
+		"gcpProjectNumber":         pulumi.String(spec.GCPProjectNumber).ToStringOutput(),
 		"location":                 res.Location,
 		"baseDomain":               res.BaseDomain,
 		"workloadIdentityPoolName": res.WorkloadIdentityPoolName,
 		"keyRingId":                res.KeyRingID,
+	}
+	if spec.GCPProject != nil {
+		attrs["gcpProject"] = spec.GCPProject.ToStringPtrOutput().ApplyT(func(p *string) string {
+			if p == nil {
+				return ""
+			}
+			return *p
+		}).(pulumi.StringOutput)
 	}
 	exports := collectGCPPlatformExports(spec, res)
 	for id, provName := range res.OIDCProviderNames {

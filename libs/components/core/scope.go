@@ -79,6 +79,12 @@ type PlatformSpecItem interface {
 	RegisterPlatformInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (PlatformResource, error)
 }
 
+// PlatformSpecItemOf preserves the concrete PlatformResource pointer type R when calling openbase.AddPlatform.
+type PlatformSpecItemOf[R PlatformResource] interface {
+	PlatformSpecItem
+	RegisterTypedPlatformInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (R, error)
+}
+
 // ScopedSpec is implemented by shared or environment specs registered inside openbase.Project or openbase.Environment.
 type ScopedSpec interface {
 	RegisterInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (Resource, error)
@@ -176,6 +182,22 @@ func (r *ScopeRef) Resource(name string, opts ...RemoteOption) *RemoteResource {
 		opt(out)
 	}
 	return out
+}
+
+// PlatformHandleByName returns an in-memory PlatformResource by logical name when available in the same process.
+func (r *ScopeRef) PlatformHandleByName(name string) PlatformResource {
+	if r == nil {
+		return nil
+	}
+	return r.localPlat[name]
+}
+
+// LookupManifestAttr reads a string attribute for a named resource inside a remote stack's openbaseManifest output.
+func LookupManifestAttr(sr *pulumi.StackReference, resName, key string) pulumi.StringOutput {
+	if sr == nil || resName == "" || key == "" {
+		return pulumi.String("").ToStringOutput()
+	}
+	return lookupManifestMapField(sr, resName, "attributes", key)
 }
 
 // PlatformHandle returns an in-memory PlatformResource by kind when available in the same process.

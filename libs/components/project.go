@@ -37,6 +37,7 @@ type ProjectResource struct {
 	ctx         *pulumi.Context
 	scope       core.Scope
 	skipExports bool
+	exported    map[string]bool
 	descriptors []core.LinkDescriptor
 }
 
@@ -52,6 +53,7 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 		Resources:   map[string]core.Resource{},
 		ctx:         ctx,
 		skipExports: p.SkipStackExports,
+		exported:    map[string]bool{},
 	}
 	meta, err := core.InitStateless(ctx, "openbase:components:Project", "openbase-project", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:    p.Name,
@@ -135,7 +137,7 @@ func (r *ProjectResource) recordResource(item core.Resource) {
 	r.Items = append(r.Items, item)
 	r.Resources[meta.Name] = item
 	r.descriptors = append(r.descriptors, desc)
-	exportDescriptorOutputs(r.ctx, r.skipExports, desc)
+	exportDescriptorOutputs(r.ctx, r.skipExports, r.exported, desc)
 	exportScopeManifest(r.ctx, r.skipExports, r.scope.Org, r.scope.Project, r.scope.PlatformStackName(), r.descriptors)
 }
 

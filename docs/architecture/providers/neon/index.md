@@ -2,7 +2,7 @@
 
 ## Overview
 
-`libs/components/neon` separates account-level Neon configuration (`neon.Platform`, `core.PlatformResource`) from per-repository PostgreSQL clusters (`neon.Project`, `core.StatefulResource` with `Environment: "shared"`) over the official bridged `neondatabase/neon` provider (`libs/internal/pulumi-neon-go-sdk`). `neon.Platform` runs once per organization and exports account `OrgID` and default `RegionID` values (plus optional org API keys). `neon.Project` runs once per repository in `infra/shared` and owns the Neon Project cluster (`<project>-neon`), including per-project `PostgresVersion` and `HistoryRetentionSeconds`.
+`libs/components/neon` separates account-level Neon configuration (`neon.Platform`, `core.PlatformResource`) from per-repository PostgreSQL clusters (`neon.Project`, `core.StatefulResource` with `Environment: "shared"`) over the official bridged `neondatabase/neon` provider (`libs/internal/pulumi-neon-go-sdk`). `neon.Platform` runs once per organization and exports account `OrgID` and `DefaultRegionID` values (plus optional org API keys). `neon.Project` runs once per repository in `infra/shared` and owns the Neon Project cluster (`<project>-neon`), including per-project `RegionID`, `PostgresVersion`, and `HistoryRetentionSeconds`.
 
 ## Requirement
 
@@ -24,12 +24,12 @@
 ```mermaid
 flowchart TD
     subgraph Org["Organization Stack (neon.Platform)"]
-        Defaults["OrgID / Default RegionID"]
+        Defaults["OrgID / DefaultRegionID"]
         OrgKey["neon.OrgApiKey (optional)"]
     end
 
     subgraph App["App infra/shared Stack (neon.Project)"]
-        Cluster["neon.Project (PG Version + PITR Window + main branch)"]
+        Cluster["neon.Project (RegionID + PG Version + PITR Window + main branch)"]
     end
 
     subgraph Env["App infra/ Stacks"]
@@ -40,8 +40,8 @@ flowchart TD
     Cluster -->|"projectId + defaultBranchId"| DB
 ```
 
-- `neon.Platform` centralizes Neon account `OrgID`, default `RegionID`, and optional CI API keys.
-- `neon.Project` creates one isolated Neon Project cluster per application repository with per-project `PostgresVersion` (default `17`) and `HistoryRetentionSeconds` (default `86400`).
+- `neon.Platform` centralizes Neon account `OrgID`, `DefaultRegionID`, and optional CI API keys.
+- `neon.Project` creates one isolated Neon Project cluster per application repository with per-project `RegionID` (inheriting `DefaultRegionID` when omitted), `PostgresVersion` (default `17`), and `HistoryRetentionSeconds` (default `86400`).
 - [neon.Database](./database.md) creates per-environment copy-on-write branches inside the application `neon.Project`.
 
 ### Data and Control Flow
@@ -53,7 +53,7 @@ sequenceDiagram
     participant DB as "neon.Database (infra/)"
     participant Neon as "Neon API"
 
-    Plat-->>Proj: 1. Export neonOrgId + neonRegionId
+    Plat-->>Proj: 1. Export neonOrgId + neonDefaultRegionId
     Proj->>Neon: 2. Create Neon Project cluster (PG version + PITR + StorePassword: true)
     Neon-->>Proj: 3. Return projectId + branch.id
     Proj-->>DB: 4. Export neonProjectId + neonDefaultBranchId
@@ -67,9 +67,9 @@ sequenceDiagram
 ```go
 // Tier 1: Organization Account (core.PlatformResource)
 plat, err := neon.Platform{
-	Org:      "cloudvoyant",
-	OrgID:    "org-cloudvoyant",
-	RegionID: "aws-us-east-1",
+	Org:             "cloudvoyant",
+	OrgID:           "org-cloudvoyant",
+	DefaultRegionID: "aws-us-east-1",
 }.Register(ctx)
 
 // Shared Project Resource in infra/shared (core.StatefulResource)
@@ -84,7 +84,7 @@ proj, err := neon.Project{
 
 | Spec | Contract | Synthesized `neon` Resources | Key Outputs |
 | :--- | :--- | :--- | :--- |
-| `neon.Platform` | `core.PlatformResource` | Optional `neon.OrgApiKey` | `neonOrgId`, `neonRegionId` |
+| `neon.Platform` | `core.PlatformResource` | Optional `neon.OrgApiKey` | `neonOrgId`, `neonDefaultRegionId` |
 | `neon.Project` | `core.StatefulResource` (`shared`) | `neon.Project` | `projectId`, `neonProjectId`, `defaultBranchId`, `neonDefaultBranchId`, `regionId` |
 
 ## Implementation
