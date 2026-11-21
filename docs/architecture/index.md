@@ -68,7 +68,7 @@ sequenceDiagram
     participant State as "Shared Pulumi State Backend"
     participant Cloud as "GCP / Vercel / Neon / Kinde"
 
-    Org->>Cloud: 1. Create WIF pool, wildcard LB, team defaults, Kinde tenants
+    Org->>Cloud: 1. Create WIF pool, wildcard LB, team defaults, Kinde environments
     Org-->>State: 2. Export org outputs + openbaseManifest
     Shared->>State: 3. Read openbase.LookupPlatform(ctx)
     Shared->>Cloud: 4. Create Artifact Registry, Vercel Project, Neon Project, Kinde Apps
@@ -95,13 +95,13 @@ An organization deploys `infra/platform` once into its shared Pulumi backend buc
 
 ### Shared vs environment naming
 
-Every non-platform component satisfies `core.Resource` (`StatelessResource` or `StatefulResource`). When `Environment` is `dev`, `stage`, `prod`, or `preview-<slug>`, `core.CanonicalName` formats `<project>-<env>-<name>`. When `Environment` is `shared`, `core.CanonicalName` omits `env` and formats `<project>-<name>` so shared Artifact Registry repositories, Neon projects, and project load balancers stay concise.
+Every non-account component satisfies `core.Resource` (`StatelessResource` or `StatefulResource`). When `Environment` is `dev`, `stage`, `prod`, or `preview-<slug>`, `core.CanonicalName` formats `<project>-<env>-<name>`. When `Environment` is `shared`, `core.CanonicalName` omits `env` and formats `<project>-<name>` so shared Artifact Registry repositories, Neon projects, and project load balancers stay concise.
 
 ## References
 
 - [User Guide](../user-guide.md)
 - [Cross-Stack Lookups and Manifests](./scopes.md)
-- [Core Resources and Tier Contracts](./resources.md)
+- [Core Resources and Account Contracts](./resources.md)
 - [GCP Provider](./providers/gcp/index.md)
 - [Vercel Provider](./providers/vercel/index.md)
 - [Neon Provider](./providers/neon/index.md)

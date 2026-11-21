@@ -83,5 +83,5 @@ db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
 
 ## References
 
-- [Neon Platform and Project](./index.md)
-- [Core Resources and Tier Contracts](../../resources.md)
+- [Neon Account and Project](./index.md)
+- [Core Resources and Account Contracts](../../resources.md)

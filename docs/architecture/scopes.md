@@ -98,5 +98,5 @@ db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
 ## References
 
 - [OpenBase Architecture Overview](./index.md)
-- [Core Resources and Tier Contracts](./resources.md)
+- [Core Resources and Account Contracts](./resources.md)
 - [User Guide](../user-guide.md)

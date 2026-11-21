@@ -105,6 +105,6 @@ When `GCPProjectNumber` is provided, `CloudRunRegionalURL` computes `https://<se
 
 ## References
 
-- [GCP Platform and Project](./index.md)
+- [GCP Account and Project](./index.md)
 - [Cloud Load Balancer](./cloud-load-balancer.md)
 - [GCS Bucket and OverlayFS](./bucket.md)

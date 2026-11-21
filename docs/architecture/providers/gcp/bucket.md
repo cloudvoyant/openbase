@@ -83,6 +83,6 @@ GCS bucket names share one global namespace. `BucketNamespace` prepends the orga
 
 ## References
 
-- [GCP Platform and Project](./index.md)
+- [GCP Account and Project](./index.md)
 - [Cloud Run Service](./cloud-run-service.md)
-- [Core Resources and Tier Contracts](../../resources.md)
+- [Core Resources and Account Contracts](../../resources.md)

@@ -8,14 +8,14 @@
 
 ### Functional
 
-- Bind `dev` and `preview-<slug>` deployments to the `NonProd` Kinde tenant and `stage` and `prod` deployments to the `Prod` Kinde tenant.
+- Bind `dev` and `preview-<slug>` deployments to the `NonProd` Kinde environment and `stage` and `prod` deployments to the `Prod` Kinde environment.
 - Compute environment-specific site, login callback, post-login, and post-logout URLs for each stack.
-- Deliver OIDC issuer, client ID, redirect URLs, and client secret to linked services.
+- Expose typed OIDC issuer, client ID, redirect URL, and client secret outputs for application workloads.
 
 ### Non-Functional
 
 - Require zero Kinde management M2M credentials during per-environment and pull-request deployments.
-- Keep OIDC client secrets encrypted across state outputs and linked workloads.
+- Keep OIDC client secrets encrypted across state outputs and consumer workloads.
 
 ## Design
 
@@ -30,7 +30,7 @@ flowchart LR
     Oidc -->|"Typed Outputs (IssuerURL, ClientID, ClientSecret, RedirectURL)"| App["vercel.WebApp / gcp.CloudRunService"]
 ```
 
-- `resolveTenantCredOutputs` picks `nonProd` or `prod` credentials based on `meta.Environment`.
+- `resolveEnvCredOutputs` picks `nonProd` or `prod` credentials based on `meta.Environment`.
 - `resolveSiteURL` computes `https://{project}-{dev|stage|prod|previewId}.{baseDomain}` (or explicit `SiteURL` and `.vercel.app` fallback).
 - `OidcApp` exposes `IssuerURL`, `ClientID`, `ClientSecret`, `SiteURL`, `RedirectURL`, `PostLoginRedirectURL`, and `PostLogoutRedirectURL` so callers wire whichever OIDC environment variables their SDK expects.
 
@@ -61,7 +61,7 @@ auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
 })
 ```
 
-| Environment | Selected Tenant | Exported `KINDE_REDIRECT_URL` (`BaseDomain = vercel.acme.io`) |
+| Environment | `KindeEnvironment` | Exported `KINDE_REDIRECT_URL` (`BaseDomain = vercel.acme.io`) |
 | :--- | :--- | :--- |
 | `dev` | `non-prod` | `https://storefront-dev.vercel.acme.io/api/auth/kinde_callback` |
 | `preview-pr-20` | `non-prod` | `https://storefront-pr-20.vercel.acme.io/api/auth/kinde_callback` |
@@ -76,5 +76,5 @@ Cloud Run `infra/env/main.go` programs compute `siteURL` from `BaseDomain` or `g
 
 ## References
 
-- [Kinde Platform and Project](./index.md)
-- [Core Resources and Tier Contracts](../../resources.md)
+- [Kinde Account and Project](./index.md)
+- [Core Resources and Account Contracts](../../resources.md)

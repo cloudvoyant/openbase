@@ -103,6 +103,6 @@ Per-branch secrets (such as `DATABASE_URL` for `preview-pr-20`) pass through `De
 
 ## References
 
-- [Vercel Platform and Project](./index.md)
+- [Vercel Account and Project](./index.md)
 - [Vercel BlobStore](./blob-store.md)
-- [GCP Platform and Project](../gcp/index.md)
+- [GCP Account and Project](../gcp/index.md)

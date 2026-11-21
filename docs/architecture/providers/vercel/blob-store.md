@@ -15,7 +15,7 @@
 ### Non-Functional
 
 - Guarantee that preview writes and deletes never overwrite or remove objects in the parent environment prefix.
-- Keep `BLOB_READ_WRITE_TOKEN` encrypted across stack state and linked workloads.
+- Keep `BLOB_READ_WRITE_TOKEN` encrypted across stack state and consumer workloads.
 
 ## Design
 
@@ -82,6 +82,6 @@ Vercel's `BlobProjectConnection` injects `BLOB_READ_WRITE_TOKEN` only into built
 
 ## References
 
-- [Vercel Platform and Project](./index.md)
+- [Vercel Account and Project](./index.md)
 - [Vercel WebApp](./web-app.md)
-- [Core Resources and Tier Contracts](../../resources.md)
+- [Core Resources and Account Contracts](../../resources.md)

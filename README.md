@@ -70,8 +70,8 @@ mise run e2e:live
 
 - [User Guide](./docs/user-guide.md)
 - [Architecture Overview](./docs/architecture/index.md)
-- [Unified Scopes and Manifests](./docs/architecture/scopes.md)
-- [Resource Contracts and Links](./docs/architecture/resources.md)
+- [Cross-Stack Lookups and Manifests](./docs/architecture/scopes.md)
+- [Core Resources and Account Contracts](./docs/architecture/resources.md)
 - [GCP Provider](./docs/architecture/providers/gcp/index.md)
 - [Vercel Provider](./docs/architecture/providers/vercel/index.md)
 - [Neon Provider](./docs/architecture/providers/neon/index.md)

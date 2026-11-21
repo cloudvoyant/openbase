@@ -85,5 +85,5 @@ Because `urlMask` extracts `<service>` dynamically and OpenBase prefixes Cloud R
 
 ## References
 
-- [GCP Platform and Project](./index.md)
+- [GCP Account and Project](./index.md)
 - [Cloud Run Service](./cloud-run-service.md)
