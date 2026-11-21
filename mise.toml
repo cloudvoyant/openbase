@@ -8,23 +8,104 @@ _.path = ["{{config_root}}/bin"]
 GOWORK = "off"
 
 [monorepo]
-config_roots = ["apps/*", "libs/*"]
+config_roots = ["libs/*", "libs/internal/*", "e2e/components"]
 
 [tools]
 go = "1.25.14"
 golangci-lint = "2.15.0"
+pulumi = "3.200.0"
 
 [tasks.install]
 run = "go mod download all"
 
 [tasks.build]
 run = [
-  "mise run '//apps/...:build'",
-  "mise run '//libs/...:build'",
+  "mise run //libs/components:build",
 ]
 
 [tasks.test]
-run = "go test ./..."
+run = [
+  "mise run //libs/components:test",
+  "go test -c -o /dev/null ./e2e/components",
+]
+
+[tasks.e2e]
+description = "Run E2E suite(s): mise run e2e [file_or_suite] [--no-cleanup | --keep | --offline]"
+usage = '''
+arg "[target]" help="Suite or test target (core, gcp, neon, kinde, vercel, links, apps, gcp_neon_kinde_app, vercel_neon_kinde_app)"
+flag "-k --keep" help="Keep cloud stacks & Pulumi state in e2e/outputs/components/<Test>/"
+flag "--no-cleanup" help="Keep cloud stacks & Pulumi state in e2e/outputs/components/<Test>/"
+flag "--cleanup" help="Destroy stacks after the test completes (default)"
+flag "--offline" help="Run only offline E2E specs without cloud credentials"
+'''
+run = '''
+set -eu
+set --
+if [ "${usage_keep:-false}" = "true" ] || [ "${usage_no_cleanup:-false}" = "true" ]; then
+  set -- "$@" --keep
+fi
+if [ "${usage_cleanup:-false}" = "true" ]; then
+  set -- "$@" --cleanup
+fi
+if [ "${usage_offline:-false}" = "true" ]; then
+  set -- "$@" --offline
+fi
+if [ -n "${usage_target:-}" ]; then
+  set -- "$@" "$usage_target"
+fi
+exec mise run //e2e/components:e2e -- "$@"
+'''
+
+[tasks."e2e:cleanup"]
+description = "Destroy leftover/retained E2E stacks from e2e/outputs/components/*/run-manifest.json"
+usage = 'arg "[target]" help="Optional suite or fixture filter"'
+run = '''
+set -eu
+if [ -n "${usage_target:-}" ]; then
+  exec mise run //e2e/components:e2e:cleanup -- "$usage_target"
+fi
+exec mise run //e2e/components:e2e:cleanup
+'''
+
+[tasks."e2e:offline"]
+description = "Run offline standalone consumer fixture checks without cloud credentials"
+run = "mise run //e2e/components:e2e:offline"
+
+[tasks."e2e:components"]
+description = "Run components E2E suite"
+run = "mise run //e2e/components:e2e"
+
+[tasks."e2e:gcp"]
+description = "Run live GCP Bucket and CloudRunService E2E suites"
+run = "mise run //e2e/components:e2e:gcp"
+
+[tasks."e2e:neon"]
+description = "Run live Neon Database E2E suite"
+run = "mise run //e2e/components:e2e:neon"
+
+[tasks."e2e:kinde"]
+description = "Run live Kinde OidcApp E2E suite"
+run = "mise run //e2e/components:e2e:kinde"
+
+[tasks."e2e:vercel"]
+description = "Run live Vercel BlobStore and WebApp E2E suites"
+run = "mise run //e2e/components:e2e:vercel"
+
+[tasks."e2e:apps"]
+description = "Run live full-stack Vercel+Neon+Kinde and GCP+Neon+Kinde app E2E suites"
+run = "mise run //e2e/components:e2e:apps"
+
+[tasks."e2e:live"]
+description = "Run all live cloud E2E suites across GCP, Neon, Kinde, Vercel, and Links"
+run = "mise run //e2e/components:e2e:live"
+
+[tasks.generate]
+description = "Generate bridged Pulumi Go SDKs for Neon and Kinde"
+depends = ["//libs/internal/pulumi-neon-go-sdk:generate", "//libs/internal/pulumi-kinde-go-sdk:generate"]
+
+[tasks."generate:check"]
+description = "Verify generated bridged Pulumi Go SDKs have no uncommitted drift"
+depends = ["//libs/internal/pulumi-neon-go-sdk:generate:check", "//libs/internal/pulumi-kinde-go-sdk:generate:check"]
 
 [tasks.format]
 run = "golangci-lint fmt"

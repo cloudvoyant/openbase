@@ -1,0 +1,4 @@
+libs/internal/pulumi-neon-go-sdk/**/*.go linguist-generated=true
+libs/internal/pulumi-neon-go-sdk/pulumi-plugin.json linguist-generated=true
+libs/internal/pulumi-kinde-go-sdk/**/*.go linguist-generated=true
+libs/internal/pulumi-kinde-go-sdk/pulumi-plugin.json linguist-generated=true

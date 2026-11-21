@@ -1,0 +1,3 @@
+name: platform
+runtime: go
+description: Organization platform foundations (Vercel OIDC linked into GCP WIF) for openbase-links-fullstack-fixture

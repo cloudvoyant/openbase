@@ -1,0 +1,11 @@
+{
+  "rewrites": [
+    { "source": "/", "destination": "/api/app" },
+    { "source": "/api/health", "destination": "/api/app?route=health" },
+    { "source": "/api/notes", "destination": "/api/app?route=notes" },
+    { "source": "/api/storage", "destination": "/api/app?route=storage" },
+    { "source": "/api/auth/login", "destination": "/api/app?route=login" },
+    { "source": "/api/auth/kinde_callback", "destination": "/api/app?route=callback" },
+    { "source": "/api/auth/logout", "destination": "/api/app?route=logout" }
+  ]
+}

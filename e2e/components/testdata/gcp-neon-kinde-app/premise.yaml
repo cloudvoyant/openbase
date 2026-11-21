@@ -1,0 +1,26 @@
+workspace:
+  name: openbase-gcp-neon-kinde-app
+  kind: monorepo
+  schema-version: "0.2"
+  package_managers:
+    - go
+  providers:
+    ci: github
+    tools: mise
+    tasks: mise
+    infra: pulumi
+    versioning: svu
+  infra:
+    directory: infra/env
+    shared_directory: infra/shared
+    backend: sandbox
+    backends:
+      sandbox:
+        url: "{{BACKEND_URL}}"
+        allow_local: true
+    environments:
+      shared: {}
+      dev: {}
+      stage: {}
+      prod: {}
+      preview: {}

@@ -1,0 +1,3 @@
+name: platform
+runtime: go
+description: Organization platform foundations (GCP, Neon, Kinde) for openbase-gcp-neon-kinde-app
