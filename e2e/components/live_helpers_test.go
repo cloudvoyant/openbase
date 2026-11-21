@@ -612,11 +612,7 @@ func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) bo
 	unprotect.Env = baseEnv
 	_ = unprotect.Run()
 
-	destroy := exec.CommandContext(ctx, "pulumi", "destroy", "--stack", stack, "--yes", "--non-interactive", "--skip-preview")
-	destroy.Dir = workDir
-	destroy.Env = baseEnv
-	if out, err := destroy.CombinedOutput(); err != nil {
-		t.Errorf("cleanup destroy stack %s: %v\n%s", stack, err, h.redact(string(out)))
+	if !h.runDestroyWithRetry(t, ctx, stack, workDir, baseEnv) {
 		return false
 	}
 	rm := exec.CommandContext(ctx, "pulumi", "stack", "rm", stack, "--yes", "--non-interactive")
@@ -624,4 +620,24 @@ func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) bo
 	rm.Env = baseEnv
 	_ = rm.Run()
 	return true
+}
+
+func (h *LiveStackHarness) runDestroyWithRetry(t *testing.T, ctx context.Context, stack, workDir string, baseEnv []string) bool {
+	t.Helper()
+	var lastOut []byte
+	var lastErr error
+	for attempt := range 3 {
+		if attempt > 0 {
+			time.Sleep(time.Duration(attempt*2) * time.Second)
+		}
+		destroy := exec.CommandContext(ctx, "pulumi", "destroy", "--stack", stack, "--yes", "--non-interactive", "--skip-preview")
+		destroy.Dir = workDir
+		destroy.Env = baseEnv
+		lastOut, lastErr = destroy.CombinedOutput()
+		if lastErr == nil {
+			return true
+		}
+	}
+	t.Errorf("cleanup destroy stack %s: %v\n%s", stack, lastErr, h.redact(string(lastOut)))
+	return false
 }

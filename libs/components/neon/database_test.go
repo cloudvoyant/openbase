@@ -9,14 +9,15 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
+	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/neon"
 )
 
 // Public API -----------------------------------------------------------------
 
 func TestNeonDatabase(t *testing.T) {
-	t.Run("given separate neon.Platform (platform), neon.Project (shared), and neon.Database (env) stacks", func(t *testing.T) {
-		t.Run("when registering Platform on platform, Project on shared, and root Database on prod, then each stack creates its scoped resources and exposes pooled and direct URLs", func(t *testing.T) {
+	t.Run("given separate neon.Account (platform), neon.Project (shared), and neon.Database (env) stacks", func(t *testing.T) {
+		t.Run("when registering Account on platform, Project on shared, and root Database on prod, then each stack creates its scoped resources and exposes pooled and direct URLs", func(t *testing.T) {
 			// Arrange.
 			platMocks := newNeonMocks()
 			sharedMocks := newNeonMocks()
@@ -26,7 +27,7 @@ func TestNeonDatabase(t *testing.T) {
 
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := neon.NewPlatform(ctx, "neon-platform", &neon.PlatformArgs{
+				_, err := neon.NewAccount(ctx, "neon", &neon.AccountArgs{
 					OrgID:           "org-test",
 					DefaultRegionID: "aws-us-east-1",
 				})
@@ -34,18 +35,23 @@ func TestNeonDatabase(t *testing.T) {
 			}, pulumi.WithMocks("platform", "platform", platMocks))
 
 			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := neon.NewProject(ctx, "neon", &neon.ProjectArgs{
-					Project:          "storefront",
-					PlatformStackRef: "organization/platform/platform",
+				plat, err := openbase.LookupPlatform(ctx)
+				if err != nil {
+					return err
+				}
+				_, err = neon.NewProject(ctx, "neon", &neon.ProjectArgs{
+					Account: neon.LookupAccount(plat),
 				})
 				return err
 			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
 
 			errProd := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				shared, err := openbase.LookupShared(ctx)
+				if err != nil {
+					return err
+				}
 				db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-					Project:         "storefront",
-					Environment:     "prod",
-					ProjectStackRef: "organization/storefront-shared/shared",
+					Project: neon.LookupProject(shared),
 				})
 				if err != nil {
 					return err
@@ -80,8 +86,6 @@ func TestNeonDatabase(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-					Project:        "storefront",
-					Environment:    "preview-pr-12",
 					BranchFrom:     "dev",
 					ProjectID:      pulumi.String("proj-123"),
 					ParentBranchID: pulumi.String("br-dev-123"),
@@ -104,13 +108,10 @@ func TestNeonDatabase(t *testing.T) {
 			}
 		})
 
-		t.Run("when NeonProject, ProjectID, and ProjectStackRef are omitted, then NewDatabase returns ErrProjectIDRequired", func(t *testing.T) {
+		t.Run("when Project and ProjectID are omitted, then NewDatabase returns ErrProjectIDRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-					Project:     "storefront",
-					Environment: "dev",
-				})
+				_, e := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{})
 				return e
 			}, pulumi.WithMocks("storefront", "dev", newNeonMocks()))
 

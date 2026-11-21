@@ -58,8 +58,7 @@ Reads try the primary bucket first and fall back to the parent bucket only on `s
 ```go
 // Infrastructure (infra/env/main.go)
 uploads, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
-	Project:         "storefront",
-	GCPProject:      pulumi.String("cloudvoyant-openbase"),
+	Account:         gcpAcc,
 	BucketNamespace: "cloudvoyant-openbase",
 })
 

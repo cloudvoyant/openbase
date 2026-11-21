@@ -12,18 +12,25 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*Project)(nil)
+var (
+	_ core.StatelessResource = (*Project)(nil)
+	_ ProjectInput           = (*Project)(nil)
+	_ ProjectInput           = (*ProjectRef)(nil)
+)
+
+// ProjectInput is satisfied by in-memory *Project handles and cross-stack *ProjectRef lookups.
+type ProjectInput interface {
+	kindeProjectValues() kindeProjectData
+}
 
 // ProjectArgs configures an application's nonProd and prod Kinde OIDC Applications in Premise's infra/shared stack.
 type ProjectArgs struct {
-	Project                    string
+	ProjectName                string
 	Repo                       string
-	Platform                   *Platform
-	PlatformStack              *core.ScopeRef
-	PlatformStackRef           string
+	Account                    AccountInput
 	AppName                    string
-	NonProd                    TenantCredentials
-	Prod                       TenantCredentials
+	NonProd                    EnvironmentCredentials
+	Prod                       EnvironmentCredentials
 	VercelProjectName          string
 	VercelTeamSlug             string
 	BaseDomain                 string
@@ -63,6 +70,24 @@ type Project struct {
 	ProdClientID        pulumi.StringOutput
 	ProdClientSecret    pulumi.StringOutput
 	EmailPasswordConn   string
+	vercelProjectName   string
+	vercelTeamSlug      string
+	baseDomain          string
+}
+
+// ProjectRef provides typed cross-stack access to a shared kinde.Project exported in infra/shared.
+type ProjectRef struct {
+	NonProdIssuerURL    pulumi.StringOutput
+	NonProdAppID        pulumi.StringOutput
+	NonProdClientID     pulumi.StringOutput
+	NonProdClientSecret pulumi.StringOutput
+	ProdIssuerURL       pulumi.StringOutput
+	ProdAppID           pulumi.StringOutput
+	ProdClientID        pulumi.StringOutput
+	ProdClientSecret    pulumi.StringOutput
+	VercelProjectName   pulumi.StringOutput
+	VercelTeamSlug      pulumi.StringOutput
+	BaseDomain          pulumi.StringOutput
 }
 
 // NewProject provisions nonProd and prod Kinde OIDC Applications on the shared stack.
@@ -80,40 +105,109 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	res := &Project{}
 	meta, err := core.InitStateless(ctx, "openbase:kinde:Project", "kinde-project", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        name,
-		Project:     args.Project,
+		Project:     args.ProjectName,
 		Repo:        args.Repo,
 		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionTwoTenantApps(ctx, name, meta, args, res); err != nil {
+	res.vercelProjectName = defaultVercelProjectForKinde(meta.Project, args)
+	res.vercelTeamSlug = args.VercelTeamSlug
+	res.baseDomain = core.NormalizeDomain(args.BaseDomain)
+	if err := provisionTwoEnvApps(ctx, name, meta, args, res); err != nil {
 		return nil, err
 	}
 	res.PublishLink(ctx, buildKindeProjectLink(meta, res))
 	return res, registerProjectOidcOutputs(ctx, res)
 }
 
-// Private helpers ------------------------------------------------------------
-
-func validateKindeProject(spec *ProjectArgs) error {
-	if spec.Platform != nil || spec.PlatformStack != nil || spec.PlatformStackRef != "" {
+// LookupProject resolves a shared kinde.Project from an infra/shared ScopeRef (by unique kind or explicit name).
+func LookupProject(shared *core.ScopeRef, name ...string) *ProjectRef {
+	if shared == nil {
 		return nil
 	}
-	if !hasTenantCreds(spec.NonProd) || !hasTenantCreds(spec.Prod) {
-		return ErrTenantCredentialsRequired
+	return &ProjectRef{
+		NonProdIssuerURL:    shared.ManifestAttr("kinde-project", name, "nonProdIssuerUrl"),
+		NonProdAppID:        shared.ManifestAttr("kinde-project", name, "nonProdAppId"),
+		NonProdClientID:     shared.ManifestAttr("kinde-project", name, "nonProdClientId"),
+		NonProdClientSecret: pulumi.ToSecret(shared.ManifestAttr("kinde-project", name, "nonProdClientSecret")).(pulumi.StringOutput),
+		ProdIssuerURL:       shared.ManifestAttr("kinde-project", name, "prodIssuerUrl"),
+		ProdAppID:           shared.ManifestAttr("kinde-project", name, "prodAppId"),
+		ProdClientID:        shared.ManifestAttr("kinde-project", name, "prodClientId"),
+		ProdClientSecret:    pulumi.ToSecret(shared.ManifestAttr("kinde-project", name, "prodClientSecret")).(pulumi.StringOutput),
+		VercelProjectName:   shared.ManifestAttr("kinde-project", name, "vercelProjectName", "vercelProjectName"),
+		VercelTeamSlug:      shared.ManifestAttr("kinde-project", name, "teamSlug", "teamSlug"),
+		BaseDomain:          shared.ManifestAttr("kinde-project", name, "baseDomain", "baseDomain"),
+	}
+}
+
+// Private helpers ------------------------------------------------------------
+
+type kindeProjectData struct {
+	nonProdIssuerURL    pulumi.StringOutput
+	nonProdClientID     pulumi.StringOutput
+	nonProdClientSecret pulumi.StringOutput
+	prodIssuerURL       pulumi.StringOutput
+	prodClientID        pulumi.StringOutput
+	prodClientSecret    pulumi.StringOutput
+	vercelProjectName   pulumi.StringOutput
+	vercelTeamSlug      pulumi.StringOutput
+	baseDomain          pulumi.StringOutput
+}
+
+func (p *Project) kindeProjectValues() kindeProjectData {
+	if p == nil {
+		return kindeProjectData{}
+	}
+	return kindeProjectData{
+		nonProdIssuerURL:    p.NonProdIssuerURL,
+		nonProdClientID:     p.NonProdClientID,
+		nonProdClientSecret: p.NonProdClientSecret,
+		prodIssuerURL:       p.ProdIssuerURL,
+		prodClientID:        p.ProdClientID,
+		prodClientSecret:    p.ProdClientSecret,
+		vercelProjectName:   pulumi.String(p.vercelProjectName).ToStringOutput(),
+		vercelTeamSlug:      pulumi.String(p.vercelTeamSlug).ToStringOutput(),
+		baseDomain:          pulumi.String(p.baseDomain).ToStringOutput(),
+	}
+}
+
+func (r *ProjectRef) kindeProjectValues() kindeProjectData {
+	if r == nil {
+		return kindeProjectData{}
+	}
+	return kindeProjectData{
+		nonProdIssuerURL:    r.NonProdIssuerURL,
+		nonProdClientID:     r.NonProdClientID,
+		nonProdClientSecret: r.NonProdClientSecret,
+		prodIssuerURL:       r.ProdIssuerURL,
+		prodClientID:        r.ProdClientID,
+		prodClientSecret:    r.ProdClientSecret,
+		vercelProjectName:   r.VercelProjectName,
+		vercelTeamSlug:      r.VercelTeamSlug,
+		baseDomain:          r.BaseDomain,
+	}
+}
+
+func validateKindeProject(spec *ProjectArgs) error {
+	if spec.Account != nil {
+		return nil
+	}
+	if !hasEnvCreds(spec.NonProd) || !hasEnvCreds(spec.Prod) {
+		return ErrEnvironmentCredentialsRequired
 	}
 	return nil
 }
 
-func provisionTwoTenantApps(
+func provisionTwoEnvApps(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
 	spec *ProjectArgs,
 	res *Project,
 ) error {
-	nonProdProv, prodProv, err := resolveProjectTenantProviders(ctx, name, spec, res)
+	nonProdProv, prodProv, err := resolveProjectEnvProviders(ctx, name, spec, res)
 	if err != nil {
 		return err
 	}
@@ -126,25 +220,26 @@ func provisionTwoTenantApps(
 	return createProdApplication(ctx, name, appName, meta, spec, prodProv, res)
 }
 
-func resolveProjectTenantProviders(
+func resolveProjectEnvProviders(
 	ctx *pulumi.Context,
 	name string,
 	spec *ProjectArgs,
 	res *Project,
 ) (*kindeprov.Provider, *kindeprov.Provider, error) {
-	if spec.Platform != nil {
-		res.NonProdIssuerURL = spec.Platform.NonProdIssuerURL
-		res.ProdIssuerURL = spec.Platform.ProdIssuerURL
-		res.EmailPasswordConn = spec.Platform.EmailPasswordConn
-		return spec.Platform.NonProdProvider, spec.Platform.ProdProvider, nil
+	if hasEnvCreds(spec.NonProd) && hasEnvCreds(spec.Prod) {
+		return createExplicitEnvProviders(ctx, name, spec, res)
 	}
-	if hasTenantCreds(spec.NonProd) && hasTenantCreds(spec.Prod) {
-		return createExplicitTenantProviders(ctx, name, spec, res)
+	acc := spec.Account.kindeAccountValues()
+	if acc.local != nil {
+		res.NonProdIssuerURL = acc.local.NonProdIssuerURL
+		res.ProdIssuerURL = acc.local.ProdIssuerURL
+		res.EmailPasswordConn = acc.local.EmailPasswordConn
+		return acc.local.NonProdProvider, acc.local.ProdProvider, nil
 	}
-	return createStackRefTenantProviders(ctx, name, spec.PlatformStack, spec.PlatformStackRef, res)
+	return createAccountRefProviders(ctx, name, acc, res)
 }
 
-func createExplicitTenantProviders(
+func createExplicitEnvProviders(
 	ctx *pulumi.Context,
 	name string,
 	spec *ProjectArgs,
@@ -152,11 +247,11 @@ func createExplicitTenantProviders(
 ) (*kindeprov.Provider, *kindeprov.Provider, error) {
 	nonProdIssuer := NormalizeIssuerURL(spec.NonProd.Domain)
 	prodIssuer := NormalizeIssuerURL(spec.Prod.Domain)
-	nonProdProv, err := createTenantProvider(ctx, name+"-nonprod-prov", nonProdIssuer, spec.NonProd, res)
+	nonProdProv, err := createEnvProvider(ctx, name+"-nonprod-prov", nonProdIssuer, spec.NonProd, res)
 	if err != nil {
 		return nil, nil, err
 	}
-	prodProv, err := createTenantProvider(ctx, name+"-prod-prov", prodIssuer, spec.Prod, res)
+	prodProv, err := createEnvProvider(ctx, name+"-prod-prov", prodIssuer, spec.Prod, res)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -165,39 +260,32 @@ func createExplicitTenantProviders(
 	return nonProdProv, prodProv, nil
 }
 
-func createStackRefTenantProviders(
+func createAccountRefProviders(
 	ctx *pulumi.Context,
 	name string,
-	scopeRef *core.ScopeRef,
-	stackRef string,
+	acc kindeAccountData,
 	res *Project,
 ) (*kindeprov.Provider, *kindeprov.Provider, error) {
-	sr, err := core.ResolveStackReference(ctx, name+"-platform-ref", scopeRef, stackRef)
-	if err != nil {
-		return nil, nil, err
-	}
-	nonProdIssuer := sr.GetStringOutput(pulumi.String("nonProdIssuerUrl"))
-	prodIssuer := sr.GetStringOutput(pulumi.String("prodIssuerUrl"))
 	nonProdProv, err := kindeprov.NewProvider(ctx, name+"-nonprod-prov", &kindeprov.ProviderArgs{
-		Domain:       nonProdIssuer,
-		Audience:     pulumi.Sprintf("%s/api", nonProdIssuer),
-		ClientId:     sr.GetStringOutput(pulumi.String("kindeNonProdM2mClientId")),
-		ClientSecret: pulumi.ToSecret(sr.GetStringOutput(pulumi.String("kindeNonProdM2mClientSecret"))).(pulumi.StringOutput),
+		Domain:       acc.nonProdIssuer,
+		Audience:     pulumi.Sprintf("%s/api", acc.nonProdIssuer),
+		ClientId:     acc.nonProdClientID,
+		ClientSecret: pulumi.ToSecret(acc.nonProdSecret).(pulumi.StringOutput),
 	}, pulumi.Parent(res))
 	if err != nil {
 		return nil, nil, err
 	}
 	prodProv, err := kindeprov.NewProvider(ctx, name+"-prod-prov", &kindeprov.ProviderArgs{
-		Domain:       prodIssuer,
-		Audience:     pulumi.Sprintf("%s/api", prodIssuer),
-		ClientId:     sr.GetStringOutput(pulumi.String("kindeProdM2mClientId")),
-		ClientSecret: pulumi.ToSecret(sr.GetStringOutput(pulumi.String("kindeProdM2mClientSecret"))).(pulumi.StringOutput),
+		Domain:       acc.prodIssuer,
+		Audience:     pulumi.Sprintf("%s/api", acc.prodIssuer),
+		ClientId:     acc.prodClientID,
+		ClientSecret: pulumi.ToSecret(acc.prodSecret).(pulumi.StringOutput),
 	}, pulumi.Parent(res))
 	if err != nil {
 		return nil, nil, err
 	}
-	res.NonProdIssuerURL = nonProdIssuer
-	res.ProdIssuerURL = prodIssuer
+	res.NonProdIssuerURL = acc.nonProdIssuer
+	res.ProdIssuerURL = acc.prodIssuer
 	return nonProdProv, prodProv, nil
 }
 
@@ -397,17 +485,23 @@ func sortAndCompact(items []string) []string {
 }
 
 func buildKindeProjectLink(meta core.ResourceMeta, res *Project) core.LinkDescriptor {
+	attrs := map[string]pulumi.StringOutput{
+		"nonProdIssuerUrl":    res.NonProdIssuerURL,
+		"nonProdAppId":        res.NonProdAppID,
+		"nonProdClientId":     res.NonProdClientID,
+		"nonProdClientSecret": res.NonProdClientSecret,
+		"prodIssuerUrl":       res.ProdIssuerURL,
+		"prodAppId":           res.ProdAppID,
+		"prodClientId":        res.ProdClientID,
+		"prodClientSecret":    res.ProdClientSecret,
+		"vercelProjectName":   pulumi.String(res.vercelProjectName).ToStringOutput(),
+		"teamSlug":            pulumi.String(res.vercelTeamSlug).ToStringOutput(),
+		"baseDomain":          pulumi.String(res.baseDomain).ToStringOutput(),
+	}
 	return core.LinkDescriptor{
-		Name: meta.Name,
-		Kind: meta.Kind,
-		Attributes: map[string]pulumi.StringOutput{
-			"nonProdIssuerUrl": res.NonProdIssuerURL,
-			"nonProdAppId":     res.NonProdAppID,
-			"nonProdClientId":  res.NonProdClientID,
-			"prodIssuerUrl":    res.ProdIssuerURL,
-			"prodAppId":        res.ProdAppID,
-			"prodClientId":     res.ProdClientID,
-		},
+		Name:       meta.Name,
+		Kind:       meta.Kind,
+		Attributes: attrs,
 		StackExports: map[string]pulumi.Input{
 			"nonProdIssuerUrl":    res.NonProdIssuerURL,
 			"nonProdAppId":        res.NonProdAppID,

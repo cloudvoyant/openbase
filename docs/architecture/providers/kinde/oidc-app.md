@@ -2,7 +2,7 @@
 
 ## Overview
 
-`kinde.OidcApp` (`core.StatelessResource`) routes per-environment stacks (`dev`, `stage`, `prod`, and `preview-<slug>`) to the matching `NonProd` or `Prod` Kinde tenant credentials from `kinde.Project` (`ProjectStackRef`) and computes environment-specific OIDC callback and post-logout URLs. It creates zero duplicate Kinde applications per branch.
+`kinde.OidcApp` (`core.StatelessResource`) routes per-environment stacks (`dev`, `stage`, `prod`, and `preview-<slug>`) to the matching `NonProd` or `Prod` Kinde environment credentials from `kinde.LookupProject(shared)` and computes environment-specific OIDC callback and post-logout URLs. It creates zero duplicate Kinde applications per branch.
 
 ## Requirement
 
@@ -23,8 +23,8 @@
 
 ```mermaid
 flowchart LR
-    Stack{"Environment Tier"} -->|"dev | preview-<slug>"| NonProdOut["ProjectStackRef: nonProd* outputs"]
-    Stack -->|"stage | prod"| ProdOut["ProjectStackRef: prod* outputs"]
+    Stack{"Environment Tier"} -->|"dev | preview-<slug>"| NonProdOut["LookupProject: nonProd* outputs"]
+    Stack -->|"stage | prod"| ProdOut["LookupProject: prod* outputs"]
     NonProdOut --> Oidc["kinde.OidcApp"]
     ProdOut --> Oidc
     Oidc -->|"Typed Outputs (IssuerURL, ClientID, ClientSecret, RedirectURL)"| App["vercel.WebApp / gcp.CloudRunService"]
@@ -55,8 +55,7 @@ sequenceDiagram
 
 ```go
 auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-	Project:      "storefront",
-	Shared:       shared,
+	Project:      kinde.LookupProject(shared),
 	BaseDomain:   "vercel.cloudvoyant.io",
 	CallbackPath: "/api/auth/kinde_callback",
 })

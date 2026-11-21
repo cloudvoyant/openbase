@@ -1,8 +1,8 @@
-# Core resources and platform contracts - software architecture
+# Core resources and account contracts - software architecture
 
 ## Overview
 
-`libs/components/core` defines two top-level contracts: `PlatformResource` for organization foundations and `Resource` (`StatelessResource` and `StatefulResource`) for all shared and per-environment resources. It owns naming rules, domain formulas, `openbase.io/*` tags, `ScopeRef` manifest lookups, `RecordStackExports`, provider-neutral `IdentityBroker` federation, and typed `Links`. It imports zero cloud provider SDKs.
+`libs/components/core` defines two top-level contracts: `AccountResource` for organization cloud and SaaS accounts and `Resource` (`StatelessResource` and `StatefulResource`) for all shared and per-environment resources. It owns naming rules, domain formulas, `openbase.io/*` tags, `ScopeRef` manifest lookups (`ManifestAttr`), `RecordStackExports`, provider-neutral `IdentityBroker` federation, and typed `Links`. It imports zero cloud provider SDKs.
 
 ## Requirement
 
@@ -15,7 +15,7 @@
 
 ### Non-Functional
 
-- Fail during `pulumi preview` before registering cloud resources when inputs violate naming or branching rules.
+- Fail during `pulumi preview` before registering cloud resources when inputs violate naming, branching, or manifest ambiguity rules.
 - Keep secret resource outputs encrypted in Pulumi state and output maps, and read zero ambient process environment variables inside `libs/components`.
 - Stay free of cloud provider SDK dependencies so `core` tests run offline in milliseconds.
 
@@ -25,9 +25,9 @@
 
 ```mermaid
 classDiagram
-    class PlatformResource {
+    class AccountResource {
         <<interface>>
-        +OpenBasePlatform() PlatformInfo
+        +OpenBaseAccount() AccountInfo
         +Link() LinkDescriptor
     }
     class Resource {
@@ -51,11 +51,11 @@ classDiagram
     Resource <|-- StatefulResource
 ```
 
-- `platform.go` defines `PlatformResource`, `PlatformInfo`, `PlatformMeta`, `InitPlatform`, `GCPPlatformLabels`, and the `core.NewCustomPlatform` escape hatch.
+- `account.go` defines `AccountResource`, `AccountInfo`, `AccountMeta`, `InitAccount`, `GCPAccountLabels`, and the `core.NewCustomAccount` escape hatch.
 - `environment.go` parses `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` stacks and validates `BranchFrom` parents.
 - `resource.go` defines `Resource`, `StatelessResource`, `StatefulResource`, `ResolveProject`, `RequireSharedStack`, and custom escape-hatch constructors (`core.NewStateless` and `core.NewStateful`).
 - `links.go` defines `Subject`, `PrincipalGrant`, `IdentityBroker`, `LinkGrantContext`, and `ResolveLinks`.
-- `scope.go` defines `ScopeRef`, `RemoteResource`, `ResolveStackReference`, `DefaultBranchFrom`, `DefaultBranchStackRef`, `RecordStackExports`, and `BuildManifestMap`.
+- `scope.go` defines `ScopeRef`, `ManifestAttr`, `ErrAmbiguousResource`, `RemoteResource`, `ResolveStackReference`, `DefaultBranchFrom`, `DefaultBranchStackRef`, `RecordStackExports`, and `BuildManifestMap`.
 - `naming.go` and `domain.go` omit `env` when `Environment` is `shared` and enforce cloud length bounds with deterministic SHA-256 truncation suffixes.
 
 ### Data and Control Flow
@@ -101,7 +101,7 @@ When `env == EnvShared`, `CanonicalName` returns `<project>-<name>` instead of `
 
 ### Escape hatches
 
-Teams can wrap any raw Pulumi resource in `core.NewCustomPlatform`, `core.NewStateless`, or `core.NewStateful`. Each escape hatch publishes its `LinkDescriptor` to `openbaseManifest` and implements `PlatformResource` or `Resource`, so custom resources plug directly into `Links` alongside built-in OpenBase components.
+Teams can wrap any raw Pulumi resource in `core.NewCustomAccount`, `core.NewStateless`, or `core.NewStateful`. Each escape hatch publishes its `LinkDescriptor` to `openbaseManifest` and implements `AccountResource` or `Resource`, so custom resources plug directly into `Links` alongside built-in OpenBase components.
 
 ## References
 

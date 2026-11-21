@@ -1,4 +1,4 @@
-// Package core defines OpenBase's PlatformResource and Resource (StatelessResource / StatefulResource) contracts, naming, tags, and Links.
+// Package core defines OpenBase's AccountResource and Resource (StatelessResource / StatefulResource) contracts, naming, tags, and Links.
 package core
 
 import (

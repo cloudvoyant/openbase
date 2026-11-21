@@ -53,15 +53,15 @@ func registerEnvironmentResources(
 	appProject, gcpProject, projectNum, baseDomain, revision, siteURL string,
 ) error {
 	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-		Project: appProject,
-		Shared:  shared,
-		APIKey:  pulumi.String(os.Getenv("NEON_API_KEY")),
+		ProjectName: appProject,
+		Project:     neon.LookupProject(shared),
+		APIKey:      pulumi.String(os.Getenv("NEON_API_KEY")),
 	})
 	if err != nil {
 		return err
 	}
 	uploads, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
-		Project:         appProject,
+		ProjectName:     appProject,
 		GCPProject:      pulumi.String(gcpProject),
 		BucketNamespace: gcpProject,
 		ExtraLabels:     map[string]string{"openbase-revision": revision},
@@ -70,15 +70,16 @@ func registerEnvironmentResources(
 		return err
 	}
 	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-		Project: appProject,
-		Shared:  shared,
-		SiteURL: pulumi.String(siteURL),
+		ProjectName: appProject,
+		Project:     kinde.LookupProject(shared),
+		SiteURL:     pulumi.String(siteURL),
 	})
 	if err != nil {
 		return err
 	}
 	_, err = gcp.NewCloudRunService(ctx, "web", &gcp.CloudRunServiceArgs{
-		Project:          appProject,
+		ProjectName:      appProject,
+		Project:          gcp.LookupProject(shared),
 		GCPProject:       pulumi.String(gcpProject),
 		GCPProjectNumber: pulumi.String(projectNum),
 		BaseDomain:       baseDomain,

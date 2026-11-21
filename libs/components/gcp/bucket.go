@@ -27,13 +27,14 @@ type BucketCORSRule struct {
 
 // BucketArgs configures a Google Cloud Storage Bucket component.
 type BucketArgs struct {
-	Project            string
+	ProjectName        string
 	Repo               string
 	Environment        string
 	Kind               string
 	BranchFrom         string
 	Backup             *bool
 	Links              []core.Resource
+	Account            AccountInput
 	GCPProject         pulumi.StringPtrInput
 	BucketNamespace    string
 	Location           string
@@ -65,10 +66,16 @@ func NewBucket(ctx *pulumi.Context, name string, args *BucketArgs, opts ...pulum
 	if env, err := core.ResolveEnvironment(ctx, spec.Environment); err == nil {
 		spec.BranchFrom = core.DefaultBranchFrom(env, spec.BranchFrom, false)
 	}
+	if spec.Account != nil && spec.GCPProject == nil {
+		acc := spec.Account.gcpAccountValues()
+		if isOutputSet(acc.gcpProject) {
+			spec.GCPProject = nonEmptyStrPtrOutput(acc.gcpProject)
+		}
+	}
 	res := &Bucket{}
 	meta, err := core.InitStateful(ctx, "openbase:gcp:Bucket", "gcp-bucket", res, &res.StatefulMeta, core.StatefulSpec{
 		Name:        name,
-		Project:     spec.Project,
+		Project:     spec.ProjectName,
 		Repo:        spec.Repo,
 		Environment: spec.Environment,
 		Kind:        spec.Kind,

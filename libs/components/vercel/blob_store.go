@@ -15,16 +15,14 @@ var _ core.StatefulResource = (*BlobStore)(nil)
 
 // BlobStoreArgs configures a Vercel BlobStore component with custom-env token propagation and prefix overlays.
 type BlobStoreArgs struct {
-	Project                  string
+	ProjectName              string
 	Repo                     string
 	Environment              string
 	Kind                     string
 	BranchFrom               string
 	Backup                   *bool
 	Links                    []core.Resource
-	VercelProject            *Project
-	Shared                   *core.ScopeRef
-	ProjectStackRef          string
+	Project                  ProjectInput
 	StoreID                  pulumi.StringInput
 	VercelProjectID          pulumi.StringInput
 	TeamID                   string
@@ -66,7 +64,7 @@ func NewBlobStore(ctx *pulumi.Context, name string, args *BlobStoreArgs, opts ..
 	res := &BlobStore{}
 	meta, err := core.InitStateful(ctx, "openbase:vercel:BlobStore", "vercel-blob", res, &res.StatefulMeta, core.StatefulSpec{
 		Name:        name,
-		Project:     spec.Project,
+		Project:     spec.ProjectName,
 		Repo:        spec.Repo,
 		Environment: spec.Environment,
 		Kind:        spec.Kind,
@@ -100,10 +98,7 @@ func provisionBlobStore(
 	spec BlobStoreArgs,
 	res *BlobStore,
 ) error {
-	refs, err := resolveBlobRefs(ctx, name, spec)
-	if err != nil {
-		return err
-	}
+	refs := resolveBlobRefs(spec)
 	res.BlobPrefix = meta.Environment.String() + "/"
 	if meta.BranchFrom != "" {
 		res.BlobFallbackPrefix = meta.BranchFrom.String() + "/"
@@ -119,7 +114,7 @@ func provisionBlobStore(
 	return propagateStageBlobEnv(ctx, name, meta, spec, refs, res)
 }
 
-func resolveBlobRefs(ctx *pulumi.Context, name string, spec BlobStoreArgs) (resolvedBlobRefs, error) {
+func resolveBlobRefs(spec BlobStoreArgs) resolvedBlobRefs {
 	var refs resolvedBlobRefs
 	if spec.StoreID != nil {
 		refs.storeID = spec.StoreID.ToStringOutput()
@@ -133,46 +128,27 @@ func resolveBlobRefs(ctx *pulumi.Context, name string, spec BlobStoreArgs) (reso
 	if spec.StageCustomEnvironmentID != nil {
 		refs.stageEnvID = spec.StageCustomEnvironmentID.ToStringOutput()
 	}
-	applyVercelProjectBlobStruct(&refs, spec.VercelProject)
-	sr, err := core.ResolveStackReference(ctx, name+"-project-ref", spec.Shared, spec.ProjectStackRef)
-	if err != nil || sr == nil {
-		return refs, err
-	}
-	return populateBlobStackOutputs(sr, refs), nil
+	applyVercelProjectBlobInput(&refs, spec.Project)
+	return refs
 }
 
-func applyVercelProjectBlobStruct(refs *resolvedBlobRefs, proj *Project) {
+func applyVercelProjectBlobInput(refs *resolvedBlobRefs, proj ProjectInput) {
 	if proj == nil {
 		return
 	}
-	if !isOutSet(refs.storeID) && proj.BlobStore != nil {
-		refs.storeID = proj.BlobStoreID
+	pv := proj.vercelProjectValues()
+	if !isOutSet(refs.storeID) && isOutSet(pv.blobStoreID) {
+		refs.storeID = pv.blobStoreID
 	}
-	if !isOutSet(refs.projectID) {
-		refs.projectID = proj.ProjectID
+	if !isOutSet(refs.projectID) && isOutSet(pv.projectID) {
+		refs.projectID = pv.projectID
 	}
-	if !isOutSet(refs.devEnvID) && proj.DevEnvironment != nil {
-		refs.devEnvID = proj.DevCustomEnvironmentID
+	if !isOutSet(refs.devEnvID) && isOutSet(pv.devCustomEnvironmentID) {
+		refs.devEnvID = pv.devCustomEnvironmentID
 	}
-	if !isOutSet(refs.stageEnvID) && proj.StageEnvironment != nil {
-		refs.stageEnvID = proj.StageCustomEnvironmentID
+	if !isOutSet(refs.stageEnvID) && isOutSet(pv.stageCustomEnvironmentID) {
+		refs.stageEnvID = pv.stageCustomEnvironmentID
 	}
-}
-
-func populateBlobStackOutputs(sr *pulumi.StackReference, refs resolvedBlobRefs) resolvedBlobRefs {
-	if !isOutSet(refs.storeID) {
-		refs.storeID = optionalVercelStackOutput(sr, "blobStoreId")
-	}
-	if !isOutSet(refs.projectID) {
-		refs.projectID = preferVercelStackOutput(sr, "vercelProjectId", "projectId")
-	}
-	if !isOutSet(refs.devEnvID) {
-		refs.devEnvID = optionalVercelStackOutput(sr, "devCustomEnvironmentId")
-	}
-	if !isOutSet(refs.stageEnvID) {
-		refs.stageEnvID = optionalVercelStackOutput(sr, "stageCustomEnvironmentId")
-	}
-	return refs
 }
 
 func ensureUnderlyingBlobStore(
@@ -221,7 +197,7 @@ func propagateDevBlobEnv(
 	refs resolvedBlobRefs,
 	res *BlobStore,
 ) error {
-	hasDevCustom := spec.EnableDevEnvironment || (spec.VercelProject != nil && spec.VercelProject.DevEnvironment != nil)
+	hasDevCustom := spec.EnableDevEnvironment || (spec.Project != nil && spec.Project.vercelProjectValues().hasDevCustomEnv)
 	if meta.Environment != core.EnvDev || !hasDevCustom || !isOutSet(refs.projectID) || !isOutSet(refs.devEnvID) {
 		return nil
 	}

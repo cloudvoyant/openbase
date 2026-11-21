@@ -15,7 +15,7 @@ var _ core.StatelessResource = (*Service)(nil)
 
 // ServiceArgs configures an offline synthetic StatelessResource component.
 type ServiceArgs struct {
-	Project     string
+	ProjectName string
 	Repo        string
 	Environment string
 	Kind        string
@@ -43,7 +43,7 @@ func NewService(ctx *pulumi.Context, name string, args *ServiceArgs, opts ...pul
 	svc := &Service{}
 	meta, err := core.InitStateless(ctx, "openbase:synthetic:Service", "synthetic-service", svc, &svc.StatelessMeta, core.StatelessSpec{
 		Name:        name,
-		Project:     args.Project,
+		Project:     args.ProjectName,
 		Repo:        args.Repo,
 		Environment: args.Environment,
 		Kind:        args.Kind,

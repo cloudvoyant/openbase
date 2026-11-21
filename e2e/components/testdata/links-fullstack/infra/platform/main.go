@@ -16,7 +16,7 @@ func main() {
 		teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
 
-		vercelPlat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
+		vercelAcc, err := vercel.NewAccount(ctx, "vercel", &vercel.AccountArgs{
 			Org:      teamSlug,
 			TeamID:   teamID,
 			TeamSlug: teamSlug,
@@ -24,11 +24,11 @@ func main() {
 		if err != nil {
 			return err
 		}
-		_, err = gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
+		_, err = gcp.NewAccount(ctx, "gcp", &gcp.AccountArgs{
 			Org:         teamSlug,
 			GCPProject:  pulumi.String(gcpProject),
 			PoolSuffix:  os.Getenv("OPENBASE_TEST_RUN_ID"),
-			Links:       []core.OIDCProviderSource{vercelPlat},
+			Links:       []core.OIDCProviderSource{vercelAcc},
 			SkipKeyRing: true,
 		})
 		return err

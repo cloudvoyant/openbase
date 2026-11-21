@@ -4,17 +4,17 @@ OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs
 
 ```mermaid
 flowchart TD
-    OrgProg["Org Platform Program (infra/platform/main.go)"] --> OrgBlocks["gcp.NewPlatform, vercel.NewPlatform, neon.NewPlatform, kinde.NewPlatform"]
+    OrgProg["Org Platform Program (infra/platform/main.go)"] --> OrgBlocks["gcp.NewAccount, vercel.NewAccount, neon.NewAccount, kinde.NewAccount"]
     ProjProg["App Shared Program (infra/shared/main.go)"] --> ProjBlocks["gcp.NewProject, vercel.NewProject, neon.NewProject, kinde.NewProject"]
     EnvProg["App Environment Program (infra/env/main.go)"] --> EnvBlocks["CloudRunService, WebApp, Bucket, BlobStore, Database, OidcApp, raw Pulumi"]
-    OrgBlocks -->|"openbase.LookupPlatform(ctx)"| ProjBlocks
-    ProjBlocks -->|"openbase.LookupShared(ctx) + openbaseManifest"| EnvBlocks
-    ProjBlocks --> Core["libs/components/core (PlatformResource, StatelessResource, StatefulResource)"]
+    OrgBlocks -->|"openbase.LookupPlatform + <pkg>.LookupAccount"| ProjBlocks
+    ProjBlocks -->|"openbase.LookupShared + <pkg>.LookupProject"| EnvBlocks
+    ProjBlocks --> Core["libs/components/core (AccountResource, StatelessResource, StatefulResource)"]
     EnvBlocks --> Core
-    Core --> GCP["libs/components/gcp (NewPlatform, NewProject, NewCloudLoadBalancer, NewCloudRunService, NewBucket, NewFederatedIdentity, WIFBroker, overlayfs)"]
-    Core --> Vercel["libs/components/vercel (NewPlatform, NewProject, NewWebApp, NewBlobStore)"]
-    Core --> Neon["libs/components/neon (NewPlatform, NewProject, NewDatabase)"]
-    Core --> Kinde["libs/components/kinde (NewPlatform, NewProject, NewOidcApp)"]
+    Core --> GCP["libs/components/gcp (NewAccount, LookupAccount, NewProject, LookupProject, NewCloudLoadBalancer, NewCloudRunService, NewBucket, NewFederatedIdentity, WIFBroker, overlayfs)"]
+    Core --> Vercel["libs/components/vercel (NewAccount, LookupAccount, NewProject, LookupProject, NewWebApp, NewBlobStore)"]
+    Core --> Neon["libs/components/neon (NewAccount, LookupAccount, NewProject, LookupProject, NewDatabase)"]
+    Core --> Kinde["libs/components/kinde (NewAccount, LookupAccount, NewProject, LookupProject, NewOidcApp)"]
 ```
 
 ## Install
@@ -28,11 +28,11 @@ go get github.com/cloudvoyant/openbase/libs/components@latest
 | Import Path | Purpose | Constructors and Helpers |
 | :--- | :--- | :--- |
 | `github.com/cloudvoyant/openbase/libs/components` | Cross-stack `LookupPlatform` and `LookupShared` helpers and supported environment conventions | `LookupPlatform`, `LookupShared`, `SupportedEnvironments` |
-| `github.com/cloudvoyant/openbase/libs/components/core` | `PlatformResource` and `Resource` (`StatelessResource`, `StatefulResource`) contracts, environment rules, domain formulas, tags, `Links`, `ScopeRef`, and `IdentityBroker` | `PlatformResource`, `StatelessResource`, `StatefulResource`, `NewCustomPlatform`, `NewStateless`, `NewStateful`, `ResolveLinks`, `IdentityBroker` |
-| `github.com/cloudvoyant/openbase/libs/components/gcp` | Org WIF, APIs, KMS, and wildcard HTTPS Load Balancers, per-app Artifact Registry projects, Cloud Run v2 services, `FederatedIdentity` and `WIFBroker` OIDC brokers, and GCS buckets with preview overlays | `NewPlatform`, `NewProject`, `NewCloudLoadBalancer`, `NewCloudRunService`, `NewBucket`, `NewFederatedIdentity`, `WIFBroker`, `overlayfs.Store` |
-| `github.com/cloudvoyant/openbase/libs/components/vercel` | Team configuration, per-app Vercel Projects (`staging` CustomEnvironment, domains, bypass, shared Blob store), WebApp deployments, and OIDC subject claims | `NewPlatform`, `NewProject`, `NewWebApp`, `NewBlobStore`, `BlobOverlayClient` |
-| `github.com/cloudvoyant/openbase/libs/components/neon` | Org defaults, per-app Neon Project clusters, and copy-on-write branched serverless PostgreSQL over `neondatabase/neon` | `NewPlatform`, `NewProject`, `NewDatabase` |
-| `github.com/cloudvoyant/openbase/libs/components/kinde` | Org two-tenant (`NonProd` and `Prod`) connections, per-app OIDC `Application` pairs, and per-environment tier routing over `kinde-oss/kinde` | `NewPlatform`, `NewProject`, `NewOidcApp` |
+| `github.com/cloudvoyant/openbase/libs/components/core` | `AccountResource` and `Resource` (`StatelessResource`, `StatefulResource`) contracts, environment rules, domain formulas, tags, `Links`, `ScopeRef`, and `IdentityBroker` | `AccountResource`, `StatelessResource`, `StatefulResource`, `NewCustomAccount`, `NewStateless`, `NewStateful`, `ResolveLinks`, `IdentityBroker` |
+| `github.com/cloudvoyant/openbase/libs/components/gcp` | GCP account foundations (WIF, APIs, KMS, wildcard HTTPS Load Balancers), per-app Artifact Registry projects, Cloud Run v2 services, `FederatedIdentity` and `WIFBroker` OIDC brokers, and GCS buckets with preview overlays | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewCloudLoadBalancer`, `NewCloudRunService`, `NewBucket`, `NewFederatedIdentity`, `WIFBroker`, `overlayfs.Store` |
+| `github.com/cloudvoyant/openbase/libs/components/vercel` | Team account settings, per-app Vercel Projects (`staging` CustomEnvironment, domains, bypass, shared Blob store), WebApp deployments, and OIDC subject claims | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewWebApp`, `NewBlobStore`, `BlobOverlayClient` |
+| `github.com/cloudvoyant/openbase/libs/components/neon` | Org account defaults, per-app Neon Project clusters, and copy-on-write branched serverless PostgreSQL over `neondatabase/neon` | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewDatabase` |
+| `github.com/cloudvoyant/openbase/libs/components/kinde` | Kinde Business account (`NonProd` and `Prod` `EnvironmentCredentials`), per-app OIDC `Application` pairs, and per-environment tier routing over `kinde-oss/kinde` | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewOidcApp` |
 | `github.com/cloudvoyant/openbase/libs/components/synthetic` | Offline deterministic doubles for fast unit tests | `NewService`, `NewStorage` |
 
 ## Development

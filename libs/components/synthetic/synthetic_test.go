@@ -26,7 +26,7 @@ func TestSyntheticComponents(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				uploads, err := synthetic.NewStorage(ctx, "uploads", &synthetic.StorageArgs{
-					Project:     "storefront",
+					ProjectName: "storefront",
 					Environment: "preview-pr-12",
 					BranchFrom:  "dev",
 				})
@@ -34,7 +34,7 @@ func TestSyntheticComponents(t *testing.T) {
 					return err
 				}
 				api, err := synthetic.NewService(ctx, "api", &synthetic.ServiceArgs{
-					Project:     "storefront",
+					ProjectName: "storefront",
 					Environment: "preview-pr-12",
 					Links:       []core.Resource{uploads},
 					Env: map[string]pulumi.StringInput{

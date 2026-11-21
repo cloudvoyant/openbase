@@ -16,24 +16,22 @@ import (
 
 var _ core.StatefulResource = (*Database)(nil)
 
-// ErrProjectIDRequired reports a missing NeonProject, Shared, ProjectID, and ProjectStackRef on DatabaseArgs.
-var ErrProjectIDRequired = errors.New("neon: neonProject, shared, projectId, or projectStackRef is required")
+// ErrProjectIDRequired reports a missing Project or ProjectID on DatabaseArgs.
+var ErrProjectIDRequired = errors.New("neon: project or projectId is required")
 
 // DatabaseArgs configures a per-environment Neon branch, compute endpoint, role, and database.
 type DatabaseArgs struct {
-	Project         string
+	ProjectName     string
 	Repo            string
 	Environment     string
 	Kind            string
 	BranchFrom      string
 	Backup          *bool
 	Links           []core.Resource
-	NeonProject     *Project
-	Shared          *core.ScopeRef
+	Project         ProjectInput
 	ProjectID       pulumi.StringInput
 	DefaultBranchID pulumi.StringInput
 	ParentBranchID  pulumi.StringInput
-	ProjectStackRef string
 	BranchStackRef  string
 	APIKey          pulumi.StringInput
 	APIBaseURL      string
@@ -60,7 +58,7 @@ type Database struct {
 
 // NewDatabase provisions a Neon PostgreSQL branch satisfying core.StatefulResource.
 func NewDatabase(ctx *pulumi.Context, name string, args *DatabaseArgs, opts ...pulumi.ResourceOption) (*Database, error) {
-	if args == nil || !hasNeonProjectSource(args) {
+	if args == nil || (args.Project == nil && args.ProjectID == nil) {
 		return nil, ErrProjectIDRequired
 	}
 	spec := *args
@@ -68,7 +66,7 @@ func NewDatabase(ctx *pulumi.Context, name string, args *DatabaseArgs, opts ...p
 	res := &Database{}
 	meta, err := core.InitStateful(ctx, "openbase:neon:Database", "neon-database", res, &res.StatefulMeta, core.StatefulSpec{
 		Name:        name,
-		Project:     spec.Project,
+		Project:     spec.ProjectName,
 		Repo:        spec.Repo,
 		Environment: spec.Environment,
 		Kind:        spec.Kind,
@@ -93,10 +91,6 @@ func NewDatabase(ctx *pulumi.Context, name string, args *DatabaseArgs, opts ...p
 type neonParentRefs struct {
 	projectID      pulumi.StringOutput
 	parentBranchID pulumi.StringOutput
-}
-
-func hasNeonProjectSource(args *DatabaseArgs) bool {
-	return args.NeonProject != nil || args.Shared != nil || args.ProjectID != nil || args.ProjectStackRef != ""
 }
 
 func applyDefaultDBBranching(ctx *pulumi.Context, spec *DatabaseArgs) {
@@ -139,18 +133,6 @@ func provisionNeonBranch(
 
 func resolveNeonRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec *DatabaseArgs) (neonParentRefs, error) {
 	refs, defaultBranch := initDirectNeonRefs(spec)
-	sr, err := core.ResolveStackReference(ctx, name+"-project-ref", spec.Shared, spec.ProjectStackRef)
-	if err != nil {
-		return neonParentRefs{}, err
-	}
-	if sr != nil {
-		if !isSet(refs.projectID) {
-			refs.projectID = preferStackOutput(sr, "neonProjectId", "projectId")
-		}
-		if !isSet(defaultBranch) {
-			defaultBranch = preferStackOutput(sr, "neonDefaultBranchId", "defaultBranchId")
-		}
-	}
 	parentBranch, err := resolveParentBranch(ctx, name, meta, spec, defaultBranch)
 	if err != nil {
 		return neonParentRefs{}, err
@@ -162,9 +144,10 @@ func resolveNeonRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, s
 func initDirectNeonRefs(spec *DatabaseArgs) (neonParentRefs, pulumi.StringOutput) {
 	var refs neonParentRefs
 	var defaultBranch pulumi.StringOutput
-	if spec.NeonProject != nil {
-		refs.projectID = spec.NeonProject.ProjectID
-		defaultBranch = spec.NeonProject.DefaultBranchID
+	if spec.Project != nil {
+		pv := spec.Project.neonProjectValues()
+		refs.projectID = pv.projectID
+		defaultBranch = pv.defaultBranchID
 	}
 	if spec.ProjectID != nil {
 		refs.projectID = spec.ProjectID.ToStringOutput()
@@ -223,14 +206,15 @@ func createNeonEndpoint(
 }
 
 func inheritNeonProjectAPISettings(d *DatabaseArgs) {
-	if d.NeonProject == nil {
+	if d.Project == nil {
 		return
 	}
+	pv := d.Project.neonProjectValues()
 	if d.APIKey == nil {
-		d.APIKey = d.NeonProject.apiKey
+		d.APIKey = pv.apiKey
 	}
 	if d.APIBaseURL == "" {
-		d.APIBaseURL = d.NeonProject.apiBaseURL
+		d.APIBaseURL = pv.apiBaseURL
 	}
 }
 
@@ -360,19 +344,4 @@ func optionalStringPtr(out pulumi.StringOutput) pulumi.StringPtrInput {
 		return nil
 	}
 	return out
-}
-
-func preferStackOutput(sr *pulumi.StackReference, primaryKey, fallbackKey string) pulumi.StringOutput {
-	return pulumi.All(
-		sr.GetOutput(pulumi.String(primaryKey)),
-		sr.GetOutput(pulumi.String(fallbackKey)),
-	).ApplyT(func(vs []any) string {
-		if first, ok := vs[0].(string); ok && first != "" {
-			return first
-		}
-		if second, ok := vs[1].(string); ok {
-			return second
-		}
-		return ""
-	}).(pulumi.StringOutput)
 }

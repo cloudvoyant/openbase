@@ -12,15 +12,22 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*Project)(nil)
+var (
+	_ core.StatelessResource = (*Project)(nil)
+	_ ProjectInput           = (*Project)(nil)
+	_ ProjectInput           = (*ProjectRef)(nil)
+)
+
+// ProjectInput is satisfied by in-memory *Project handles and cross-stack *ProjectRef lookups.
+type ProjectInput interface {
+	vercelProjectValues() vercelProjectData
+}
 
 // ProjectArgs configures an application's Vercel Project, CustomEnvironments, ProtectionBypass, Domains, and shared BlobStore in Premise's infra/shared stack.
 type ProjectArgs struct {
-	Project               string
+	ProjectName           string
 	Repo                  string
-	Platform              *Platform
-	PlatformStack         *core.ScopeRef
-	PlatformStackRef      string
+	Account               AccountInput
 	VercelProjectName     string
 	TeamID                string
 	TeamSlug              string
@@ -78,6 +85,20 @@ type Project struct {
 	BlobBaseURL              pulumi.StringOutput
 }
 
+// ProjectRef provides typed cross-stack access to a shared vercel.Project exported in infra/shared.
+type ProjectRef struct {
+	ProjectID                pulumi.StringOutput
+	VercelProjectName        pulumi.StringOutput
+	TeamID                   pulumi.StringOutput
+	TeamSlug                 pulumi.StringOutput
+	BaseDomain               pulumi.StringOutput
+	DevCustomEnvironmentID   pulumi.StringOutput
+	StageCustomEnvironmentID pulumi.StringOutput
+	ProtectionBypassSecret   pulumi.StringOutput
+	BlobStoreID              pulumi.StringOutput
+	BlobBaseURL              pulumi.StringOutput
+}
+
 // NewProject provisions cross-environment Vercel project assets on the shared stack.
 func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pulumi.ResourceOption) (*Project, error) {
 	if err := core.RequireSharedStack(ctx); err != nil {
@@ -90,7 +111,7 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	res := &Project{}
 	meta, err := core.InitStateless(ctx, "openbase:vercel:Project", "vercel-project", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        name,
-		Project:     args.Project,
+		Project:     args.ProjectName,
 		Repo:        args.Repo,
 		Environment: string(core.EnvShared),
 	}, opts...)
@@ -104,7 +125,75 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	return res, registerVercelProjectOutputs(ctx, res)
 }
 
+// LookupProject resolves a shared vercel.Project from an infra/shared ScopeRef (by unique kind or explicit name).
+func LookupProject(shared *core.ScopeRef, name ...string) *ProjectRef {
+	if shared == nil {
+		return nil
+	}
+	return &ProjectRef{
+		ProjectID:                shared.ManifestAttr("vercel-project", name, "vercelProjectId", "projectId"),
+		VercelProjectName:        shared.ManifestAttr("vercel-project", name, "vercelProjectName"),
+		TeamID:                   shared.ManifestAttr("vercel-project", name, "teamId"),
+		TeamSlug:                 shared.ManifestAttr("vercel-project", name, "teamSlug"),
+		BaseDomain:               shared.ManifestAttr("vercel-project", name, "baseDomain"),
+		DevCustomEnvironmentID:   shared.ManifestAttr("vercel-project", name, "devCustomEnvironmentId"),
+		StageCustomEnvironmentID: shared.ManifestAttr("vercel-project", name, "stageCustomEnvironmentId"),
+		ProtectionBypassSecret:   pulumi.ToSecret(shared.ManifestAttr("vercel-project", name, "protectionBypassSecret")).(pulumi.StringOutput),
+		BlobStoreID:              shared.ManifestAttr("vercel-project", name, "blobStoreId"),
+		BlobBaseURL:              shared.ManifestAttr("vercel-project", name, "blobBaseUrl"),
+	}
+}
+
 // Private helpers ------------------------------------------------------------
+
+type vercelProjectData struct {
+	projectID                pulumi.StringOutput
+	vercelProjectName        pulumi.StringOutput
+	teamSlug                 pulumi.StringOutput
+	baseDomain               pulumi.StringOutput
+	devCustomEnvironmentID   pulumi.StringOutput
+	stageCustomEnvironmentID pulumi.StringOutput
+	blobStoreID              pulumi.StringOutput
+	hasDevCustomEnv          bool
+}
+
+func (p *Project) vercelProjectValues() vercelProjectData {
+	if p == nil {
+		return vercelProjectData{}
+	}
+	out := vercelProjectData{
+		projectID:         p.ProjectID,
+		vercelProjectName: p.VercelProjectName,
+		teamSlug:          p.TeamSlug,
+		baseDomain:        p.BaseDomain,
+		hasDevCustomEnv:   p.DevEnvironment != nil,
+	}
+	if p.DevEnvironment != nil {
+		out.devCustomEnvironmentID = p.DevCustomEnvironmentID
+	}
+	if p.StageEnvironment != nil {
+		out.stageCustomEnvironmentID = p.StageCustomEnvironmentID
+	}
+	if p.BlobStore != nil {
+		out.blobStoreID = p.BlobStoreID
+	}
+	return out
+}
+
+func (r *ProjectRef) vercelProjectValues() vercelProjectData {
+	if r == nil {
+		return vercelProjectData{}
+	}
+	return vercelProjectData{
+		projectID:                r.ProjectID,
+		vercelProjectName:        r.VercelProjectName,
+		teamSlug:                 r.TeamSlug,
+		baseDomain:               r.BaseDomain,
+		devCustomEnvironmentID:   r.DevCustomEnvironmentID,
+		stageCustomEnvironmentID: r.StageCustomEnvironmentID,
+		blobStoreID:              r.BlobStoreID,
+	}
+}
 
 type resolvedVercelPlatform struct {
 	teamID   pulumi.StringOutput
@@ -119,10 +208,7 @@ func provisionVercelProject(
 	spec ProjectArgs,
 	res *Project,
 ) error {
-	plat, err := resolveVercelPlatformRefs(ctx, name, spec)
-	if err != nil {
-		return err
-	}
+	plat := resolveVercelAccountRefs(spec)
 	proj, vProjName, err := createUnderlyingVercelProject(ctx, name, meta, spec, plat.teamID, res)
 	if err != nil {
 		return err
@@ -214,49 +300,26 @@ func writePreviewEnvMap(
 	return nil
 }
 
-func resolveVercelPlatformRefs(ctx *pulumi.Context, name string, spec ProjectArgs) (resolvedVercelPlatform, error) {
+func resolveVercelAccountRefs(spec ProjectArgs) resolvedVercelPlatform {
 	p := resolvedVercelPlatform{
 		teamID:   pulumi.String(spec.TeamID).ToStringOutput(),
 		teamSlug: pulumi.String(spec.TeamSlug).ToStringOutput(),
 		baseDom:  pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(),
 	}
-	applyVercelPlatformStruct(&p, spec)
-	sr, err := core.ResolveStackReference(ctx, name+"-platform-ref", spec.PlatformStack, spec.PlatformStackRef)
-	if err != nil || sr == nil {
-		return p, err
+	if spec.Account == nil {
+		return p
 	}
-	applyVercelPlatformStackRef(&p, sr, spec)
-	return p, nil
-}
-
-func applyVercelPlatformStruct(p *resolvedVercelPlatform, spec ProjectArgs) {
-	if spec.Platform == nil {
-		return
+	acc := spec.Account.vercelAccountValues()
+	if spec.TeamID == "" && isOutSet(acc.teamID) {
+		p.teamID = acc.teamID
 	}
-	if spec.TeamID == "" {
-		p.teamID = spec.Platform.TeamID
+	if spec.TeamSlug == "" && isOutSet(acc.teamSlug) {
+		p.teamSlug = acc.teamSlug
 	}
-	if spec.TeamSlug == "" {
-		p.teamSlug = spec.Platform.TeamSlug
+	if spec.BaseDomain == "" && isOutSet(acc.baseDomain) {
+		p.baseDom = acc.baseDomain
 	}
-	if spec.BaseDomain == "" {
-		p.baseDom = spec.Platform.BaseDomain
-	}
-}
-
-func applyVercelPlatformStackRef(p *resolvedVercelPlatform, sr *pulumi.StackReference, spec ProjectArgs) {
-	if spec.Platform != nil {
-		return
-	}
-	if spec.TeamID == "" {
-		p.teamID = optionalVercelStackOutput(sr, "teamId")
-	}
-	if spec.TeamSlug == "" {
-		p.teamSlug = optionalVercelStackOutput(sr, "teamSlug")
-	}
-	if spec.BaseDomain == "" {
-		p.baseDom = preferVercelStackOutput(sr, "vercelBaseDomain", "baseDomain")
-	}
+	return p
 }
 
 func createUnderlyingVercelProject(
@@ -379,7 +442,7 @@ func createProjectDomains(
 }
 
 func shouldAttachPrimaryProjectDomain(explicit string, spec ProjectArgs) bool {
-	return explicit != "" || spec.BaseDomain != "" || spec.TeamSlug != "" || spec.Platform != nil || spec.PlatformStackRef != ""
+	return explicit != "" || spec.BaseDomain != "" || spec.TeamSlug != "" || spec.Account != nil
 }
 
 func computeProjectTierDomainOutput(
@@ -517,12 +580,14 @@ func buildVercelProjectLink(meta core.ResourceMeta, res *Project) core.LinkDescr
 		Kind: meta.Kind,
 		Attributes: map[string]pulumi.StringOutput{
 			"projectId":                res.ProjectID,
+			"vercelProjectId":          res.ProjectID,
 			"vercelProjectName":        res.VercelProjectName,
 			"teamId":                   res.TeamID,
 			"teamSlug":                 res.TeamSlug,
 			"baseDomain":               res.BaseDomain,
 			"devCustomEnvironmentId":   res.DevCustomEnvironmentID,
 			"stageCustomEnvironmentId": res.StageCustomEnvironmentID,
+			"protectionBypassSecret":   res.ProtectionBypassSecret,
 			"devDomainName":            res.DevDomainName,
 			"prodDomainName":           res.ProdDomainName,
 			"stageDomainName":          res.StageDomainName,

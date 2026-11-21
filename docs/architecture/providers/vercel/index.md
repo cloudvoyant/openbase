@@ -1,8 +1,8 @@
-# Vercel platform and project - software architecture
+# Vercel account and project - software architecture
 
 ## Overview
 
-`libs/components/vercel` separates team-wide Vercel configuration (`vercel.Platform`, `core.PlatformResource`) from shared repository assets (`vercel.Project`, `core.StatelessResource` with `Environment: "shared"`) over `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `vercel.Platform` runs once per organization and owns team and base-domain defaults. `vercel.Project` runs once per repository in `infra/shared` and owns the Vercel Project, `staging` Custom Environment, attached domains, automation bypass secret, optional shared Blob store, and optional preview environment seeding.
+`libs/components/vercel` separates team-wide Vercel configuration (`vercel.Account`, `core.AccountResource`) from shared repository assets (`vercel.Project`, `core.StatelessResource` with `Environment: "shared"`) over `github.com/pulumiverse/pulumi-vercel/sdk/v5`. `vercel.Account` runs once per organization in `infra/platform` and owns team and base-domain defaults. `vercel.Project` runs once per repository in `infra/shared` and owns the Vercel Project, `staging` Custom Environment, attached domains, automation bypass secret, optional shared Blob store, and optional preview environment seeding.
 
 ## Requirement
 
@@ -25,11 +25,11 @@
 
 ```mermaid
 flowchart TD
-    subgraph Org["Organization Stack (vercel.Platform)"]
+    subgraph Org["Organization Stack (vercel.NewAccount)"]
         TeamCfg["TeamID / TeamSlug / BaseDomain (vercel.acme.io)"]
     end
 
-    subgraph App["App infra/shared Stack (vercel.Project)"]
+    subgraph App["App infra/shared Stack (vercel.NewProject)"]
         VProj["vercel.Project (team OIDC + IgnoreCommand)"]
         StageCE["CustomEnvironment: staging"]
         Doms["ProjectDomains (prod + staging)"]
@@ -43,15 +43,15 @@ flowchart TD
         BlobEnv["vercel.BlobStore"]
     end
 
-    Org -->|"PlatformStackRef"| App
-    VProj --> Web
+    Org -->|"vercel.LookupAccount(plat)"| App
+    VProj -->|"vercel.LookupProject(shared)"| Web
     StageCE --> Web
     BlobRoot --> BlobEnv
 ```
 
-- `vercel.Platform` exports team and wildcard domain defaults for all repositories in the organization.
+- `vercel.Account` exports team and wildcard domain defaults for all repositories in the organization.
 - `vercel.Project` creates the Vercel Project, `staging` Custom Environment, `prod` and `staging` domains, bypass token, optional shared Blob store, and optional `"preview"`-targeted environment variables.
-- [vercel.WebApp](./web-app.md) and [vercel.BlobStore](./blob-store.md) consume `ProjectStackRef` on `dev`, `stage`, `prod`, and `preview-<slug>`.
+- [vercel.WebApp](./web-app.md) and [vercel.BlobStore](./blob-store.md) consume `Project: vercel.LookupProject(shared)` on `dev`, `stage`, `prod`, and `preview-<slug>`.
 
 ### Data and Control Flow
 
@@ -69,7 +69,7 @@ Vercel Pro includes one free Custom Environment per project (`staging`). `prod` 
 
 ```go
 // Tier 1: Organization (infra/platform/main.go)
-plat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
+acc, err := vercel.NewAccount(ctx, "vercel", &vercel.AccountArgs{
 	Org:        "cloudvoyant",
 	TeamID:     "team_123",
 	TeamSlug:   "cloudvoyant",
@@ -77,11 +77,9 @@ plat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
 })
 
 // Shared Project Resource in infra/shared/main.go
-platRef, err := openbase.LookupPlatform(ctx, "cloudvoyant/platform/platform")
-proj, err := vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
-	Project:          "storefront",
-	Repo:             "cloudvoyant/storefront",
-	PlatformStack:    platRef,
+plat, err := openbase.LookupPlatform(ctx)
+proj, err := vercel.NewProject(ctx, "web", &vercel.ProjectArgs{
+	Account:          vercel.LookupAccount(plat),
 	ExtraProdDomains: []string{"storefront.io"},
 	EnableBlobStore:  true,
 	PreviewEnv: map[string]pulumi.StringInput{

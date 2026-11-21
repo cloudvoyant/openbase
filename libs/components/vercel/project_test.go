@@ -7,14 +7,15 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
+	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
 )
 
 // Public API -----------------------------------------------------------------
 
-func TestVercelProjectAndPlatform(t *testing.T) {
-	t.Run("given separate vercel.Platform (platform stack) and vercel.Project (shared stack) specs", func(t *testing.T) {
-		t.Run("when Platform runs on platform and Project runs on shared with EnableBlobStore, then Project inherits team/baseDomain via PlatformStackRef and creates Project, CustomEnvironment, ProjectDomains, Bypass, and BlobStore", func(t *testing.T) {
+func TestVercelProjectAndAccount(t *testing.T) {
+	t.Run("given separate vercel.Account (platform stack) and vercel.Project (shared stack) specs", func(t *testing.T) {
+		t.Run("when Account runs on platform and Project runs on shared with EnableBlobStore, then Project inherits team/baseDomain via LookupAccount and creates Project, CustomEnvironment, ProjectDomains, Bypass, and BlobStore", func(t *testing.T) {
 			// Arrange.
 			platMocks := newVercelMocks()
 			sharedMocks := newVercelMocks()
@@ -22,7 +23,7 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
+				_, err := vercel.NewAccount(ctx, "vercel", &vercel.AccountArgs{
 					TeamID:     "team_123",
 					TeamSlug:   "cloudvoyant",
 					BaseDomain: "vercel.cloudvoyant.io",
@@ -31,10 +32,13 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 			}, pulumi.WithMocks("platform", "platform", platMocks))
 
 			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				plat, err := openbase.LookupPlatform(ctx)
+				if err != nil {
+					return err
+				}
 				proj, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
-					Project:          "storefront",
-					PlatformStackRef: "organization/platform/platform",
-					EnableBlobStore:  true,
+					Account:         vercel.LookupAccount(plat),
+					EnableBlobStore: true,
 				})
 				if err != nil {
 					return err
@@ -64,7 +68,6 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				proj, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
-					Project:              "storefront",
 					TeamID:               "team_123",
 					TeamSlug:             "cloudvoyant",
 					BaseDomain:           "vercel.cloudvoyant.io",
@@ -94,7 +97,6 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				_, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
-					Project:              "storefront",
 					TeamID:               "team_123",
 					TeamSlug:             "cloudvoyant",
 					SkipStageEnvironment: true,
@@ -143,6 +145,7 @@ func (m *vercelMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.P
 			"teamId":                   resource.NewStringProperty("team_123"),
 			"vercelBaseDomain":         resource.NewStringProperty("vercel.cloudvoyant.io"),
 			"projectId":                resource.NewStringProperty("prj_from_ref"),
+			"vercelProjectId":          resource.NewStringProperty("prj_from_ref"),
 			"vercelProjectName":        resource.NewStringProperty("openbase-storefront"),
 			"teamSlug":                 resource.NewStringProperty("cloudvoyant"),
 			"stageCustomEnvironmentId": resource.NewStringProperty("env_stage_ref"),

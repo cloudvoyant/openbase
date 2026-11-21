@@ -22,12 +22,12 @@ import (
 // Public API -----------------------------------------------------------------
 
 func TestComponentsComposition(t *testing.T) {
-	t.Run("given idiomatic Pulumi Go constructors across platform, shared, and environment stacks", func(t *testing.T) {
-		t.Run("when registering Vercel + Neon + Kinde on shared and a preview stack, then preview inherits dev branching and Kinde NonProd tenant", func(t *testing.T) {
+	t.Run("given idiomatic Pulumi Go Account, Project, and Environment constructors", func(t *testing.T) {
+		t.Run("when registering Vercel + Neon + Kinde on shared and a preview stack, then preview inherits dev branching and Kinde NonProd environment", func(t *testing.T) {
 			runVercelProjectAndPreviewSpec(t)
 		})
 
-		t.Run("when registering Cloud Run + GCS + Neon + Kinde on shared and a stage stack, then stage branches DB from prod and binds Kinde prod tenant", func(t *testing.T) {
+		t.Run("when registering Cloud Run + GCS + Neon + Kinde on shared and a stage stack, then stage branches DB from prod and binds Kinde prod environment", func(t *testing.T) {
 			runCloudRunProjectAndStageSpec(t)
 		})
 
@@ -39,7 +39,7 @@ func TestComponentsComposition(t *testing.T) {
 			runStackGuardrailSpec(t)
 		})
 
-		t.Run("when registering multiple GCP accounts and raw Pulumi resources alongside OpenBase constructors, then manifest lookups and explicit providers compose cleanly", func(t *testing.T) {
+		t.Run("when registering multiple GCP accounts and raw Pulumi resources alongside OpenBase constructors, then named LookupAccount succeeds, unnamed LookupAccount rejects ambiguity, and providers compose cleanly", func(t *testing.T) {
 			runMultiGCPAndRawPulumiSpec(t)
 		})
 	})
@@ -50,15 +50,15 @@ func TestComponentsComposition(t *testing.T) {
 func runVercelProjectAndPreviewSpec(t *testing.T) {
 	t.Helper()
 	// Arrange.
-	platMocks := newScopeMocks()
-	sharedMocks := newScopeMocks()
-	previewMocks := newScopeMocks()
+	platMocks := newScopeMocks(false)
+	sharedMocks := newScopeMocks(false)
+	previewMocks := newScopeMocks(false)
 	urlCh := make(chan string, 1)
 	issuerCh := make(chan string, 1)
 	var dbBranchFrom, blobFallback string
 
 	// Act.
-	errPlat := pulumi.RunErr(deployOrgPlatform, pulumi.WithMocks("platform", "platform", platMocks))
+	errPlat := pulumi.RunErr(deployOrgAccounts, pulumi.WithMocks("platform", "platform", platMocks))
 	errShared := pulumi.RunErr(deploySharedVercelProject, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
 	errPreview := pulumi.RunErr(func(ctx *pulumi.Context) error {
 		return deployPreviewVercelEnv(ctx, &dbBranchFrom, &blobFallback, urlCh, issuerCh)
@@ -86,8 +86,8 @@ func runVercelProjectAndPreviewSpec(t *testing.T) {
 	}
 }
 
-func deployOrgPlatform(ctx *pulumi.Context) error {
-	vercelPlat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
+func deployOrgAccounts(ctx *pulumi.Context) error {
+	vercelAcc, err := vercel.NewAccount(ctx, "vercel", &vercel.AccountArgs{
 		Org:      "cloudvoyant",
 		TeamID:   "team_123",
 		TeamSlug: "cloudvoyant",
@@ -95,45 +95,45 @@ func deployOrgPlatform(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
+	if _, err := gcp.NewAccount(ctx, "gcp", &gcp.AccountArgs{
 		Org:              "cloudvoyant",
 		GCPProject:       pulumi.String("cloudvoyant-openbase"),
 		GCPProjectNumber: "785485436615",
-		Links:            []core.OIDCProviderSource{vercelPlat},
+		Links:            []core.OIDCProviderSource{vercelAcc},
 		SkipKeyRing:      true,
 	}); err != nil {
 		return err
 	}
-	if _, err := neon.NewPlatform(ctx, "neon-platform", &neon.PlatformArgs{
+	if _, err := neon.NewAccount(ctx, "neon", &neon.AccountArgs{
 		Org:             "cloudvoyant",
 		OrgID:           "org-neon",
 		DefaultRegionID: "aws-us-east-1",
 	}); err != nil {
 		return err
 	}
-	_, err = kinde.NewPlatform(ctx, "kinde-platform", sampleKindePlatformArgs())
+	_, err = kinde.NewAccount(ctx, "kinde", sampleKindeAccountArgs())
 	return err
 }
 
 func deploySharedVercelProject(ctx *pulumi.Context) error {
-	plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
+	plat, err := openbase.LookupPlatform(ctx)
 	if err != nil {
 		return err
 	}
-	authProj, err := kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
-		PlatformStack:  plat,
+	authProj, err := kinde.NewProject(ctx, "auth", &kinde.ProjectArgs{
+		Account:        kinde.LookupAccount(plat),
 		VercelTeamSlug: "cloudvoyant",
 	})
 	if err != nil {
 		return err
 	}
-	if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{
-		PlatformStack: plat,
+	if _, err := neon.NewProject(ctx, "db", &neon.ProjectArgs{
+		Account: neon.LookupAccount(plat),
 	}); err != nil {
 		return err
 	}
-	_, err = vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
-		PlatformStack:   plat,
+	_, err = vercel.NewProject(ctx, "web", &vercel.ProjectArgs{
+		Account:         vercel.LookupAccount(plat),
 		EnableBlobStore: true,
 		PreviewEnv: map[string]pulumi.StringInput{
 			"KINDE_ISSUER_URL": authProj.NonProdIssuerURL,
@@ -155,23 +155,28 @@ func deployPreviewVercelEnv(
 	if err != nil {
 		return err
 	}
-	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{Shared: shared})
+	vProj := vercel.LookupProject(shared)
+	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
+		Project: neon.LookupProject(shared),
+	})
 	if err != nil {
 		return err
 	}
 	blobs, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
-		Shared:             shared,
+		Project:            vProj,
 		BlobReadWriteToken: pulumi.String("vercel_blob_rw_tok"),
 	})
 	if err != nil {
 		return err
 	}
-	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{Shared: shared})
+	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
+		Project: kinde.LookupProject(shared),
+	})
 	if err != nil {
 		return err
 	}
 	web, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-		Shared:    shared,
+		Project:   vProj,
 		SourceDir: ".",
 		Links:     []core.Resource{blobs},
 		Env: map[string]pulumi.StringInput{
@@ -197,8 +202,8 @@ func deployPreviewVercelEnv(
 func runCloudRunProjectAndStageSpec(t *testing.T) {
 	t.Helper()
 	// Arrange.
-	sharedMocks := newScopeMocks()
-	stageMocks := newScopeMocks()
+	sharedMocks := newScopeMocks(false)
+	stageMocks := newScopeMocks(false)
 	issuerCh := make(chan string, 1)
 	var dbBranchFrom string
 
@@ -223,7 +228,7 @@ func runCloudRunProjectAndStageSpec(t *testing.T) {
 }
 
 func deploySharedCloudRunProject(ctx *pulumi.Context) error {
-	plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
+	plat, err := openbase.LookupPlatform(ctx)
 	if err != nil {
 		return err
 	}
@@ -231,14 +236,14 @@ func deploySharedCloudRunProject(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := gcp.NewProject(ctx, "gcp-project", &gcp.ProjectArgs{PlatformStack: plat}); err != nil {
+	if _, err := gcp.NewProject(ctx, "gcp", &gcp.ProjectArgs{Account: gcp.LookupAccount(plat)}); err != nil {
 		return err
 	}
-	if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{PlatformStack: plat}); err != nil {
+	if _, err := neon.NewProject(ctx, "neon", &neon.ProjectArgs{Account: neon.LookupAccount(plat)}); err != nil {
 		return err
 	}
-	_, err = kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
-		PlatformStack:            plat,
+	_, err = kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{
+		Account:                  kinde.LookupAccount(plat),
 		StageDomain:              cb.StageHost,
 		ProdDomain:               cb.ProdHost,
 		ExtraNonProdRedirectURIs: cb.ExtraNonProdRedirects,
@@ -250,16 +255,21 @@ func deploySharedCloudRunProject(ctx *pulumi.Context) error {
 }
 
 func deployStageCloudRunEnv(ctx *pulumi.Context, dbBranchFrom *string, issuerCh chan string) error {
+	plat, err := openbase.LookupPlatform(ctx)
+	if err != nil {
+		return err
+	}
 	shared, err := openbase.LookupShared(ctx)
 	if err != nil {
 		return err
 	}
-	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{Shared: shared})
+	gcpAcc := gcp.LookupAccount(plat)
+	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{Project: neon.LookupProject(shared)})
 	if err != nil {
 		return err
 	}
 	bkt, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
-		GCPProject:      pulumi.String("cloudvoyant-openbase"),
+		Account:         gcpAcc,
 		BucketNamespace: "cloudvoyant-openbase",
 	})
 	if err != nil {
@@ -270,14 +280,15 @@ func deployStageCloudRunEnv(ctx *pulumi.Context, dbBranchFrom *string, issuerCh 
 		return err
 	}
 	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-		Shared:  shared,
+		Project: kinde.LookupProject(shared),
 		SiteURL: pulumi.String(siteURL),
 	})
 	if err != nil {
 		return err
 	}
 	_, err = gcp.NewCloudRunService(ctx, "web", &gcp.CloudRunServiceArgs{
-		GCPProject:       pulumi.String("cloudvoyant-openbase"),
+		Account:          gcpAcc,
+		Project:          gcp.LookupProject(shared),
 		GCPProjectNumber: pulumi.String("785485436615"),
 		Image:            pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
 		Links:            []core.Resource{bkt},
@@ -301,7 +312,7 @@ func deployStageCloudRunEnv(ctx *pulumi.Context, dbBranchFrom *string, issuerCh 
 func runHybridRemoteBucketWIFSpec(t *testing.T) {
 	t.Helper()
 	// Arrange.
-	mocks := newScopeMocks()
+	mocks := newScopeMocks(false)
 	bktNameCh := make(chan string, 1)
 
 	// Act.
@@ -314,22 +325,17 @@ func runHybridRemoteBucketWIFSpec(t *testing.T) {
 		if err != nil {
 			return err
 		}
+		gcpAcc := gcp.LookupAccount(platRef)
 		sharedAssets := sharedRef.Resource(
 			"shared-assets",
 			core.WithRemoteKind("gcp-bucket"),
 		)
 		sharedAssets.Attr("bucketName").ApplyT(func(v string) string { bktNameCh <- v; return v })
 		_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-			Shared:    sharedRef,
+			Project:   vercel.LookupProject(sharedRef),
 			SourceDir: ".",
 			Links:     []core.Resource{sharedAssets},
-			Brokers: []core.IdentityBroker{
-				gcp.WIFBroker{
-					GCPProject:   pulumi.String("cloudvoyant-openbase"),
-					PoolName:     platRef.Output("workloadIdentityPoolName"),
-					OIDCProvider: platRef.Output("vercelOidcProviderName"),
-				},
-			},
+			Brokers:   []core.IdentityBroker{gcpAcc.WIFBroker("vercel")},
 			Env: map[string]pulumi.StringInput{
 				"BUCKET_NAME": sharedAssets.Attr("bucketName"),
 			},
@@ -353,12 +359,12 @@ func runStackGuardrailSpec(t *testing.T) {
 	errProjOnDev := pulumi.RunErr(func(ctx *pulumi.Context) error {
 		_, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{OrgID: "org-1"})
 		return err
-	}, pulumi.WithMocks("storefront", "dev", newScopeMocks()))
+	}, pulumi.WithMocks("storefront", "dev", newScopeMocks(false)))
 
 	errUnknownStack := pulumi.RunErr(func(ctx *pulumi.Context) error {
 		_, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{GCPProject: pulumi.String("cloudvoyant-openbase")})
 		return err
-	}, pulumi.WithMocks("storefront", "qa-invalid", newScopeMocks()))
+	}, pulumi.WithMocks("storefront", "qa-invalid", newScopeMocks(false)))
 
 	// Assert.
 	if !errors.Is(errProjOnDev, core.ErrInvalidEnvironment) {
@@ -369,15 +375,15 @@ func runStackGuardrailSpec(t *testing.T) {
 	}
 }
 
-func sampleKindePlatformArgs() *kinde.PlatformArgs {
-	return &kinde.PlatformArgs{
+func sampleKindeAccountArgs() *kinde.AccountArgs {
+	return &kinde.AccountArgs{
 		Org: "cloudvoyant",
-		NonProd: kinde.TenantCredentials{
+		NonProd: kinde.EnvironmentCredentials{
 			Domain:       "nonprod-test.kinde.com",
 			ClientID:     pulumi.String("nonprod-cid"),
 			ClientSecret: pulumi.String("nonprod-sec"),
 		},
-		Prod: kinde.TenantCredentials{
+		Prod: kinde.EnvironmentCredentials{
 			Domain:       "prod-test.kinde.com",
 			ClientID:     pulumi.String("prod-cid"),
 			ClientSecret: pulumi.String("prod-sec"),
@@ -386,12 +392,13 @@ func sampleKindePlatformArgs() *kinde.PlatformArgs {
 }
 
 type scopeMocks struct {
-	mu     sync.Mutex
-	counts map[string]int
+	mu           sync.Mutex
+	counts       map[string]int
+	multiAccount bool
 }
 
-func newScopeMocks() *scopeMocks {
-	return &scopeMocks{counts: map[string]int{}}
+func newScopeMocks(multiAccount bool) *scopeMocks {
+	return &scopeMocks{counts: map[string]int{}, multiAccount: multiAccount}
 }
 
 func (m *scopeMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.PropertyMap, error) {
@@ -399,7 +406,7 @@ func (m *scopeMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Pr
 	defer m.mu.Unlock()
 	m.counts[a.TypeToken]++
 	outs := a.Inputs.Copy()
-	populateScopeMockOutputs(a, outs)
+	populateScopeMockOutputs(a, outs, m.multiAccount)
 	return a.Name + "_id", outs, nil
 }
 
@@ -424,7 +431,7 @@ func (*scopeMocks) Call(a pulumi.MockCallArgs) (resource.PropertyMap, error) {
 	return a.Args, nil
 }
 
-func populateScopeMockOutputs(a pulumi.MockResourceArgs, outs resource.PropertyMap) {
+func populateScopeMockOutputs(a pulumi.MockResourceArgs, outs resource.PropertyMap, multiAccount bool) {
 	switch a.TypeToken {
 	case "neon:index/project:Project":
 		outs["branch"] = resource.NewObjectProperty(resource.PropertyMap{"id": resource.NewStringProperty("br-main")})
@@ -445,40 +452,59 @@ func populateScopeMockOutputs(a pulumi.MockResourceArgs, outs resource.PropertyM
 	case "gcp:cloudrunv2/service:Service":
 		outs["uri"] = resource.NewStringProperty("https://orders-stage.a.run.app")
 	case "pulumi:pulumi:StackReference":
-		outs["outputs"] = mockStackReferenceOutputs(a.Inputs["name"].StringValue())
+		outs["outputs"] = mockStackReferenceOutputs(a.Inputs["name"].StringValue(), multiAccount)
 	}
 }
 
-func mockStackReferenceOutputs(stackName string) resource.PropertyValue {
+func mockStackReferenceOutputs(stackName string, multiAccount bool) resource.PropertyValue {
 	if strings.HasSuffix(stackName, "/platform/platform") {
-		return resource.NewObjectProperty(resource.PropertyMap{
-			"gcpProject":                  resource.NewStringProperty("cloudvoyant-openbase"),
-			"workloadIdentityPoolName":    resource.NewStringProperty("projects/123/locations/global/workloadIdentityPools/ob-pool"),
-			"vercelOidcProviderName":      resource.NewStringProperty("projects/123/locations/global/workloadIdentityPools/ob-pool/providers/vercel-oidc"),
-			"teamId":                      resource.NewStringProperty("team_123"),
-			"teamSlug":                    resource.NewStringProperty("cloudvoyant"),
-			"neonOrgId":                   resource.NewStringProperty("org-neon"),
-			"neonDefaultRegionId":         resource.NewStringProperty("aws-us-east-1"),
-			"nonProdIssuerUrl":            resource.NewStringProperty("https://nonprod-ref.kinde.com"),
-			"prodIssuerUrl":               resource.NewStringProperty("https://prod-ref.kinde.com"),
-			"kindeNonProdM2mClientId":     resource.NewStringProperty("nonprod-m2m-id"),
-			"kindeNonProdM2mClientSecret": resource.NewStringProperty("nonprod-m2m-sec"),
-			"kindeProdM2mClientId":        resource.NewStringProperty("prod-m2m-id"),
-			"kindeProdM2mClientSecret":    resource.NewStringProperty("prod-m2m-sec"),
-			core.ManifestOutputKey: resource.NewObjectProperty(resource.PropertyMap{
-				"org": resource.NewStringProperty("cloudvoyant"),
-				"resources": resource.NewObjectProperty(resource.PropertyMap{
-					"gcp-analytics": resource.NewObjectProperty(resource.PropertyMap{
-						"kind": resource.NewStringProperty("gcp-platform"),
-						"attributes": resource.NewObjectProperty(resource.PropertyMap{
-							"gcpProject": resource.NewStringProperty("cloudvoyant-analytics"),
-							"baseDomain": resource.NewStringProperty("analytics.acme.io"),
-						}),
-					}),
-				}),
+		return mockPlatformStackOutputs(multiAccount)
+	}
+	return mockSharedStackOutputs()
+}
+
+func mockPlatformStackOutputs(multiAccount bool) resource.PropertyValue {
+	gcpResources := resource.PropertyMap{
+		"gcp": resource.NewObjectProperty(resource.PropertyMap{
+			"kind": resource.NewStringProperty("gcp-account"),
+			"attributes": resource.NewObjectProperty(resource.PropertyMap{
+				"gcpProject":               resource.NewStringProperty("cloudvoyant-openbase"),
+				"workloadIdentityPoolName": resource.NewStringProperty("projects/123/locations/global/workloadIdentityPools/ob-pool"),
+				"vercelOidcProviderName":   resource.NewStringProperty("projects/123/locations/global/workloadIdentityPools/ob-pool/providers/vercel-oidc"),
+			}),
+		}),
+	}
+	if multiAccount {
+		gcpResources["gcp-analytics"] = resource.NewObjectProperty(resource.PropertyMap{
+			"kind": resource.NewStringProperty("gcp-account"),
+			"attributes": resource.NewObjectProperty(resource.PropertyMap{
+				"gcpProject": resource.NewStringProperty("cloudvoyant-analytics"),
+				"baseDomain": resource.NewStringProperty("analytics.acme.io"),
 			}),
 		})
 	}
+	return resource.NewObjectProperty(resource.PropertyMap{
+		"gcpProject":                  resource.NewStringProperty("cloudvoyant-openbase"),
+		"workloadIdentityPoolName":    resource.NewStringProperty("projects/123/locations/global/workloadIdentityPools/ob-pool"),
+		"vercelOidcProviderName":      resource.NewStringProperty("projects/123/locations/global/workloadIdentityPools/ob-pool/providers/vercel-oidc"),
+		"teamId":                      resource.NewStringProperty("team_123"),
+		"teamSlug":                    resource.NewStringProperty("cloudvoyant"),
+		"neonOrgId":                   resource.NewStringProperty("org-neon"),
+		"neonDefaultRegionId":         resource.NewStringProperty("aws-us-east-1"),
+		"nonProdIssuerUrl":            resource.NewStringProperty("https://nonprod-ref.kinde.com"),
+		"prodIssuerUrl":               resource.NewStringProperty("https://prod-ref.kinde.com"),
+		"kindeNonProdM2mClientId":     resource.NewStringProperty("nonprod-m2m-id"),
+		"kindeNonProdM2mClientSecret": resource.NewStringProperty("nonprod-m2m-sec"),
+		"kindeProdM2mClientId":        resource.NewStringProperty("prod-m2m-id"),
+		"kindeProdM2mClientSecret":    resource.NewStringProperty("prod-m2m-sec"),
+		core.ManifestOutputKey: resource.NewObjectProperty(resource.PropertyMap{
+			"org":       resource.NewStringProperty("cloudvoyant"),
+			"resources": resource.NewObjectProperty(gcpResources),
+		}),
+	})
+}
+
+func mockSharedStackOutputs() resource.PropertyValue {
 	return resource.NewObjectProperty(resource.PropertyMap{
 		"vercelProjectId":          resource.NewStringProperty("prj_shared_123"),
 		"vercelProjectName":        resource.NewStringProperty("openbase-storefront"),
@@ -539,13 +565,21 @@ func requireNoErr(t *testing.T, err error) {
 func runMultiGCPAndRawPulumiSpec(t *testing.T) {
 	t.Helper()
 	// Arrange.
-	platMocks := newScopeMocks()
-	sharedMocks := newScopeMocks()
-	envMocks := newScopeMocks()
+	platMocks := newScopeMocks(true)
+	sharedMocks := newScopeMocks(true)
+	envMocks := newScopeMocks(true)
 	analyticsRepoURL := make(chan string, 1)
 
 	// Act.
 	errPlat := pulumi.RunErr(deployMultiAccountGCPPlatform, pulumi.WithMocks("platform", "platform", platMocks))
+	errAmbig := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		plat, err := openbase.LookupPlatform(ctx)
+		if err != nil {
+			return err
+		}
+		ctx.Export("ambigProj", gcp.LookupAccount(plat).GCPProject)
+		return nil
+	}, pulumi.WithMocks("orders-shared", "shared", newScopeMocks(true)))
 	errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
 		return deployMultiProjectGCPShared(ctx, analyticsRepoURL)
 	}, pulumi.WithMocks("orders-shared", "shared", sharedMocks))
@@ -553,6 +587,9 @@ func runMultiGCPAndRawPulumiSpec(t *testing.T) {
 
 	// Assert.
 	requireNoErr(t, errPlat)
+	if !errors.Is(errAmbig, core.ErrAmbiguousResource) {
+		t.Fatalf("expected ErrAmbiguousResource on unnamed LookupAccount with 2 accounts, got %v", errAmbig)
+	}
 	requireNoErr(t, errShared)
 	requireNoErr(t, errEnv)
 	platMocks.assertCount(t, "pulumi:providers:gcp", 1)
@@ -573,14 +610,14 @@ func deployMultiAccountGCPPlatform(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := gcp.NewPlatform(ctx, "gcp-core", &gcp.PlatformArgs{
+	if _, err := gcp.NewAccount(ctx, "gcp", &gcp.AccountArgs{
 		Org:         "cloudvoyant",
 		GCPProject:  pulumi.String("cloudvoyant-openbase"),
 		SkipKeyRing: true,
 	}); err != nil {
 		return err
 	}
-	_, err = gcp.NewPlatform(ctx, "gcp-analytics", &gcp.PlatformArgs{
+	_, err = gcp.NewAccount(ctx, "gcp-analytics", &gcp.AccountArgs{
 		Org:         "cloudvoyant",
 		GCPProject:  pulumi.String("cloudvoyant-analytics"),
 		BaseDomain:  "analytics.acme.io",
@@ -590,18 +627,17 @@ func deployMultiAccountGCPPlatform(ctx *pulumi.Context) error {
 }
 
 func deployMultiProjectGCPShared(ctx *pulumi.Context, analyticsRepoURL chan<- string) error {
-	plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
+	plat, err := openbase.LookupPlatform(ctx)
 	if err != nil {
 		return err
 	}
 	if _, err := gcp.NewProject(ctx, "gcp-core", &gcp.ProjectArgs{
-		PlatformStack: plat,
+		Account: gcp.LookupAccount(plat, "gcp"),
 	}); err != nil {
 		return err
 	}
 	analyticsAR, err := gcp.NewProject(ctx, "gcp-analytics", &gcp.ProjectArgs{
-		PlatformStack:    plat,
-		PlatformResource: "gcp-analytics",
+		Account: gcp.LookupAccount(plat, "gcp-analytics"),
 	})
 	if err != nil {
 		return err
@@ -611,19 +647,25 @@ func deployMultiProjectGCPShared(ctx *pulumi.Context, analyticsRepoURL chan<- st
 }
 
 func deployEnvWithRawPulumi(ctx *pulumi.Context) error {
+	plat, err := openbase.LookupPlatform(ctx)
+	if err != nil {
+		return err
+	}
+	coreAcc := gcp.LookupAccount(plat, "gcp")
+	analyticsAcc := gcp.LookupAccount(plat, "gcp-analytics")
 	uploads, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
-		GCPProject: pulumi.String("cloudvoyant-openbase"),
+		Account: coreAcc,
 	})
 	if err != nil {
 		return err
 	}
 	if _, err := gcp.NewBucket(ctx, "analytics-events", &gcp.BucketArgs{
-		GCPProject: pulumi.String("cloudvoyant-analytics"),
+		Account: analyticsAcc,
 	}); err != nil {
 		return err
 	}
 	rawSecret, err := secretmanager.NewSecret(ctx, "raw-partner-key", &secretmanager.SecretArgs{
-		Project:     pulumi.String("cloudvoyant-openbase"),
+		Project:     coreAcc.GCPProject,
 		SecretId:    pulumi.String("orders-dev-raw-partner-key"),
 		Replication: &secretmanager.SecretReplicationArgs{Auto: &secretmanager.SecretReplicationAutoArgs{}},
 	})
@@ -631,16 +673,16 @@ func deployEnvWithRawPulumi(ctx *pulumi.Context) error {
 		return err
 	}
 	svc, err := gcp.NewCloudRunService(ctx, "api", &gcp.CloudRunServiceArgs{
-		GCPProject: pulumi.String("cloudvoyant-openbase"),
-		Image:      pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/orders/api:v1"),
-		Links:      []core.Resource{uploads},
-		Env:        map[string]pulumi.StringInput{"RAW_SECRET_ID": rawSecret.SecretId},
+		Account: coreAcc,
+		Image:   pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/orders/api:v1"),
+		Links:   []core.Resource{uploads},
+		Env:     map[string]pulumi.StringInput{"RAW_SECRET_ID": rawSecret.SecretId},
 	})
 	if err != nil {
 		return err
 	}
 	_, err = secretmanager.NewSecretIamMember(ctx, "raw-partner-key-accessor", &secretmanager.SecretIamMemberArgs{
-		Project:  pulumi.String("cloudvoyant-openbase"),
+		Project:  coreAcc.GCPProject,
 		SecretId: rawSecret.SecretId,
 		Role:     pulumi.String("roles/secretmanager.secretAccessor"),
 		Member:   pulumi.Sprintf("serviceAccount:%s", svc.ServiceAccountEmail),

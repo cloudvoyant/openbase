@@ -23,9 +23,9 @@ func main() {
 		if err != nil {
 			return err
 		}
-		authProj, err := kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
-			Project:                    appProject,
-			PlatformStack:              plat,
+		authProj, err := kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{
+			ProjectName:                appProject,
+			Account:                    kinde.LookupAccount(plat),
 			AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", vProjName),
 			VercelProjectName:          vProjName,
 			VercelTeamSlug:             teamSlug,
@@ -37,15 +37,15 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{
-			Project:       appProject,
-			PlatformStack: plat,
+		if _, err := neon.NewProject(ctx, "neon", &neon.ProjectArgs{
+			ProjectName: appProject,
+			Account:     neon.LookupAccount(plat),
 		}); err != nil {
 			return err
 		}
-		_, err = vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
-			Project:           appProject,
-			PlatformStack:     plat,
+		_, err = vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
+			ProjectName:       appProject,
+			Account:           vercel.LookupAccount(plat),
 			VercelProjectName: vProjName,
 			EnableBlobStore:   true,
 			PreviewEnv: map[string]pulumi.StringInput{

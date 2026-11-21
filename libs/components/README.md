@@ -13,11 +13,11 @@ go get github.com/cloudvoyant/openbase/libs/components@v0.1.0
 | Package | Role | Constructors and Helpers |
 | --- | --- | --- |
 | `libs/components` | Cross-stack `LookupPlatform` and `LookupShared` helpers and supported environment conventions | `LookupPlatform`, `LookupShared`, `SupportedEnvironments` |
-| `libs/components/core` | `PlatformResource` and `Resource` (`StatelessResource`, `StatefulResource`) contracts, environment rules, domain formulas, naming, tags, `Links`, `ScopeRef`, and `IdentityBroker` | `PlatformResource`, `StatelessResource`, `StatefulResource`, `NewCustomPlatform`, `NewStateless`, `NewStateful`, `ResolveLinks` |
-| `libs/components/gcp` | GCP org platform, per-app Artifact Registry project, wildcard HTTPS load balancing, Cloud Run v2, `FederatedIdentity` and `WIFBroker`, and GCS storage | `NewPlatform`, `NewProject`, `NewCloudLoadBalancer`, `NewCloudRunService`, `NewBucket`, `NewFederatedIdentity`, `WIFBroker`, `overlayfs` |
-| `libs/components/vercel` | Vercel team platform, per-app project (`staging` CustomEnvironment, domains, bypass), WebApp, and Blob storage | `NewPlatform`, `NewProject`, `NewWebApp`, `NewBlobStore` |
-| `libs/components/neon` | Neon org defaults, per-app Neon Project cluster, and branched serverless PostgreSQL | `NewPlatform`, `NewProject`, `NewDatabase` |
-| `libs/components/kinde` | Two-tenant Kinde org connections (`NonProd` and `Prod`), per-app OIDC `Application` pairs, and environment routing | `NewPlatform`, `NewProject`, `NewOidcApp` |
+| `libs/components/core` | `AccountResource` and `Resource` (`StatelessResource`, `StatefulResource`) contracts, environment rules, domain formulas, naming, tags, `Links`, `ScopeRef`, and `IdentityBroker` | `AccountResource`, `StatelessResource`, `StatefulResource`, `NewCustomAccount`, `NewStateless`, `NewStateful`, `ResolveLinks` |
+| `libs/components/gcp` | GCP account foundations, per-app Artifact Registry project, wildcard HTTPS load balancing, Cloud Run v2, `FederatedIdentity` and `WIFBroker`, and GCS storage | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewCloudLoadBalancer`, `NewCloudRunService`, `NewBucket`, `NewFederatedIdentity`, `WIFBroker`, `overlayfs` |
+| `libs/components/vercel` | Vercel team account, per-app project (`staging` CustomEnvironment, domains, bypass), WebApp, and Blob storage | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewWebApp`, `NewBlobStore` |
+| `libs/components/neon` | Neon org account defaults, per-app Neon Project cluster, and branched serverless PostgreSQL | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewDatabase` |
+| `libs/components/kinde` | Kinde Business account (`NonProd` and `Prod` `EnvironmentCredentials`), per-app OIDC `Application` pairs, and environment routing | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewOidcApp` |
 | `libs/components/synthetic` | Deterministic offline doubles for fast unit tests | `NewService`, `NewStorage` |
 
 Standalone consumer fixtures and live cloud end-to-end suites live in [e2e/components](../../e2e/README.md).

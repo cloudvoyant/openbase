@@ -6,6 +6,7 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
+	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/core"
 	"github.com/cloudvoyant/openbase/libs/components/gcp"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
@@ -23,8 +24,6 @@ func TestVercelWebApp(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				app, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-					Project:           "storefront",
-					Environment:       "preview-pr-22",
 					Secrets:           map[string]pulumi.StringInput{"SESSION_SECRET": pulumi.String("s3cr3t")},
 					VercelProjectID:   pulumi.String("prj_123"),
 					VercelProjectName: "openbase-storefront",
@@ -54,16 +53,18 @@ func TestVercelWebApp(t *testing.T) {
 			mocks.assertCount(t, "vercel:index/alias:Alias", 1)
 		})
 
-		t.Run("when resolving projectName and teamSlug from ProjectStackRef, then stage computes the team-scoped alias URL", func(t *testing.T) {
+		t.Run("when resolving projectName and teamSlug from LookupProject, then stage computes the team-scoped alias URL", func(t *testing.T) {
 			// Arrange.
 			urlCh := make(chan string, 1)
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				shared, err := openbase.LookupShared(ctx)
+				if err != nil {
+					return err
+				}
 				app, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-					Project:         "storefront",
-					Environment:     "stage",
-					ProjectStackRef: "org/storefront-shared/shared",
+					Project: vercel.LookupProject(shared),
 				})
 				if err != nil {
 					return err
@@ -74,16 +75,13 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Assert.
 			requireVercelNoErr(t, err)
-			assertVercelEq(t, "stage alias URL from StackReference", <-urlCh, "https://openbase-storefront-stage-cloudvoyant.vercel.app")
+			assertVercelEq(t, "stage alias URL from LookupProject", <-urlCh, "https://openbase-storefront-stage-cloudvoyant.vercel.app")
 		})
 
-		t.Run("when VercelProject, ProjectStackRef, and VercelProjectID are all omitted, then NewWebApp returns ErrProjectSourceRequired", func(t *testing.T) {
+		t.Run("when Project and VercelProjectID are both omitted, then NewWebApp returns ErrProjectSourceRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-					Project:     "storefront",
-					Environment: "dev",
-				})
+				_, e := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{})
 				return e
 			}, pulumi.WithMocks("storefront", "dev", newVercelMocks()))
 
@@ -99,19 +97,21 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				shared, err := openbase.LookupShared(ctx)
+				if err != nil {
+					return err
+				}
+				vProj := vercel.LookupProject(shared)
 				blobs, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
-					Project:            "storefront",
-					Environment:        "dev",
-					ProjectStackRef:    "org/storefront-shared/shared",
+					Project:            vProj,
 					BlobReadWriteToken: pulumi.String("vercel_blob_rw_tok"),
 				})
 				if err != nil {
 					return err
 				}
 				_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-					Project:     "storefront",
-					Environment: "dev",
-					Links:       []core.Resource{blobs},
+					Project: vProj,
+					Links:   []core.Resource{blobs},
 					Env: map[string]pulumi.StringInput{
 						"BLOB_BASE_URL": blobs.BlobBaseURL,
 						"BLOB_PREFIX":   pulumi.String(blobs.BlobPrefix),
@@ -119,7 +119,6 @@ func TestVercelWebApp(t *testing.T) {
 					Secrets: map[string]pulumi.StringInput{
 						"BLOB_READ_WRITE_TOKEN": pulumi.String("vercel_blob_rw_tok"),
 					},
-					ProjectStackRef: "org/storefront-shared/shared",
 				})
 				return err
 			}, pulumi.WithMocks("storefront", "dev", mocks))
@@ -137,8 +136,6 @@ func TestVercelWebApp(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				app, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-					Project:         "storefront",
-					Environment:     "preview-pr-22",
 					VercelProjectID: pulumi.String("prj_123"),
 					BaseDomain:      "vercel.cloudvoyant.io",
 					ExtraDomains:    []string{"pr22.storefront.io"},
@@ -164,11 +161,13 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-					Project:              "storefront",
-					Environment:          "stage",
+				shared, err := openbase.LookupShared(ctx)
+				if err != nil {
+					return err
+				}
+				_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
+					Project:              vercel.LookupProject(shared),
 					Env:                  map[string]pulumi.StringInput{"KINDE_ISSUER_URL": pulumi.String("https://prod.kinde.com")},
-					ProjectStackRef:      "org/storefront-shared/shared",
 					SkipStageEnvironment: true,
 					SourceDir:            ".",
 				})

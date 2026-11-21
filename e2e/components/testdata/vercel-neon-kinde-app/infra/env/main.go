@@ -41,17 +41,18 @@ func registerVercelEnvResources(
 	tier core.Environment,
 	appProject, vProjName, teamID, teamSlug, baseDomain, blobRW string,
 ) error {
+	vProj := vercel.LookupProject(shared)
 	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-		Project: appProject,
-		Shared:  shared,
-		APIKey:  optionalString(os.Getenv("NEON_API_KEY")),
+		ProjectName: appProject,
+		Project:     neon.LookupProject(shared),
+		APIKey:      optionalString(os.Getenv("NEON_API_KEY")),
 	})
 	if err != nil {
 		return err
 	}
 	uploads, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
-		Project:            appProject,
-		Shared:             shared,
+		ProjectName:        appProject,
+		Project:            vProj,
 		TeamID:             teamID,
 		BlobReadWriteToken: optionalString(blobRW),
 	})
@@ -59,8 +60,8 @@ func registerVercelEnvResources(
 		return err
 	}
 	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-		Project:           appProject,
-		Shared:            shared,
+		ProjectName:       appProject,
+		Project:           kinde.LookupProject(shared),
 		VercelProjectName: vProjName,
 		VercelTeamSlug:    teamSlug,
 		BaseDomain:        baseDomain,
@@ -77,8 +78,8 @@ func registerVercelEnvResources(
 		appSecrets["BLOB_READ_WRITE_TOKEN"] = pulumi.String(blobRW)
 	}
 	_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-		Project:           appProject,
-		Shared:            shared,
+		ProjectName:       appProject,
+		Project:           vProj,
 		VercelProjectName: vProjName,
 		TeamID:            teamID,
 		TeamSlug:          teamSlug,

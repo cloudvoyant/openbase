@@ -1,16 +1,16 @@
-# Kinde platform and project - software architecture
+# Kinde account and project - software architecture
 
 ## Overview
 
-`libs/components/kinde` separates organization two-tenant Kinde connections (`kinde.Platform`, `core.PlatformResource`) from shared OIDC client registrations (`kinde.Project`, `core.StatelessResource` with `Environment: "shared"`) over the bridged `kinde-oss/kinde` provider (`libs/internal/pulumi-kinde-go-sdk`). `kinde.Platform` runs once per organization to configure `NonProd` and `Prod` Kinde tenants and discover shared authentication connections. `kinde.Project` runs once per repository in `infra/shared` to register paired `NonProd` and `Prod` OIDC applications.
+`libs/components/kinde` separates Kinde Business account connections (`kinde.Account`, `core.AccountResource`) from shared OIDC client registrations (`kinde.Project`, `core.StatelessResource` with `Environment: "shared"`) over the bridged `kinde-oss/kinde` provider (`libs/internal/pulumi-kinde-go-sdk`). `kinde.Account` runs once per organization in `infra/platform` to configure `NonProd` and `Prod` Kinde environments (`EnvironmentCredentials`) inside the Business account and discover shared authentication connections. `kinde.Project` runs once per repository in `infra/shared` to register paired `NonProd` and `Prod` OIDC applications.
 
 ## Requirement
 
 ### Functional
 
-- Connect to separate `NonProd` and `Prod` Kinde tenants and discover shared authentication strategies once per organization.
+- Connect to a Kinde Business account's `NonProd` and `Prod` environments and discover shared authentication strategies once per organization.
 - Register paired `NonProd` and `Prod` OAuth2/OIDC applications per repository.
-- Allow localhost, `dev`, and wildcard preview callback URLs on the `NonProd` tenant while restricting the `Prod` tenant to `stage` and `prod` domains.
+- Allow localhost, `dev`, and wildcard preview callback URLs on the `NonProd` environment while restricting the `Prod` environment to `stage` and `prod` domains.
 
 ### Non-Functional
 
@@ -24,14 +24,14 @@
 
 ```mermaid
 flowchart TD
-    subgraph Org["Organization Stack (kinde.Platform)"]
-        NonProdProv["kinde.Provider (NonProd tenant)"]
-        ProdProv["kinde.Provider (Prod tenant)"]
+    subgraph Org["Organization Stack (kinde.NewAccount)"]
+        NonProdProv["kinde.Provider (NonProd environment)"]
+        ProdProv["kinde.Provider (Prod environment)"]
         ConnLookup["GetConnections (email:password)"]
         NonProdProv --> ConnLookup
     end
 
-    subgraph App["App infra/shared Stack (kinde.Project)"]
+    subgraph App["App infra/shared Stack (kinde.NewProject)"]
         NonProdApp["kinde.Application (NonProd: localhost + dev + preview wildcards)"]
         NonProdConn["kinde.ApplicationConnection (email:password)"]
         ProdApp["kinde.Application (Prod: stage + prod hosts)"]
@@ -42,13 +42,13 @@ flowchart TD
         EnvOidc["kinde.OidcApp (dev/preview -> NonProd, stage/prod -> Prod)"]
     end
 
-    Org --> App
-    NonProdApp --> EnvOidc
-    ProdApp --> EnvOidc
+    Org -->|"kinde.LookupAccount(plat)"| App
+    NonProdApp -->|"kinde.LookupProject(shared)"| EnvOidc
+    ProdApp -->|"kinde.LookupProject(shared)"| EnvOidc
 ```
 
-- `kinde.Platform` configures both tenant providers and caches `emailPasswordConn`.
-- `kinde.Project` creates one OIDC application per tenant, binds `email:password` on `NonProd`, and exports `nonProdClientId`, `nonProdClientSecret`, `prodClientId`, and `prodClientSecret`.
+- `kinde.Account` configures both Kinde environment providers and caches `emailPasswordConn`.
+- `kinde.Project` creates one OIDC application per Kinde environment, binds `email:password` on `NonProd`, and exports `nonProdClientId`, `nonProdClientSecret`, `prodClientId`, and `prodClientSecret`.
 - [kinde.OidcApp](./oidc-app.md) binds environment-specific redirect URLs on `dev`, `stage`, `prod`, and `preview-<slug>`.
 
 ### Data and Control Flow
@@ -56,14 +56,14 @@ flowchart TD
 ```mermaid
 sequenceDiagram
     participant Shared as "kinde.Project (infra/shared)"
-    participant NonProdT as "Kinde NonProd Tenant"
-    participant ProdT as "Kinde Prod Tenant"
+    participant NonProdE as "Kinde NonProd Environment"
+    participant ProdE as "Kinde Prod Environment"
     participant Env as "kinde.OidcApp (infra/env)"
 
-    Shared->>NonProdT: 1. Create Application + localhost/dev/preview wildcard callbacks
-    Shared->>NonProdT: 2. Attach email:password ApplicationConnection
-    Shared->>ProdT: 3. Create Application + stage & prod callbacks
-    Shared-->>Env: 4. Export nonProd* and prod* credentials via StackReference
+    Shared->>NonProdE: 1. Create Application + localhost/dev/preview wildcard callbacks
+    Shared->>NonProdE: 2. Attach email:password ApplicationConnection
+    Shared->>ProdE: 3. Create Application + stage & prod callbacks
+    Shared-->>Env: 4. Export nonProd* and prod* credentials via LookupProject
 ```
 
 `kinde.Project` registers wildcard callback patterns once in `infra/shared`. Because Kinde supports wildcard subdomain callbacks on `NonProd`, pull-request stacks never mutate Kinde application allowlists or race with concurrent PRs.
@@ -72,33 +72,31 @@ sequenceDiagram
 
 ```go
 // Tier 1: Organization (infra/platform/main.go)
-plat, err := kinde.NewPlatform(ctx, "kinde-platform", &kinde.PlatformArgs{
+acc, err := kinde.NewAccount(ctx, "kinde", &kinde.AccountArgs{
 	Org:     "cloudvoyant",
-	NonProd: nonProdTenantCreds,
-	Prod:    prodTenantCreds,
+	NonProd: nonProdEnvCreds,
+	Prod:    prodEnvCreds,
 })
 
 // Shared Project Resource in infra/shared/main.go
-platRef, err := openbase.LookupPlatform(ctx, "cloudvoyant/platform/platform")
-proj, err := kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
-	Project:        "storefront",
-	Repo:           "cloudvoyant/storefront",
-	PlatformStack:  platRef,
+plat, err := openbase.LookupPlatform(ctx)
+proj, err := kinde.NewProject(ctx, "auth", &kinde.ProjectArgs{
+	Account:        kinde.LookupAccount(plat),
 	VercelTeamSlug: "cloudvoyant",
 	BaseDomain:     "vercel.cloudvoyant.io",
 })
 ```
 
-| Spec | Contract | Synthesized `kinde` Resources | Key Outputs |
+| Type | Contract | Synthesized `kinde` Resources | Key Outputs |
 | :--- | :--- | :--- | :--- |
-| `kinde.Platform` | `core.PlatformResource` | 2x `kinde.Provider`, `GetConnections` | `nonProdIssuerUrl`, `prodIssuerUrl`, `emailPasswordConn` |
+| `kinde.Account` | `core.AccountResource` | 2x `kinde.Provider`, `GetConnections` | `nonProdIssuerUrl`, `prodIssuerUrl`, `emailPasswordConn` |
 | `kinde.Project` | `core.StatelessResource` (`shared`) | 2x `kinde.Application`, `kinde.ApplicationConnection` | `nonProdIssuerUrl`, `nonProdClientId`, `nonProdClientSecret`, `prodIssuerUrl`, `prodClientId`, `prodClientSecret` |
 
 ## Implementation
 
 ### Sandbox import and retention
 
-`ImportNonProdAppID`, `ImportProdAppID`, and `RetainApplicationsOnDelete` allow E2E suites and existing applications to adopt pre-existing Kinde OIDC applications and update callback lists in place without deleting tenant apps on teardown.
+`ImportNonProdAppID`, `ImportProdAppID`, and `RetainApplicationsOnDelete` allow E2E suites and existing applications to adopt pre-existing Kinde OIDC applications and update callback lists in place without deleting apps on teardown.
 
 ### Issuer normalization
 

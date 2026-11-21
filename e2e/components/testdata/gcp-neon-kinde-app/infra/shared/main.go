@@ -26,22 +26,22 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if _, err := gcp.NewProject(ctx, "gcp-project", &gcp.ProjectArgs{
-			Project:       appProject,
-			PlatformStack: plat,
-			BaseDomain:    baseDomain,
+		if _, err := gcp.NewProject(ctx, "gcp", &gcp.ProjectArgs{
+			ProjectName: appProject,
+			Account:     gcp.LookupAccount(plat),
+			BaseDomain:  baseDomain,
 		}); err != nil {
 			return err
 		}
-		if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{
-			Project:       appProject,
-			PlatformStack: plat,
+		if _, err := neon.NewProject(ctx, "neon", &neon.ProjectArgs{
+			ProjectName: appProject,
+			Account:     neon.LookupAccount(plat),
 		}); err != nil {
 			return err
 		}
-		_, err = kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
-			Project:                    appProject,
-			PlatformStack:              plat,
+		_, err = kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{
+			ProjectName:                appProject,
+			Account:                    kinde.LookupAccount(plat),
 			AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", "openbase-e2e-"+appProject),
 			BaseDomain:                 baseDomain,
 			StageDomain:                cb.StageHost,

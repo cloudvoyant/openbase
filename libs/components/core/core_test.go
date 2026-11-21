@@ -123,7 +123,7 @@ func TestNamingAndBranchValidation(t *testing.T) {
 			for _, tc := range cases {
 				err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 					_, e := core.NewStateful(ctx, "db", &core.StatefulArgs{
-						Project:     "orders",
+						ProjectName: "orders",
 						Environment: tc.target,
 						BranchFrom:  tc.source,
 					})
@@ -159,7 +159,7 @@ func TestLinksAndTags(t *testing.T) {
 				stateMeta = dbA.OpenBaseMeta()
 				gcpLabels = core.GCPLabels(stateMeta, map[string]string{"openbase.io/custom": "v1"})
 				api, err := core.NewStateless(ctx, "api", &core.StatelessArgs{
-					Project:     "orders",
+					ProjectName: "orders",
 					Environment: "preview-pr-7",
 					Links:       []core.Resource{dbA, dbB},
 				})
@@ -184,38 +184,100 @@ func TestLinksAndTags(t *testing.T) {
 	})
 }
 
-func TestPlatformContract(t *testing.T) {
-	t.Run("given a PlatformResource registration", func(t *testing.T) {
-		t.Run("when InitPlatform runs, then it populates org metadata distinct from ResourceMeta", func(t *testing.T) {
+func TestAccountContract(t *testing.T) {
+	t.Run("given an AccountResource registration and ScopeRef manifest lookups", func(t *testing.T) {
+		t.Run("when InitAccount runs, then it populates org metadata distinct from ResourceMeta", func(t *testing.T) {
 			// Arrange.
-			var plat core.PlatformResource
+			var acc core.AccountResource
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				tp := &testPlatform{}
-				if _, e := core.InitPlatform(ctx, "test:org:Platform", "org-platform", tp, &tp.PlatformMeta, core.PlatformSpec{
+				ta := &testAccount{}
+				if _, e := core.InitAccount(ctx, "test:org:Account", "gcp-account", ta, &ta.AccountMeta, core.AccountSpec{
 					Name: "gcp",
 					Org:  "cloudvoyant",
 				}); e != nil {
 					return e
 				}
-				plat = tp
+				acc = ta
 				return nil
-			}, pulumi.WithMocks("platform", "shared", &noopMocks{}))
+			}, pulumi.WithMocks("platform", "platform", &noopMocks{}))
 
 			// Assert.
 			requireNoErr(t, err)
-			assertEqual(t, "platform canonical", plat.OpenBasePlatform().CanonicalName, "cloudvoyant-gcp")
-			assertEqual(t, "platform tier tag", plat.OpenBasePlatform().Tags[core.TagTier], core.TierPlatform)
+			assertEqual(t, "account canonical", acc.OpenBaseAccount().CanonicalName, "cloudvoyant-gcp")
+			assertEqual(t, "account tier tag", acc.OpenBaseAccount().Tags[core.TagTier], core.TierAccount)
+		})
+
+		t.Run("when multiple accounts of the same kind exist, then unnamed ManifestAttr returns ErrAmbiguousResource while named lookup succeeds", func(t *testing.T) {
+			runManifestAmbiguitySpec(t)
 		})
 	})
 }
 
 // Private helpers ------------------------------------------------------------
 
-type testPlatform struct {
+func runManifestAmbiguitySpec(t *testing.T) {
+	t.Helper()
+	// Arrange.
+	namedCh := make(chan string, 1)
+
+	// Act.
+	errAmbig := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		ref, err := newMultiAccountLocalRef(ctx)
+		if err != nil {
+			return err
+		}
+		ctx.Export("proj", ref.ManifestAttr("gcp-account", nil, "gcpProject"))
+		return nil
+	}, pulumi.WithMocks("platform", "platform", &noopMocks{}))
+
+	errNamed := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		ref, err := newMultiAccountLocalRef(ctx)
+		if err != nil {
+			return err
+		}
+		ref.ManifestAttr("gcp-account", []string{"gcp-prod"}, "gcpProject").ApplyT(func(v string) string {
+			namedCh <- v
+			return v
+		})
+		return nil
+	}, pulumi.WithMocks("platform", "platform", &noopMocks{}))
+
+	// Assert.
+	if !errors.Is(errAmbig, core.ErrAmbiguousResource) {
+		t.Fatalf("expected ErrAmbiguousResource on unnamed multi-account lookup, got %v", errAmbig)
+	}
+	requireNoErr(t, errNamed)
+	assertEqual(t, "named account project", <-namedCh, "acme-prod")
+}
+
+func newMultiAccountLocalRef(ctx *pulumi.Context) (*core.ScopeRef, error) {
+	nonprod, err := core.NewCustomAccount(ctx, "gcp-nonprod", &core.CustomAccountArgs{
+		Org:        "acme",
+		Kind:       "gcp-account",
+		Attributes: map[string]pulumi.StringInput{"gcpProject": pulumi.String("acme-nonprod")},
+	})
+	if err != nil {
+		return nil, err
+	}
+	prod, err := core.NewCustomAccount(ctx, "gcp-prod", &core.CustomAccountArgs{
+		Org:        "acme",
+		Kind:       "gcp-account",
+		Attributes: map[string]pulumi.StringInput{"gcpProject": pulumi.String("acme-prod")},
+	})
+	if err != nil {
+		return nil, err
+	}
+	return core.NewLocalAccountScopeRef("", map[string]core.AccountResource{
+		"gcp-nonprod": nonprod,
+		"gcp-prod":    prod,
+	}), nil
+}
+
+type testAccount struct {
 	pulumi.ResourceState
-	core.PlatformMeta
+	core.AccountMeta
 }
 
 type noopMocks struct{}
@@ -228,7 +290,7 @@ func (*noopMocks) Call(a pulumi.MockCallArgs) (resource.PropertyMap, error) { re
 
 func newLinkedTestStateful(ctx *pulumi.Context, name string, grantedCh chan<- string) (*core.Stateful, error) {
 	return core.NewStateful(ctx, name, &core.StatefulArgs{
-		Project:     "orders",
+		ProjectName: "orders",
 		Repo:        "cloudvoyant/orders",
 		Environment: "preview-pr-7",
 		Kind:        "postgres",

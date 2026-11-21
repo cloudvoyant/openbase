@@ -1,4 +1,4 @@
-// Package gcp provides OpenBase Pulumi components for Google Cloud Platform across Platform, Project, CloudLoadBalancer, CloudRunService, and Bucket tiers.
+// Package gcp provides OpenBase Pulumi components for Google Cloud Platform across Account, Project, CloudLoadBalancer, CloudRunService, and Bucket tiers.
 package gcp
 
 import (
@@ -15,10 +15,19 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.PlatformResource = (*Platform)(nil)
+var (
+	_ core.AccountResource = (*Account)(nil)
+	_ AccountInput         = (*Account)(nil)
+	_ AccountInput         = (*AccountRef)(nil)
+)
 
-// PlatformArgs configures account-level GCP prerequisites (APIs, Workload Identity Pool, linked OIDC issuers, KMS, and wildcard Load Balancer).
-type PlatformArgs struct {
+// AccountInput is satisfied by in-memory *Account handles and cross-stack *AccountRef lookups.
+type AccountInput interface {
+	gcpAccountValues() gcpAccountData
+}
+
+// AccountArgs configures account-level GCP prerequisites (APIs, Workload Identity Pool, linked OIDC issuers, KMS, and wildcard Load Balancer).
+type AccountArgs struct {
 	Org                string
 	GCPProject         pulumi.StringPtrInput
 	GCPProjectNumber   string
@@ -32,10 +41,10 @@ type PlatformArgs struct {
 	ExtraLabels        map[string]string
 }
 
-// Platform holds account-level enabled GCP APIs, Workload Identity Pool, linked OIDC providers, KMS KeyRing, and optional LoadBalancer.
-type Platform struct {
+// Account holds account-level enabled GCP APIs, Workload Identity Pool, linked OIDC providers, KMS KeyRing, and optional LoadBalancer.
+type Account struct {
 	pulumi.ResourceState
-	core.PlatformMeta
+	core.AccountMeta
 
 	EnabledServices          []*projects.Service
 	WorkloadIdentityPool     *iam.WorkloadIdentityPool
@@ -43,39 +52,73 @@ type Platform struct {
 	OIDCProviderNames        map[string]pulumi.StringOutput
 	KeyRing                  *kms.KeyRing
 	LoadBalancer             *CloudLoadBalancer
+	GCPProject               pulumi.StringOutput
+	GCPProjectNumber         pulumi.StringOutput
 	BaseDomain               pulumi.StringOutput
 	Location                 pulumi.StringOutput
 	WorkloadIdentityPoolName pulumi.StringOutput
 	KeyRingID                pulumi.StringOutput
 }
 
-// NewPlatform provisions account-level GCP prerequisites and attaches any linked OIDC issuers.
-func NewPlatform(ctx *pulumi.Context, name string, args *PlatformArgs, opts ...pulumi.ResourceOption) (*Platform, error) {
+// AccountRef provides typed cross-stack access to a gcp.Account exported in infra/platform.
+type AccountRef struct {
+	GCPProject               pulumi.StringOutput
+	GCPProjectNumber         pulumi.StringOutput
+	Location                 pulumi.StringOutput
+	BaseDomain               pulumi.StringOutput
+	WorkloadIdentityPoolName pulumi.StringOutput
+	KeyRingID                pulumi.StringOutput
+
+	plat *core.ScopeRef
+	name []string
+}
+
+// NewAccount provisions account-level GCP prerequisites and attaches any linked OIDC issuers.
+func NewAccount(ctx *pulumi.Context, name string, args *AccountArgs, opts ...pulumi.ResourceOption) (*Account, error) {
 	if args == nil {
-		args = &PlatformArgs{}
+		args = &AccountArgs{}
 	}
-	name = defaultStr(name, "gcp-platform")
+	name = defaultStr(name, "gcp")
 	orgScope := core.OrgScope(args.Org, ctx.Organization())
-	res := &Platform{
+	res := &Account{
 		OIDCProviders:     map[string]*iam.WorkloadIdentityPoolProvider{},
 		OIDCProviderNames: map[string]pulumi.StringOutput{},
+		GCPProject:        ptrInputToStringOutput(args.GCPProject),
+		GCPProjectNumber:  pulumi.String(args.GCPProjectNumber).ToStringOutput(),
 	}
-	info, err := core.InitPlatform(ctx, "openbase:gcp:Platform", "gcp-platform", res, &res.PlatformMeta, core.PlatformSpec{
+	info, err := core.InitAccount(ctx, "openbase:gcp:Account", "gcp-account", res, &res.AccountMeta, core.AccountSpec{
 		Name: name,
 		Org:  orgScope,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionGCPPlatform(ctx, name, orgScope, info, *args, res); err != nil {
+	if err := provisionGCPAccount(ctx, name, orgScope, info, *args, res); err != nil {
 		return nil, err
 	}
-	res.PublishLink(ctx, buildGCPPlatformLink(info, *args, res))
-	return res, registerPlatformOutputs(ctx, *args, res)
+	res.PublishLink(ctx, buildGCPAccountLink(info, *args, res))
+	return res, registerAccountOutputs(ctx, *args, res)
+}
+
+// LookupAccount resolves a gcp.Account from an infra/platform ScopeRef (by unique kind or explicit name).
+func LookupAccount(plat *core.ScopeRef, name ...string) *AccountRef {
+	if plat == nil {
+		return nil
+	}
+	return &AccountRef{
+		GCPProject:               plat.ManifestAttr("gcp-account", name, "gcpProject"),
+		GCPProjectNumber:         plat.ManifestAttr("gcp-account", name, "gcpProjectNumber"),
+		Location:                 plat.ManifestAttr("gcp-account", name, "location"),
+		BaseDomain:               plat.ManifestAttr("gcp-account", name, "baseDomain", "gcpBaseDomain"),
+		WorkloadIdentityPoolName: plat.ManifestAttr("gcp-account", name, "workloadIdentityPoolName"),
+		KeyRingID:                plat.ManifestAttr("gcp-account", name, "keyRingId"),
+		plat:                     plat,
+		name:                     name,
+	}
 }
 
 // OIDCProviderName returns the full GCP resource name of a linked OIDC provider by issuer ID (or "" when absent).
-func (r *Platform) OIDCProviderName(id string) pulumi.StringOutput {
+func (r *Account) OIDCProviderName(id string) pulumi.StringOutput {
 	if r == nil {
 		return pulumi.String("").ToStringOutput()
 	}
@@ -85,22 +128,80 @@ func (r *Platform) OIDCProviderName(id string) pulumi.StringOutput {
 	return pulumi.String("").ToStringOutput()
 }
 
-// WIFBroker returns a core.IdentityBroker backed by this GCP Platform's Workload Identity Pool and linked OIDC providers.
-func (r *Platform) WIFBroker(gcpProject pulumi.StringPtrInput) WIFBroker {
+// OIDCProviderName returns the full GCP resource name of a linked OIDC provider by issuer ID from the platform manifest.
+func (r *AccountRef) OIDCProviderName(id string) pulumi.StringOutput {
+	if r == nil || r.plat == nil || id == "" {
+		return pulumi.String("").ToStringOutput()
+	}
+	key := id + "OidcProviderName"
+	return r.plat.ManifestAttr("gcp-account", r.name, key, key)
+}
+
+// WIFBroker returns a core.IdentityBroker backed by this GCP Account's Workload Identity Pool and linked OIDC providers.
+func (r *Account) WIFBroker(gcpProject ...pulumi.StringPtrInput) WIFBroker {
 	providers := map[string]pulumi.StringInput{}
 	for id, out := range r.OIDCProviderNames {
 		providers[id] = out
 	}
+	proj := nonEmptyStrPtrOutput(r.GCPProject)
+	if len(gcpProject) > 0 && gcpProject[0] != nil {
+		proj = gcpProject[0].ToStringPtrOutput()
+	}
 	return WIFBroker{
-		GCPProject: gcpProject,
+		GCPProject: proj,
 		PoolName:   r.WorkloadIdentityPoolName,
 		Providers:  providers,
 	}
 }
 
+// WIFBroker returns a core.IdentityBroker backed by this looked-up GCP AccountRef.
+func (r *AccountRef) WIFBroker(sourceProviders ...string) WIFBroker {
+	providers := map[string]pulumi.StringInput{}
+	for _, id := range sourceProviders {
+		providers[id] = r.OIDCProviderName(id)
+	}
+	return WIFBroker{
+		Account:   r,
+		Providers: providers,
+	}
+}
+
 // Private helpers ------------------------------------------------------------
 
-var defaultPlatformServices = []string{
+type gcpAccountData struct {
+	local        *Account
+	gcpProject   pulumi.StringOutput
+	baseDomain   pulumi.StringOutput
+	poolName     pulumi.StringOutput
+	oidcProvider func(id string) pulumi.StringOutput
+}
+
+func (a *Account) gcpAccountValues() gcpAccountData {
+	if a == nil {
+		return gcpAccountData{}
+	}
+	return gcpAccountData{
+		local:        a,
+		gcpProject:   a.GCPProject,
+		baseDomain:   a.BaseDomain,
+		poolName:     a.WorkloadIdentityPoolName,
+		oidcProvider: a.OIDCProviderName,
+	}
+}
+
+func (r *AccountRef) gcpAccountValues() gcpAccountData {
+	if r == nil {
+		return gcpAccountData{}
+	}
+	return gcpAccountData{
+		gcpProject:   r.GCPProject,
+		baseDomain:   r.BaseDomain,
+		poolName:     r.WorkloadIdentityPoolName,
+		oidcProvider: r.OIDCProviderName,
+	}
+}
+
+var defaultAccountServices = []string{
 	"run.googleapis.com",
 	"artifactregistry.googleapis.com",
 	"iam.googleapis.com",
@@ -111,12 +212,24 @@ var defaultPlatformServices = []string{
 	"cloudkms.googleapis.com",
 }
 
-func provisionGCPPlatform(
+func ptrInputToStringOutput(in pulumi.StringPtrInput) pulumi.StringOutput {
+	if in == nil {
+		return pulumi.String("").ToStringOutput()
+	}
+	return in.ToStringPtrOutput().ApplyT(func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}).(pulumi.StringOutput)
+}
+
+func provisionGCPAccount(
 	ctx *pulumi.Context,
 	name, orgScope string,
-	info core.PlatformInfo,
-	spec PlatformArgs,
-	res *Platform,
+	info core.AccountInfo,
+	spec AccountArgs,
+	res *Account,
 ) error {
 	location := defaultStr(spec.Location, "us-central1")
 	res.Location = pulumi.String(location).ToStringOutput()
@@ -133,13 +246,13 @@ func provisionGCPPlatform(
 	if err := createOptionalKeyRing(ctx, name, location, info, spec, res); err != nil {
 		return err
 	}
-	return createOptionalPlatformLB(ctx, name, orgScope, location, spec, res)
+	return createOptionalAccountLB(ctx, name, orgScope, location, spec, res)
 }
 
-func enableProjectServices(ctx *pulumi.Context, name string, spec PlatformArgs, parent pulumi.Resource) ([]*projects.Service, error) {
+func enableProjectServices(ctx *pulumi.Context, name string, spec AccountArgs, parent pulumi.Resource) ([]*projects.Service, error) {
 	list := spec.Services
 	if len(list) == 0 {
-		list = defaultPlatformServices
+		list = defaultAccountServices
 	}
 	out := make([]*projects.Service, 0, len(list))
 	for _, api := range list {
@@ -161,8 +274,8 @@ func enableProjectServices(ctx *pulumi.Context, name string, spec PlatformArgs, 
 func createIdentityFederation(
 	ctx *pulumi.Context,
 	name, orgScope string,
-	spec PlatformArgs,
-	res *Platform,
+	spec AccountArgs,
+	res *Account,
 ) error {
 	rawPool := "ob-" + orgScope + "-pool"
 	if spec.PoolSuffix != "" {
@@ -193,7 +306,7 @@ func attachLinkedOIDCProvider(
 	gcpProject pulumi.StringPtrInput,
 	pool *iam.WorkloadIdentityPool,
 	src core.OIDCProviderSource,
-	res *Platform,
+	res *Account,
 ) error {
 	if src == nil {
 		return nil
@@ -246,9 +359,9 @@ func optionalCondition(cond string) pulumi.StringPtrInput {
 func createOptionalKeyRing(
 	ctx *pulumi.Context,
 	name, location string,
-	info core.PlatformInfo,
-	spec PlatformArgs,
-	res *Platform,
+	info core.AccountInfo,
+	spec AccountArgs,
+	res *Account,
 ) error {
 	if spec.SkipKeyRing {
 		res.KeyRingID = pulumi.String("").ToStringOutput()
@@ -268,17 +381,17 @@ func createOptionalKeyRing(
 	return nil
 }
 
-func createOptionalPlatformLB(
+func createOptionalAccountLB(
 	ctx *pulumi.Context,
 	name, orgScope, location string,
-	spec PlatformArgs,
-	res *Platform,
+	spec AccountArgs,
+	res *Account,
 ) error {
 	if !spec.EnableLoadBalancer || core.NormalizeDomain(spec.BaseDomain) == "" {
 		return nil
 	}
 	lb, err := NewCloudLoadBalancer(ctx, name+"-lb", &CloudLoadBalancerArgs{
-		Project:     orgScope,
+		ProjectName: orgScope,
 		Environment: string(core.EnvShared),
 		GCPProject:  spec.GCPProject,
 		Location:    location,
@@ -292,23 +405,16 @@ func createOptionalPlatformLB(
 	return nil
 }
 
-func buildGCPPlatformLink(info core.PlatformInfo, spec PlatformArgs, res *Platform) core.LinkDescriptor {
+func buildGCPAccountLink(info core.AccountInfo, spec AccountArgs, res *Account) core.LinkDescriptor {
 	attrs := map[string]pulumi.StringOutput{
-		"gcpProjectNumber":         pulumi.String(spec.GCPProjectNumber).ToStringOutput(),
+		"gcpProject":               res.GCPProject,
+		"gcpProjectNumber":         res.GCPProjectNumber,
 		"location":                 res.Location,
 		"baseDomain":               res.BaseDomain,
 		"workloadIdentityPoolName": res.WorkloadIdentityPoolName,
 		"keyRingId":                res.KeyRingID,
 	}
-	if spec.GCPProject != nil {
-		attrs["gcpProject"] = spec.GCPProject.ToStringPtrOutput().ApplyT(func(p *string) string {
-			if p == nil {
-				return ""
-			}
-			return *p
-		}).(pulumi.StringOutput)
-	}
-	exports := collectGCPPlatformExports(spec, res)
+	exports := collectGCPAccountExports(spec, res)
 	for id, provName := range res.OIDCProviderNames {
 		key := id + "OidcProviderName"
 		attrs[key] = provName
@@ -322,7 +428,7 @@ func buildGCPPlatformLink(info core.PlatformInfo, spec PlatformArgs, res *Platfo
 	}
 }
 
-func collectGCPPlatformExports(spec PlatformArgs, res *Platform) map[string]pulumi.Input {
+func collectGCPAccountExports(spec AccountArgs, res *Account) map[string]pulumi.Input {
 	exports := map[string]pulumi.Input{
 		"location":                 res.Location,
 		"gcpBaseDomain":            res.BaseDomain,
@@ -343,7 +449,7 @@ func collectGCPPlatformExports(spec PlatformArgs, res *Platform) map[string]pulu
 	return exports
 }
 
-func registerPlatformOutputs(ctx *pulumi.Context, spec PlatformArgs, res *Platform) error {
+func registerAccountOutputs(ctx *pulumi.Context, spec AccountArgs, res *Account) error {
 	outs := pulumi.Map{
 		"gcpProjectNumber":         pulumi.String(spec.GCPProjectNumber),
 		"location":                 res.Location,

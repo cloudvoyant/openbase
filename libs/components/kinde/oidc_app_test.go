@@ -9,14 +9,15 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
+	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/kinde"
 )
 
 // Public API -----------------------------------------------------------------
 
 func TestKindeOidcApp(t *testing.T) {
-	t.Run("given separate kinde.Platform (platform), kinde.Project (shared), and kinde.OidcApp (env) stacks", func(t *testing.T) {
-		t.Run("when Platform runs on platform, Project runs on shared, and OidcApps run on preview and stage, then callbacks and NonProd/Prod tenant routing resolve across stacks", func(t *testing.T) {
+	t.Run("given separate kinde.Account (platform), kinde.Project (shared), and kinde.OidcApp (env) stacks", func(t *testing.T) {
+		t.Run("when Account runs on platform, Project runs on shared, and OidcApps run on preview and stage, then callbacks and NonProd/Prod environment routing resolve across stacks", func(t *testing.T) {
 			// Arrange.
 			platMocks := newKindeMocks()
 			sharedMocks := newKindeMocks()
@@ -29,24 +30,29 @@ func TestKindeOidcApp(t *testing.T) {
 
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := kinde.NewPlatform(ctx, "kinde-platform", sampleKindePlatformArgs())
+				_, err := kinde.NewAccount(ctx, "kinde", sampleKindeAccountArgs())
 				return err
 			}, pulumi.WithMocks("platform", "platform", platMocks))
 
 			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := kinde.NewProject(ctx, "project-oidc", &kinde.ProjectArgs{
-					Project:          "storefront",
-					PlatformStackRef: "organization/platform/platform",
-					VercelTeamSlug:   "cloudvoyant",
+				plat, err := openbase.LookupPlatform(ctx)
+				if err != nil {
+					return err
+				}
+				_, err = kinde.NewProject(ctx, "project-oidc", &kinde.ProjectArgs{
+					Account:        kinde.LookupAccount(plat),
+					VercelTeamSlug: "cloudvoyant",
 				})
 				return err
 			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
 
 			errPreview := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				shared, err := openbase.LookupShared(ctx)
+				if err != nil {
+					return err
+				}
 				prevApp, err := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{
-					Project:         "storefront",
-					Environment:     "preview-pr-5",
-					ProjectStackRef: "organization/storefront-shared/shared",
+					Project: kinde.LookupProject(shared),
 				})
 				if err != nil {
 					return err
@@ -58,10 +64,12 @@ func TestKindeOidcApp(t *testing.T) {
 			}, pulumi.WithMocks("storefront", "preview-pr-5", previewMocks))
 
 			errStage := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				shared, err := openbase.LookupShared(ctx)
+				if err != nil {
+					return err
+				}
 				stageApp, err := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{
-					Project:         "storefront",
-					Environment:     "stage",
-					ProjectStackRef: "organization/storefront-shared/shared",
+					Project: kinde.LookupProject(shared),
 				})
 				if err != nil {
 					return err
@@ -94,24 +102,21 @@ func TestKindeOidcApp(t *testing.T) {
 			}
 		})
 
-		t.Run("when tenant credentials or OidcApp sources are missing, then NewProject and NewOidcApp reject with sentinel errors", func(t *testing.T) {
+		t.Run("when environment credentials or OidcApp sources are missing, then NewProject and NewOidcApp reject with sentinel errors", func(t *testing.T) {
 			// Arrange / Act.
 			errMissingCreds := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{Project: "storefront"})
+				_, e := kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{})
 				return e
 			}, pulumi.WithMocks("storefront-shared", "shared", newKindeMocks()))
 
 			errMissingOidcSrc := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{
-					Project:     "storefront",
-					Environment: "dev",
-				})
+				_, e := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{})
 				return e
 			}, pulumi.WithMocks("storefront", "dev", newKindeMocks()))
 
 			// Assert.
-			if !errors.Is(errMissingCreds, kinde.ErrTenantCredentialsRequired) {
-				t.Fatalf("expected ErrTenantCredentialsRequired, got %v", errMissingCreds)
+			if !errors.Is(errMissingCreds, kinde.ErrEnvironmentCredentialsRequired) {
+				t.Fatalf("expected ErrEnvironmentCredentialsRequired, got %v", errMissingCreds)
 			}
 			if !errors.Is(errMissingOidcSrc, kinde.ErrOidcSourceRequired) {
 				t.Fatalf("expected ErrOidcSourceRequired, got %v", errMissingOidcSrc)
@@ -122,14 +127,14 @@ func TestKindeOidcApp(t *testing.T) {
 
 // Private helpers ------------------------------------------------------------
 
-func sampleKindePlatformArgs() *kinde.PlatformArgs {
-	return &kinde.PlatformArgs{
-		NonProd: kinde.TenantCredentials{
+func sampleKindeAccountArgs() *kinde.AccountArgs {
+	return &kinde.AccountArgs{
+		NonProd: kinde.EnvironmentCredentials{
 			Domain:       "nonprod-test.kinde.com",
 			ClientID:     pulumi.String("nonprod-m2m-id"),
 			ClientSecret: pulumi.String("nonprod-m2m-secret"),
 		},
-		Prod: kinde.TenantCredentials{
+		Prod: kinde.EnvironmentCredentials{
 			Domain:       "https://prod-test.kinde.com/",
 			ClientID:     pulumi.String("prod-m2m-id"),
 			ClientSecret: pulumi.String("prod-m2m-secret"),

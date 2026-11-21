@@ -34,7 +34,7 @@ flowchart TD
 - `neon.Branch` snapshots either `defaultBranchId` (root tier) or the `BranchFrom` stack `branchId` (child tier).
 - `neon.Endpoint` creates an isolated read-write compute endpoint with `-pooler` PgBouncer pooling (`HostPooler`).
 - `neon.Role` and `neon.Database` run only on root branches (`BranchFrom == ""`).
-- `revealRolePasswordOutput` fetches the role password from the Neon v2 `reveal_password` API using the explicit `APIKey` input (inherited from `neon.Platform` or `neon.Project` when in-memory) because `neondatabase/neon` `0.19.0-beta` omits role passwords from provider state.
+- `revealRolePasswordOutput` fetches the role password from the Neon v2 `reveal_password` API using the explicit `APIKey` input (inherited from `neon.Account` or `neon.Project` when in-memory) because `neondatabase/neon` `0.19.0-beta` omits role passwords from provider state.
 
 ### Data and Control Flow
 
@@ -59,8 +59,7 @@ When `preview-pr-42` runs `pulumi up`, it branches instantaneously from `dev` wi
 
 ```go
 db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-	Project: "storefront",
-	Shared:  shared,
+	Project: neon.LookupProject(shared),
 	APIKey:  cfg.RequireSecret("neonApiKey"),
 })
 ```

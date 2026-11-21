@@ -25,7 +25,7 @@ func TestBlobStoreAndOverlayClient(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				_, err := vercel.NewBlobStore(ctx, "uploads-stage", &vercel.BlobStoreArgs{
-					Project:                  "storefront",
+					ProjectName:              "storefront",
 					Environment:              "stage",
 					StoreID:                  pulumi.String("store_AbcXyz"),
 					VercelProjectID:          pulumi.String("prj_1"),
@@ -36,7 +36,7 @@ func TestBlobStoreAndOverlayClient(t *testing.T) {
 					return err
 				}
 				prev, err := vercel.NewBlobStore(ctx, "uploads-preview", &vercel.BlobStoreArgs{
-					Project:     "storefront",
+					ProjectName: "storefront",
 					Environment: "preview-pr-9",
 					BranchFrom:  "dev",
 					StoreID:     pulumi.String("store_AbcXyz"),

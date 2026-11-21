@@ -1,4 +1,4 @@
-// Package vercel provides OpenBase Pulumi components for Vercel across Platform, Project, WebApp, and BlobStore tiers.
+// Package vercel provides OpenBase Pulumi components for Vercel across Account, Project, WebApp, and BlobStore tiers.
 package vercel
 
 import (
@@ -13,13 +13,20 @@ import (
 // Public API -----------------------------------------------------------------
 
 var (
-	_ core.PlatformResource   = (*Platform)(nil)
-	_ core.OIDCProviderSource = PlatformArgs{}
-	_ core.OIDCProviderSource = (*Platform)(nil)
+	_ core.AccountResource    = (*Account)(nil)
+	_ core.OIDCProviderSource = AccountArgs{}
+	_ core.OIDCProviderSource = (*Account)(nil)
+	_ AccountInput            = (*Account)(nil)
+	_ AccountInput            = (*AccountRef)(nil)
 )
 
-// PlatformArgs configures account/team-level Vercel settings provisioned once per organization.
-type PlatformArgs struct {
+// AccountInput is satisfied by in-memory *Account handles and cross-stack *AccountRef lookups.
+type AccountInput interface {
+	vercelAccountValues() vercelAccountData
+}
+
+// AccountArgs configures team-level Vercel account settings provisioned once per organization in infra/platform.
+type AccountArgs struct {
 	Org            string
 	TeamID         string
 	TeamSlug       string
@@ -27,10 +34,10 @@ type PlatformArgs struct {
 	BaseDomain     string
 }
 
-// Platform holds team-level Vercel configuration exported for downstream vercel.Project stacks and OIDC federation.
-type Platform struct {
+// Account holds team-level Vercel configuration exported for downstream vercel.Project stacks and OIDC federation.
+type Account struct {
 	pulumi.ResourceState
-	core.PlatformMeta
+	core.AccountMeta
 
 	TeamID     pulumi.StringOutput
 	TeamSlug   pulumi.StringOutput
@@ -38,21 +45,28 @@ type Platform struct {
 	oidcSpec   core.OIDCIssuer
 }
 
-// NewPlatform exports team-level Vercel settings for consumption by vercel.Project stacks and linked cloud IAM pools.
-func NewPlatform(ctx *pulumi.Context, name string, args *PlatformArgs, opts ...pulumi.ResourceOption) (*Platform, error) {
+// AccountRef provides typed cross-stack access to a vercel.Account exported in infra/platform.
+type AccountRef struct {
+	TeamID     pulumi.StringOutput
+	TeamSlug   pulumi.StringOutput
+	BaseDomain pulumi.StringOutput
+}
+
+// NewAccount exports team-level Vercel settings for consumption by vercel.Project stacks and linked cloud IAM pools.
+func NewAccount(ctx *pulumi.Context, name string, args *AccountArgs, opts ...pulumi.ResourceOption) (*Account, error) {
 	if args == nil {
-		args = &PlatformArgs{}
+		args = &AccountArgs{}
 	}
-	name = defaultVercelStr(name, "vercel-platform")
+	name = defaultVercelStr(name, "vercel")
 	orgScope := core.OrgScope(args.Org, args.TeamSlug, ctx.Organization())
 	issuer, _ := args.OIDCIssuerSpec()
-	res := &Platform{
+	res := &Account{
 		TeamID:     pulumi.String(args.TeamID).ToStringOutput(),
 		TeamSlug:   pulumi.String(args.TeamSlug).ToStringOutput(),
 		BaseDomain: pulumi.String(core.NormalizeDomain(args.BaseDomain)).ToStringOutput(),
 		oidcSpec:   issuer,
 	}
-	info, err := core.InitPlatform(ctx, "openbase:vercel:Platform", "vercel-platform", res, &res.PlatformMeta, core.PlatformSpec{
+	info, err := core.InitAccount(ctx, "openbase:vercel:Account", "vercel-account", res, &res.AccountMeta, core.AccountSpec{
 		Name: name,
 		Org:  orgScope,
 	}, opts...)
@@ -81,13 +95,25 @@ func NewPlatform(ctx *pulumi.Context, name string, args *PlatformArgs, opts ...p
 	})
 }
 
+// LookupAccount resolves a vercel.Account from an infra/platform ScopeRef (by unique kind or explicit name).
+func LookupAccount(plat *core.ScopeRef, name ...string) *AccountRef {
+	if plat == nil {
+		return nil
+	}
+	return &AccountRef{
+		TeamID:     plat.ManifestAttr("vercel-account", name, "teamId"),
+		TeamSlug:   plat.ManifestAttr("vercel-account", name, "teamSlug"),
+		BaseDomain: plat.ManifestAttr("vercel-account", name, "baseDomain", "vercelBaseDomain"),
+	}
+}
+
 // OIDCIssuerSpec publishes Vercel's team or global OIDC issuer descriptor for cross-provider federation.
-func (p PlatformArgs) OIDCIssuerSpec() (core.OIDCIssuer, bool) {
+func (p AccountArgs) OIDCIssuerSpec() (core.OIDCIssuer, bool) {
 	return OIDCIssuer(p.TeamSlug, p.OIDCIssuerMode)
 }
 
 // OIDCIssuerSpec returns the provisioned Vercel team OIDC issuer descriptor.
-func (r *Platform) OIDCIssuerSpec() (core.OIDCIssuer, bool) {
+func (r *Account) OIDCIssuerSpec() (core.OIDCIssuer, bool) {
 	if r == nil {
 		return core.OIDCIssuer{}, false
 	}
@@ -132,6 +158,34 @@ func DeriveBlobBaseURL(storeID pulumi.StringInput) pulumi.StringOutput {
 }
 
 // Private helpers ------------------------------------------------------------
+
+type vercelAccountData struct {
+	teamID     pulumi.StringOutput
+	teamSlug   pulumi.StringOutput
+	baseDomain pulumi.StringOutput
+}
+
+func (a *Account) vercelAccountValues() vercelAccountData {
+	if a == nil {
+		return vercelAccountData{}
+	}
+	return vercelAccountData{
+		teamID:     a.TeamID,
+		teamSlug:   a.TeamSlug,
+		baseDomain: a.BaseDomain,
+	}
+}
+
+func (r *AccountRef) vercelAccountValues() vercelAccountData {
+	if r == nil {
+		return vercelAccountData{}
+	}
+	return vercelAccountData{
+		teamID:     r.TeamID,
+		teamSlug:   r.TeamSlug,
+		baseDomain: r.BaseDomain,
+	}
+}
 
 func defaultVercelStr(val, fallback string) string {
 	if val != "" {

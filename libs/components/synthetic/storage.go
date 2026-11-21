@@ -14,7 +14,7 @@ var _ core.StatefulResource = (*Storage)(nil)
 
 // StorageArgs configures an offline synthetic StatefulResource component supporting BranchFrom overlays.
 type StorageArgs struct {
-	Project     string
+	ProjectName string
 	Repo        string
 	Environment string
 	Kind        string
@@ -40,7 +40,7 @@ func NewStorage(ctx *pulumi.Context, name string, args *StorageArgs, opts ...pul
 	st := &Storage{}
 	meta, err := core.InitStateful(ctx, "openbase:synthetic:Storage", "synthetic-storage", st, &st.StatefulMeta, core.StatefulSpec{
 		Name:        name,
-		Project:     args.Project,
+		Project:     args.ProjectName,
 		Repo:        args.Repo,
 		Environment: args.Environment,
 		Kind:        args.Kind,

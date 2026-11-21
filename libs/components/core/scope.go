@@ -1,7 +1,9 @@
 package core
 
 import (
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 
@@ -12,6 +14,9 @@ import (
 
 // ManifestOutputKey is the structured stack output key written by OpenBase components on a stack.
 const ManifestOutputKey = "openbaseManifest"
+
+// ErrAmbiguousResource reports multiple manifest entries of the same kind when no explicit name was passed to Lookup.
+var ErrAmbiguousResource = errors.New("core: ambiguous manifest resource")
 
 // DefaultBranchFrom returns the conventional parent branch ("prod" on stage when stageFromProd is true, "dev" on preview-*).
 func DefaultBranchFrom(env Environment, explicit string, stageFromProd bool) string {
@@ -97,7 +102,7 @@ func WithRemoteKind(kind string) RemoteOption {
 type ScopeRef struct {
 	stackName string
 	sr        *pulumi.StackReference
-	localPlat map[string]PlatformResource
+	localAcc  map[string]AccountResource
 	localRes  map[string]Resource
 }
 
@@ -106,9 +111,9 @@ func NewStackScopeRef(stackName string, sr *pulumi.StackReference) *ScopeRef {
 	return &ScopeRef{stackName: stackName, sr: sr}
 }
 
-// NewLocalPlatformScopeRef wraps in-memory PlatformResource handles for single-process composition and tests.
-func NewLocalPlatformScopeRef(stackName string, items map[string]PlatformResource) *ScopeRef {
-	return &ScopeRef{stackName: stackName, localPlat: items}
+// NewLocalAccountScopeRef wraps in-memory AccountResource handles for single-process composition and tests.
+func NewLocalAccountScopeRef(stackName string, items map[string]AccountResource) *ScopeRef {
+	return &ScopeRef{stackName: stackName, localAcc: items}
 }
 
 // NewLocalResourceScopeRef wraps in-memory Resource handles for single-process composition and tests.
@@ -162,6 +167,23 @@ func (r *ScopeRef) Output(key string) pulumi.StringOutput {
 	}).(pulumi.StringOutput)
 }
 
+// ManifestAttr resolves attrKey for a manifest resource matching explicit name[0] or unique kind,
+// falling back to fallbackTopKey when the stack has no manifest entries for kind.
+func (r *ScopeRef) ManifestAttr(kind string, name []string, attrKey string, fallbackTopKey ...string) pulumi.StringOutput {
+	if r == nil {
+		return pulumi.String("").ToStringOutput()
+	}
+	explicitName := firstNonEmpty(name)
+	topKey := firstNonEmpty(fallbackTopKey)
+	if topKey == "" {
+		topKey = attrKey
+	}
+	if r.sr == nil {
+		return r.resolveLocalManifestAttr(kind, explicitName, attrKey)
+	}
+	return r.resolveRemoteManifestAttr(kind, explicitName, attrKey, topKey)
+}
+
 // Resource returns a linkable RemoteResource handle for a named resource in the referenced stack.
 func (r *ScopeRef) Resource(name string, opts ...RemoteOption) *RemoteResource {
 	if r == nil {
@@ -170,8 +192,8 @@ func (r *ScopeRef) Resource(name string, opts ...RemoteOption) *RemoteResource {
 	out := &RemoteResource{name: name, scope: r}
 	if local, ok := r.localRes[name]; ok {
 		out.local = local
-	} else if plat, ok := r.localPlat[name]; ok {
-		desc := plat.Link()
+	} else if acc, ok := r.localAcc[name]; ok {
+		desc := acc.Link()
 		out.localDesc = &desc
 	}
 	for _, opt := range opts {
@@ -276,6 +298,135 @@ var (
 	remoteGrantHandlers = map[string]RemoteGrantHandler{}
 )
 
+func firstNonEmpty(vals []string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (r *ScopeRef) resolveLocalManifestAttr(kind, explicitName, attrKey string) pulumi.StringOutput {
+	desc, err := r.selectLocalDescriptor(kind, explicitName)
+	if err != nil {
+		return pulumi.String("").ToStringOutput().ApplyT(func(string) (string, error) {
+			return "", err
+		}).(pulumi.StringOutput)
+	}
+	if out, ok := desc.Attributes[attrKey]; ok {
+		return out
+	}
+	return pulumi.String("").ToStringOutput()
+}
+
+func (r *ScopeRef) selectLocalDescriptor(kind, explicitName string) (LinkDescriptor, error) {
+	if explicitName != "" {
+		if acc, ok := r.localAcc[explicitName]; ok {
+			return acc.Link(), nil
+		}
+		if res, ok := r.localRes[explicitName]; ok {
+			return res.Link(), nil
+		}
+		return LinkDescriptor{}, nil
+	}
+	matches, names := r.collectLocalDescriptorsByKind(kind)
+	if len(matches) > 1 {
+		return LinkDescriptor{}, fmt.Errorf("%w: multiple %s entries (%s); pass explicit name", ErrAmbiguousResource, kind, strings.Join(names, ", "))
+	}
+	if len(matches) == 1 {
+		return matches[0], nil
+	}
+	return LinkDescriptor{}, nil
+}
+
+func (r *ScopeRef) collectLocalDescriptorsByKind(kind string) ([]LinkDescriptor, []string) {
+	var matches []LinkDescriptor
+	var names []string
+	for k, acc := range r.localAcc {
+		if d := acc.Link(); d.Kind == kind {
+			matches = append(matches, d)
+			names = append(names, k)
+		}
+	}
+	for k, res := range r.localRes {
+		if d := res.Link(); d.Kind == kind {
+			matches = append(matches, d)
+			names = append(names, k)
+		}
+	}
+	slices.Sort(names)
+	return matches, names
+}
+
+func (r *ScopeRef) resolveRemoteManifestAttr(kind, explicitName, attrKey, topKey string) pulumi.StringOutput {
+	manifestOut := r.sr.GetOutput(pulumi.String(ManifestOutputKey))
+	fallbackOut := pulumi.String("").ToStringOutput()
+	if explicitName == "" && topKey != "" {
+		fallbackOut = r.Output(topKey)
+	}
+	return pulumi.All(manifestOut, fallbackOut).ApplyT(func(vals []any) (string, error) {
+		fallback, _ := vals[1].(string)
+		return extractRemoteAttrValue(vals[0], kind, explicitName, attrKey, fallback)
+	}).(pulumi.StringOutput)
+}
+
+func extractRemoteAttrValue(manifestRoot any, kind, explicitName, attrKey, fallback string) (string, error) {
+	resources := extractManifestResourcesMap(manifestRoot)
+	if explicitName != "" {
+		entry, _ := resources[explicitName].(map[string]any)
+		return readManifestEntryAttr(entry, attrKey), nil
+	}
+	matches, names := filterManifestEntriesByKind(resources, kind)
+	if len(matches) > 1 {
+		return "", fmt.Errorf("%w: multiple %s entries in manifest (%s); pass explicit name", ErrAmbiguousResource, kind, strings.Join(names, ", "))
+	}
+	if len(matches) == 1 {
+		if v := readManifestEntryAttr(matches[0], attrKey); v != "" {
+			return v, nil
+		}
+	}
+	return fallback, nil
+}
+
+func extractManifestResourcesMap(root any) map[string]any {
+	top, ok := root.(map[string]any)
+	if !ok {
+		return nil
+	}
+	resources, _ := top["resources"].(map[string]any)
+	return resources
+}
+
+func filterManifestEntriesByKind(resources map[string]any, kind string) ([]map[string]any, []string) {
+	var matches []map[string]any
+	var names []string
+	for resName, raw := range resources {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if entryKind, _ := entry["kind"].(string); entryKind == kind {
+			matches = append(matches, entry)
+			names = append(names, resName)
+		}
+	}
+	slices.Sort(names)
+	return matches, names
+}
+
+func readManifestEntryAttr(entry map[string]any, attrKey string) string {
+	if entry == nil {
+		return ""
+	}
+	attrs, ok := entry["attributes"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	s, _ := attrs[attrKey].(string)
+	return s
+}
+
 func toOutputMap(in map[string]pulumi.StringOutput) pulumi.Map {
 	m := pulumi.Map{}
 	for k, v := range in {
@@ -318,12 +469,8 @@ func lookupManifestMapField(sr *pulumi.StackReference, resName, section, key str
 }
 
 func extractManifestResource(root any, resName string) map[string]any {
-	top, ok := root.(map[string]any)
-	if !ok {
-		return nil
-	}
-	resources, ok := top["resources"].(map[string]any)
-	if !ok {
+	resources := extractManifestResourcesMap(root)
+	if resources == nil {
 		return nil
 	}
 	entry, _ := resources[resName].(map[string]any)

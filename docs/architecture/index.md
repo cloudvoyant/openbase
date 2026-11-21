@@ -27,10 +27,10 @@ OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi comp
 ```mermaid
 flowchart TD
     subgraph Tier1["Tier 1: Organization Platform (infra/platform once per org)"]
-        GCPPlat["gcp.NewPlatform + NewCloudLoadBalancer"]
-        VerPlat["vercel.NewPlatform"]
-        NeonPlat["neon.NewPlatform"]
-        KindePlat["kinde.NewPlatform"]
+        GCPAcc["gcp.NewAccount + NewCloudLoadBalancer"]
+        VerAcc["vercel.NewAccount"]
+        NeonAcc["neon.NewAccount"]
+        KindeAcc["kinde.NewAccount"]
     end
 
     subgraph Tier2["Tier 2: Application Project (infra/shared per repo)"]
@@ -49,13 +49,13 @@ flowchart TD
         OIDC["kinde.NewOidcApp"]
     end
 
-    Tier1 -->|"openbase.LookupPlatform + openbaseManifest"| Tier2
-    Tier2 -->|"openbase.LookupShared + openbaseManifest"| Tier3
+    Tier1 -->|"openbase.LookupPlatform + <pkg>.LookupAccount"| Tier2
+    Tier2 -->|"openbase.LookupShared + <pkg>.LookupProject"| Tier3
 ```
 
 - `libs/components` (`package components`) implements `LookupPlatform`, `LookupShared`, and `SupportedEnvironments`.
-- `libs/components/core` owns tier contracts, naming bounds, `openbase.io/*` tags, domain formatting, `ScopeRef` manifests, `RecordStackExports`, `IdentityBroker`, and `Links`.
-- `libs/components/gcp`, `vercel`, `neon`, and `kinde` implement `NewPlatform`, `NewProject`, and environment product constructors over upstream or bridged Pulumi providers.
+- `libs/components/core` owns tier contracts, naming bounds, `openbase.io/*` tags, domain formatting, `ScopeRef` manifests (`ManifestAttr`), `RecordStackExports`, `IdentityBroker`, and `Links`.
+- `libs/components/gcp`, `vercel`, `neon`, and `kinde` implement `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, and environment product constructors over upstream or bridged Pulumi providers.
 - `libs/components/synthetic` supplies deterministic offline doubles (`NewService` and `NewStorage`) for unit tests.
 
 ### Data and Control Flow
@@ -83,9 +83,9 @@ An organization deploys `infra/platform` once into its shared Pulumi backend buc
 
 | Tier | Go Interface | Constructor Pattern | Canonical Name | Allowed Stacks |
 | :--- | :--- | :--- | :--- | :--- |
-| Organization Platform | `core.PlatformResource` | `<pkg>.NewPlatform(ctx, name, &<pkg>.PlatformArgs{...}, opts...)` | `<org>-<name>` | `platform` (`infra/platform`) |
-| Shared Resource | `core.StatelessResource` / `core.StatefulResource` | `<pkg>.NewProject(ctx, name, &<pkg>.ProjectArgs{...}, opts...)` | `<project>-<name>` | `shared` (`infra/shared`) |
-| Environment Resource | `core.StatelessResource` / `core.StatefulResource` | `<pkg>.New<Resource>(ctx, name, &<pkg>.<Resource>Args{...}, opts...)` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` (`infra/env`) |
+| Organization Account | `core.AccountResource` | `<pkg>.NewAccount(ctx, name, &<pkg>.AccountArgs{...}, opts...)` | `<org>-<name>` | `platform` (`infra/platform`) |
+| Shared Resource | `core.StatelessResource` / `core.StatefulResource` | `<pkg>.NewProject(ctx, name, &<pkg>.ProjectArgs{Account: ...}, opts...)` | `<project>-<name>` | `shared` (`infra/shared`) |
+| Environment Resource | `core.StatelessResource` / `core.StatefulResource` | `<pkg>.New<Resource>(ctx, name, &<pkg>.<Resource>Args{Project: ...}, opts...)` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` (`infra/env`) |
 
 ## Implementation
 

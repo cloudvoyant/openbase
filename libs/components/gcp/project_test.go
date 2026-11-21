@@ -7,22 +7,23 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/common/resource"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
+	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/core"
 	"github.com/cloudvoyant/openbase/libs/components/gcp"
 )
 
 // Public API -----------------------------------------------------------------
 
-func TestPlatformAndProject(t *testing.T) {
-	t.Run("given separate gcp.Platform (platform stack) and gcp.Project (shared stack) specs", func(t *testing.T) {
-		t.Run("when gcp.Platform runs on the platform stack and two gcp.Project apps run on shared stacks, then APIs, WIF pool, and KeyRing live on platform while each app gets its own Artifact Registry", func(t *testing.T) {
+func TestAccountAndProject(t *testing.T) {
+	t.Run("given separate gcp.Account (platform stack) and gcp.Project (shared stack) specs", func(t *testing.T) {
+		t.Run("when gcp.Account runs on the platform stack and two gcp.Project apps run on shared stacks, then APIs, WIF pool, and KeyRing live on platform while each app gets its own Artifact Registry", func(t *testing.T) {
 			// Arrange.
 			platMocks := newGCPMocks()
 			sharedMocks := newGCPMocks()
 
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
+				_, err := gcp.NewAccount(ctx, "gcp", &gcp.AccountArgs{
 					Org:        "cloudvoyant",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
 					Links: []core.OIDCProviderSource{
@@ -41,16 +42,21 @@ func TestPlatformAndProject(t *testing.T) {
 			}, pulumi.WithMocks("platform", "platform", platMocks))
 
 			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
+				plat, err := openbase.LookupPlatform(ctx)
+				if err != nil {
+					return err
+				}
+				gcpAcc := gcp.LookupAccount(plat)
 				appA, err := gcp.NewProject(ctx, "gcp-a", &gcp.ProjectArgs{
-					Project:          "storefront",
-					PlatformStackRef: "organization/platform/platform",
+					ProjectName: "storefront",
+					Account:     gcpAcc,
 				})
 				if err != nil {
 					return err
 				}
 				appB, err := gcp.NewProject(ctx, "gcp-b", &gcp.ProjectArgs{
-					Project:          "billing",
-					PlatformStackRef: "organization/platform/platform",
+					ProjectName: "billing",
+					Account:     gcpAcc,
 				})
 				if err != nil {
 					return err
@@ -71,13 +77,13 @@ func TestPlatformAndProject(t *testing.T) {
 			sharedMocks.assertCount(t, "gcp:iam/workloadIdentityPool:WorkloadIdentityPool", 0)
 		})
 
-		t.Run("when gcp.Platform sets SkipKeyRing and custom Services, then it omits KeyRing and enables only requested APIs", func(t *testing.T) {
+		t.Run("when gcp.Account sets SkipKeyRing and custom Services, then it omits KeyRing and enables only requested APIs", func(t *testing.T) {
 			// Arrange.
 			mocks := newGCPMocks()
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
+				_, err := gcp.NewAccount(ctx, "gcp", &gcp.AccountArgs{
 					Org:        "cloudvoyant",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
 					Links: []core.OIDCProviderSource{

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`gcp.CloudLoadBalancer` (`core.StatelessResource`) provisions a Global External Application Load Balancer that routes `*.{baseDomain}` to Cloud Run services through a Serverless Network Endpoint Group (NEG) URL mask. Teams can deploy it once per organization inside `gcp.Platform`, once per project on `shared` (`<project>-lb`), or per environment (`<project>-<env>-lb`).
+`gcp.CloudLoadBalancer` (`core.StatelessResource`) provisions a Global External Application Load Balancer that routes `*.{baseDomain}` to Cloud Run services through a Serverless Network Endpoint Group (NEG) URL mask. Teams can deploy it once per account inside `gcp.Account`, once per project on `shared` (`<project>-lb`), or per environment (`<project>-<env>-lb`).
 
 ## Requirement
 
@@ -58,9 +58,9 @@ DNS points `*.{baseDomain}` to `ipAddress` once. When `gcp.CloudRunService` depl
 
 ```go
 lb, err := gcp.NewCloudLoadBalancer(ctx, "lb", &gcp.CloudLoadBalancerArgs{
-	Project:     "storefront",
+	ProjectName: "storefront",
 	Environment: "shared",
-	GCPProject:  pulumi.String("cloudvoyant-openbase"),
+	Account:     gcpAcc,
 	Location:    "us-central1",
 	BaseDomain:  "gcp.cloudvoyant.io",
 })

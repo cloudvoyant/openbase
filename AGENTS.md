@@ -23,12 +23,12 @@
 
 ### Go
 
-- Follow standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...) (*<Resource>, error)`) across organization foundations (`<provider>.NewPlatform` in `infra/platform/main.go` on a dedicated `platform` stack), shared project resources (`<provider>.NewProject` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming), and environment resources (concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
+- Follow standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...) (*<Resource>, error)`) and typed lookups (`<provider>.LookupAccount(plat, name...)` and `<provider>.LookupProject(shared, name...)`) across organization accounts (`<provider>.NewAccount` in `infra/platform/main.go` on a dedicated `platform` stack), shared project resources (`<provider>.NewProject` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming), and environment resources (concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
 - [Proposed] Keep every handwritten function at or below cyclomatic complexity `10` as enforced by [.golangci.yml](./.golangci.yml).
 
 ### Pulumi
 
-- Embed `pulumi.ResourceState` directly on concrete component structs alongside `core.PlatformMeta`, `core.StatelessMeta`, or `core.StatefulMeta`.
+- Embed `pulumi.ResourceState` directly on concrete component structs alongside `core.AccountMeta`, `core.StatelessMeta`, or `core.StatefulMeta`.
 - [Proposed] Gate `BranchFrom` on preview or child stacks so persistent root stacks do not reference themselves as a branch parent.
 
 ## Testing

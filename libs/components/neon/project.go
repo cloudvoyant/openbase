@@ -10,15 +10,22 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatefulResource = (*Project)(nil)
+var (
+	_ core.StatefulResource = (*Project)(nil)
+	_ ProjectInput          = (*Project)(nil)
+	_ ProjectInput          = (*ProjectRef)(nil)
+)
+
+// ProjectInput is satisfied by in-memory *Project handles and cross-stack *ProjectRef lookups.
+type ProjectInput interface {
+	neonProjectValues() neonProjectData
+}
 
 // ProjectArgs configures an application's shared Neon Project cluster in Premise's infra/shared stack.
 type ProjectArgs struct {
-	Project                 string
+	ProjectName             string
 	Repo                    string
-	Platform                *Platform
-	PlatformStack           *core.ScopeRef
-	PlatformStackRef        string
+	Account                 AccountInput
 	OrgID                   string
 	RegionID                string
 	APIKey                  pulumi.StringInput
@@ -40,6 +47,13 @@ type Project struct {
 	apiBaseURL      string
 }
 
+// ProjectRef provides typed cross-stack access to a shared neon.Project exported in infra/shared.
+type ProjectRef struct {
+	ProjectID       pulumi.StringOutput
+	DefaultBranchID pulumi.StringOutput
+	RegionID        pulumi.StringOutput
+}
+
 // NewProject provisions a shared Neon Project cluster on the shared stack (omitting env from canonical naming).
 func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pulumi.ResourceOption) (*Project, error) {
 	if err := core.RequireSharedStack(ctx); err != nil {
@@ -52,7 +66,7 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	res := &Project{}
 	meta, err := core.InitStateful(ctx, "openbase:neon:Project", "neon-project", res, &res.StatefulMeta, core.StatefulSpec{
 		Name:        name,
-		Project:     args.Project,
+		Project:     args.ProjectName,
 		Repo:        args.Repo,
 		Environment: string(core.EnvShared),
 	}, opts...)
@@ -91,7 +105,48 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	})
 }
 
+// LookupProject resolves a shared neon.Project from an infra/shared ScopeRef (by unique kind or explicit name).
+func LookupProject(shared *core.ScopeRef, name ...string) *ProjectRef {
+	if shared == nil {
+		return nil
+	}
+	return &ProjectRef{
+		ProjectID:       shared.ManifestAttr("neon-project", name, "neonProjectId"),
+		DefaultBranchID: shared.ManifestAttr("neon-project", name, "neonDefaultBranchId"),
+		RegionID:        shared.ManifestAttr("neon-project", name, "regionId"),
+	}
+}
+
 // Private helpers ------------------------------------------------------------
+
+type neonProjectData struct {
+	projectID       pulumi.StringOutput
+	defaultBranchID pulumi.StringOutput
+	apiKey          pulumi.StringInput
+	apiBaseURL      string
+}
+
+func (p *Project) neonProjectValues() neonProjectData {
+	if p == nil {
+		return neonProjectData{}
+	}
+	return neonProjectData{
+		projectID:       p.ProjectID,
+		defaultBranchID: p.DefaultBranchID,
+		apiKey:          p.apiKey,
+		apiBaseURL:      p.apiBaseURL,
+	}
+}
+
+func (r *ProjectRef) neonProjectValues() neonProjectData {
+	if r == nil {
+		return neonProjectData{}
+	}
+	return neonProjectData{
+		projectID:       r.ProjectID,
+		defaultBranchID: r.DefaultBranchID,
+	}
+}
 
 func createNeonProject(
 	ctx *pulumi.Context,
@@ -100,10 +155,7 @@ func createNeonProject(
 	args *ProjectArgs,
 	parent pulumi.Resource,
 ) (*neonprov.Project, error) {
-	orgOut, regionOut, err := resolveNeonProjectPlatformInputs(ctx, name, args)
-	if err != nil {
-		return nil, err
-	}
+	orgOut, regionOut := resolveNeonProjectAccountInputs(args)
 	pgVer := defaultNeonInt(args.PostgresVersion, 17)
 	retention := defaultNeonInt(args.HistoryRetentionSeconds, 86400)
 	projArgs := &neonprov.ProjectArgs{
@@ -120,48 +172,36 @@ func createNeonProject(
 func populateProjectAPISettings(args *ProjectArgs, res *Project) {
 	res.apiKey = args.APIKey
 	res.apiBaseURL = args.APIBaseURL
-	if args.Platform != nil {
+	if args.Account != nil {
+		acc := args.Account.neonAccountValues()
 		if res.apiKey == nil {
-			res.apiKey = args.Platform.apiKey
+			res.apiKey = acc.apiKey
 		}
 		if res.apiBaseURL == "" {
-			res.apiBaseURL = args.Platform.apiBaseURL
+			res.apiBaseURL = acc.apiBaseURL
 		}
 	}
 }
 
-func resolveNeonProjectPlatformInputs(
-	ctx *pulumi.Context,
-	name string,
-	args *ProjectArgs,
-) (pulumi.StringOutput, pulumi.StringOutput, error) {
+func resolveNeonProjectAccountInputs(args *ProjectArgs) (pulumi.StringOutput, pulumi.StringOutput) {
 	orgOut := pulumi.String(args.OrgID).ToStringOutput()
 	regionOut := pulumi.String(defaultIdentifier(args.RegionID, "aws-us-east-1")).ToStringOutput()
-	if args.Platform != nil {
-		if args.OrgID == "" {
-			orgOut = args.Platform.OrgID
-		}
-		if args.RegionID == "" {
-			regionOut = args.Platform.DefaultRegionID
-		}
-		return orgOut, regionOut, nil
+	if args.Account == nil {
+		return orgOut, regionOut
 	}
-	sr, err := core.ResolveStackReference(ctx, name+"-platform-ref", args.PlatformStack, args.PlatformStackRef)
-	if err != nil || sr == nil {
-		return orgOut, regionOut, err
+	acc := args.Account.neonAccountValues()
+	if args.OrgID == "" && isSet(acc.orgID) {
+		orgOut = acc.orgID
 	}
-	if args.OrgID == "" {
-		orgOut = optionalNeonStackStr(sr, "neonOrgId", "")
+	if args.RegionID == "" && isSet(acc.defaultRegionID) {
+		regionOut = defaultOutputStr(acc.defaultRegionID, "aws-us-east-1")
 	}
-	if args.RegionID == "" {
-		regionOut = optionalNeonStackStr(sr, "neonDefaultRegionId", "aws-us-east-1")
-	}
-	return orgOut, regionOut, nil
+	return orgOut, regionOut
 }
 
-func optionalNeonStackStr(sr *pulumi.StackReference, key, fallback string) pulumi.StringOutput {
-	return sr.GetOutput(pulumi.String(key)).ApplyT(func(v any) string {
-		if s, ok := v.(string); ok && s != "" {
+func defaultOutputStr(out pulumi.StringOutput, fallback string) pulumi.StringOutput {
+	return out.ApplyT(func(s string) string {
+		if s != "" {
 			return s
 		}
 		return fallback

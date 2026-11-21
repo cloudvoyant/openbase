@@ -21,7 +21,7 @@ func TestBucketLifecycleAndBranchGrants(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				bkt, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
-					Project:         "storefront",
+					ProjectName:     "storefront",
 					Environment:     "prod",
 					BucketNamespace: "cv-openbase",
 					CORS: []gcp.BucketCORSRule{
@@ -55,7 +55,7 @@ func TestBucketLifecycleAndBranchGrants(t *testing.T) {
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
 				bkt, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
-					Project:            "storefront",
+					ProjectName:        "storefront",
 					Environment:        "preview-pr-42",
 					BranchFrom:         "dev",
 					BucketNamespace:    "cv-openbase",

@@ -255,7 +255,7 @@ func ChildOptions(parent pulumi.Resource, meta ResourceMeta, extra ...pulumi.Res
 
 // StatelessArgs configures an escape-hatch StatelessResource component wrapping custom Pulumi resources.
 type StatelessArgs struct {
-	Project     string
+	ProjectName string
 	Repo        string
 	Environment string
 	Kind        string
@@ -278,7 +278,7 @@ func NewStateless(ctx *pulumi.Context, name string, args *StatelessArgs, opts ..
 	res := &Stateless{}
 	meta, err := InitStateless(ctx, "openbase:core:StatelessResource", "custom-stateless", res, &res.StatelessMeta, StatelessSpec{
 		Name:        name,
-		Project:     args.Project,
+		Project:     args.ProjectName,
 		Repo:        args.Repo,
 		Environment: args.Environment,
 		Kind:        args.Kind,
@@ -297,7 +297,7 @@ func NewStateless(ctx *pulumi.Context, name string, args *StatelessArgs, opts ..
 
 // StatefulArgs configures an escape-hatch StatefulResource component wrapping custom Pulumi resources.
 type StatefulArgs struct {
-	Project     string
+	ProjectName string
 	Repo        string
 	Environment string
 	Kind        string
@@ -322,7 +322,7 @@ func NewStateful(ctx *pulumi.Context, name string, args *StatefulArgs, opts ...p
 	res := &Stateful{}
 	meta, err := InitStateful(ctx, "openbase:core:StatefulResource", "custom-stateful", res, &res.StatefulMeta, StatefulSpec{
 		Name:        name,
-		Project:     args.Project,
+		Project:     args.ProjectName,
 		Repo:        args.Repo,
 		Environment: args.Environment,
 		Kind:        args.Kind,

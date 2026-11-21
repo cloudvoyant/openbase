@@ -68,7 +68,7 @@ func main() {
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
 
 		uploads, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
-			Project:         appProject,
+			ProjectName:     appProject,
 			GCPProject:      pulumi.String(gcpProject),
 			BucketNamespace: gcpProject,
 		})
@@ -87,7 +87,7 @@ func deployHybridPreview(
 	appProject, gcpProject, teamID, teamSlug string,
 	uploads *gcp.Bucket,
 ) error {
-	plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
+	plat, err := openbase.LookupPlatform(ctx)
 	if err != nil {
 		return err
 	}
@@ -95,6 +95,7 @@ func deployHybridPreview(
 	if err != nil {
 		return err
 	}
+	gcpAcc := gcp.LookupAccount(plat)
 	sharedAssets := shared.Resource("shared-assets", core.WithRemoteKind("gcp-bucket"))
 
 	rawSecret, rawSecretVer, err := createRawPartnerSecret(ctx, appProject, gcpProject)
@@ -102,9 +103,10 @@ func deployHybridPreview(
 		return err
 	}
 	orders, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
-		Project:    appProject,
-		GCPProject: pulumi.String(gcpProject),
-		Links:      []core.Resource{uploads, sharedAssets},
+		ProjectName: appProject,
+		Account:     gcpAcc,
+		Project:     gcp.LookupProject(shared),
+		Links:       []core.Resource{uploads, sharedAssets},
 		Env: map[string]pulumi.StringInput{
 			"STORAGE_BUCKET":          uploads.BucketName,
 			"STORAGE_FALLBACK_BUCKET": uploads.FallbackBucketName,
@@ -122,32 +124,32 @@ func deployHybridPreview(
 		return err
 	}
 	ctx.Export("rawSecretId", rawSecret.SecretId)
-	return deployHybridFrontend(ctx, plat, shared, appProject, gcpProject, teamID, teamSlug, uploads, sharedAssets, orders)
+	return deployHybridFrontend(ctx, gcpAcc, shared, appProject, teamID, teamSlug, uploads, sharedAssets, orders)
 }
 
 func deployHybridFrontend(
 	ctx *pulumi.Context,
-	plat, shared *core.ScopeRef,
-	appProject, gcpProject, teamID, teamSlug string,
+	gcpAcc *gcp.AccountRef,
+	shared *core.ScopeRef,
+	appProject, teamID, teamSlug string,
 	uploads *gcp.Bucket,
 	sharedAssets *core.RemoteResource,
 	orders *gcp.CloudRunService,
 ) error {
+	webProj := vercel.LookupProject(shared)
 	fed, err := gcp.NewFederatedIdentity(ctx, "web-wif", &gcp.FederatedIdentityArgs{
-		Project:        appProject,
-		GCPProject:     pulumi.String(gcpProject),
-		PoolName:       plat.Output("workloadIdentityPoolName"),
-		OIDCProvider:   plat.Output("vercelOidcProviderName"),
+		ProjectName:    appProject,
+		Account:        gcpAcc,
 		SourceProvider: "vercel",
 		ClaimKey:       "project_id",
-		ClaimValue:     shared.Output("vercelProjectId"),
+		ClaimValue:     webProj.ProjectID,
 	})
 	if err != nil {
 		return err
 	}
 	web, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-		Project:           appProject,
-		Shared:            shared,
+		ProjectName:       appProject,
+		Project:           webProj,
 		VercelProjectName: "openbase-e2e-" + appProject,
 		TeamID:            teamID,
 		TeamSlug:          teamSlug,

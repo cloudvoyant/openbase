@@ -47,18 +47,17 @@ type ProbeConfig struct {
 
 // CloudRunServiceArgs configures a Google Cloud Run v2 Service component.
 type CloudRunServiceArgs struct {
-	Project                  string
+	ProjectName              string
 	Repo                     string
 	Environment              string
 	Kind                     string
 	Links                    []core.Resource
 	Env                      map[string]pulumi.StringInput
 	Secrets                  map[string]pulumi.StringInput
+	Account                  AccountInput
+	Project                  ProjectInput
 	GCPProject               pulumi.StringPtrInput
 	GCPProjectNumber         pulumi.StringInput
-	GCPProjectRef            *Project
-	Shared                   *core.ScopeRef
-	ProjectStackRef          string
 	ArtifactRegistryRepo     pulumi.StringInput
 	ArtifactRegistryLocation string
 	Location                 string
@@ -109,22 +108,29 @@ func NewCloudRunService(
 	if err := validateCloudRunSpec(*args); err != nil {
 		return nil, err
 	}
+	spec := *args
+	if spec.Account != nil && spec.GCPProject == nil {
+		acc := spec.Account.gcpAccountValues()
+		if isOutputSet(acc.gcpProject) {
+			spec.GCPProject = nonEmptyStrPtrOutput(acc.gcpProject)
+		}
+	}
 	res := &CloudRunService{}
 	meta, err := core.InitStateless(ctx, "openbase:gcp:CloudRunService", "gcp-cloud-run", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        name,
-		Project:     args.Project,
-		Repo:        args.Repo,
-		Environment: args.Environment,
-		Kind:        args.Kind,
-		Links:       args.Links,
+		Project:     spec.ProjectName,
+		Repo:        spec.Repo,
+		Environment: spec.Environment,
+		Kind:        spec.Kind,
+		Links:       spec.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := buildCloudRunResources(ctx, name, meta, *args, res); err != nil {
+	if err := buildCloudRunResources(ctx, name, meta, spec, res); err != nil {
 		return nil, err
 	}
-	res.PublishLink(ctx, buildCloudRunLink(name, meta, *args, res))
+	res.PublishLink(ctx, buildCloudRunLink(name, meta, spec, res))
 	return res, registerCloudRunOutputs(ctx, meta, res)
 }
 
@@ -188,10 +194,7 @@ func buildCloudRunResources(
 	res.ServiceAccountID = saID
 	res.ServiceAccountEmail = sa.Email
 
-	refs, err := resolveProjectRefs(ctx, name, spec)
-	if err != nil {
-		return err
-	}
+	refs := resolveProjectRefs(spec)
 	if err := grantArtifactRegistryAccess(ctx, name, spec, refs, sa, res); err != nil {
 		return err
 	}
@@ -245,22 +248,10 @@ func createServiceAccount(
 	return sa, saID, selfGrant, nil
 }
 
-func resolveProjectRefs(ctx *pulumi.Context, name string, spec CloudRunServiceArgs) (sharedRefs, error) {
-	refs := initDirectCloudRunRefs(spec)
-	sr, err := core.ResolveStackReference(ctx, name+"-project-ref", spec.Shared, spec.ProjectStackRef)
-	if err != nil || sr == nil {
-		return refs, err
-	}
-	if !isOutputSet(refs.repoID) {
-		refs.repoID = sr.GetStringOutput(pulumi.String("repositoryId"))
-	}
-	return refs, nil
-}
-
-func initDirectCloudRunRefs(spec CloudRunServiceArgs) sharedRefs {
+func resolveProjectRefs(spec CloudRunServiceArgs) sharedRefs {
 	var refs sharedRefs
-	if spec.GCPProjectRef != nil {
-		refs.repoID = spec.GCPProjectRef.RepositoryID
+	if spec.Project != nil {
+		refs.repoID = spec.Project.gcpProjectValues().repositoryID
 	}
 	if spec.ArtifactRegistryRepo != nil {
 		refs.repoID = spec.ArtifactRegistryRepo.ToStringOutput()

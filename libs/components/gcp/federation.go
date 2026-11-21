@@ -20,9 +20,10 @@ var (
 
 // FederatedIdentityArgs configures an explicit federated GCP Service Account bound to an external OIDC workload claim.
 type FederatedIdentityArgs struct {
-	Project        string
+	ProjectName    string
 	Repo           string
 	Environment    string
+	Account        AccountInput
 	GCPProject     pulumi.StringPtrInput
 	PoolName       pulumi.StringInput
 	OIDCProvider   pulumi.StringInput
@@ -51,7 +52,7 @@ func NewFederatedIdentity(ctx *pulumi.Context, name string, args *FederatedIdent
 	res := &FederatedIdentity{}
 	meta, err := core.InitStateless(ctx, "openbase:gcp:FederatedIdentity", "gcp-federated-identity", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        name,
-		Project:     args.Project,
+		Project:     args.ProjectName,
 		Repo:        args.Repo,
 		Environment: args.Environment,
 	}, opts...)
@@ -93,6 +94,7 @@ func (r *FederatedIdentity) ResolvePrincipal(_ *pulumi.Context, _ core.ResourceM
 
 // WIFBroker translates external workload OIDC Subjects into federated GCP Service Accounts.
 type WIFBroker struct {
+	Account        AccountInput
 	GCPProject     pulumi.StringPtrInput
 	PoolName       pulumi.StringInput
 	OIDCProvider   pulumi.StringInput
@@ -105,6 +107,7 @@ func (WIFBroker) BrokerProvider() string { return "gcp" }
 
 // ResolvePrincipal mints a federated GCP Service Account and workloadIdentityUser binding for external OIDC callers.
 func (b WIFBroker) ResolvePrincipal(ctx *pulumi.Context, consumer core.ResourceMeta, sub core.Subject) (core.PrincipalGrant, error) {
+	applyAccountToWIFBroker(&b)
 	if sub.Provider == "" || sub.Provider == "gcp" || b.GCPProject == nil || b.PoolName == nil {
 		return core.PrincipalGrant{Provider: "gcp"}, nil
 	}
@@ -167,6 +170,35 @@ func selectPrincipalClaim(explicit string, claims map[string]pulumi.StringOutput
 	return "", pulumi.StringOutput{}, false
 }
 
+func applyAccountToWIFBroker(b *WIFBroker) {
+	if b.Account == nil {
+		return
+	}
+	acc := b.Account.gcpAccountValues()
+	if b.GCPProject == nil && isOutputSet(acc.gcpProject) {
+		b.GCPProject = nonEmptyStrPtrOutput(acc.gcpProject)
+	}
+	if b.PoolName == nil && isOutputSet(acc.poolName) {
+		b.PoolName = acc.poolName
+	}
+}
+
+func applyAccountToFederatedIdentity(spec *FederatedIdentityArgs, srcProv string) {
+	if spec.Account == nil {
+		return
+	}
+	acc := spec.Account.gcpAccountValues()
+	if spec.GCPProject == nil && isOutputSet(acc.gcpProject) {
+		spec.GCPProject = nonEmptyStrPtrOutput(acc.gcpProject)
+	}
+	if spec.PoolName == nil && isOutputSet(acc.poolName) {
+		spec.PoolName = acc.poolName
+	}
+	if spec.OIDCProvider == nil && acc.oidcProvider != nil {
+		spec.OIDCProvider = acc.oidcProvider(srcProv)
+	}
+}
+
 func provisionFederatedIdentity(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
@@ -174,6 +206,7 @@ func provisionFederatedIdentity(
 	res *FederatedIdentity,
 ) error {
 	srcProv := defaultStr(spec.SourceProvider, "external")
+	applyAccountToFederatedIdentity(&spec, srcProv)
 	claimKey := defaultStr(spec.ClaimKey, "project_id")
 	poolOut := toStringOutOrEmpty(spec.PoolName)
 	claimOut := toStringOutOrEmpty(spec.ClaimValue)

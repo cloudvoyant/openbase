@@ -21,9 +21,10 @@ var ErrBaseDomainRequired = errors.New("gcp: baseDomain is required for CloudLoa
 
 // CloudLoadBalancerArgs configures a GCP Global External Application Load Balancer routing *.{BaseDomain} to Cloud Run via Serverless NEG URL mask.
 type CloudLoadBalancerArgs struct {
-	Project     string
+	ProjectName string
 	Repo        string
 	Environment string
+	Account     AccountInput
 	GCPProject  pulumi.StringPtrInput
 	Location    string
 	BaseDomain  string
@@ -68,11 +69,17 @@ func NewCloudLoadBalancer(
 	}
 	name = defaultStr(name, "lb")
 	spec := *args
+	if spec.Account != nil && spec.GCPProject == nil {
+		acc := spec.Account.gcpAccountValues()
+		if isOutputSet(acc.gcpProject) {
+			spec.GCPProject = nonEmptyStrPtrOutput(acc.gcpProject)
+		}
+	}
 	spec.Location = defaultStr(spec.Location, "us-central1")
 	res := &CloudLoadBalancer{BaseDomain: base, URLMask: "<service>." + base}
 	meta, err := core.InitStateless(ctx, "openbase:gcp:CloudLoadBalancer", "gcp-cloud-load-balancer", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        name,
-		Project:     spec.Project,
+		Project:     spec.ProjectName,
 		Repo:        spec.Repo,
 		Environment: spec.Environment,
 	}, opts...)

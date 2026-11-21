@@ -9,14 +9,14 @@ import (
 // Public API -----------------------------------------------------------------
 
 const (
-	// TierPlatform marks organization-wide foundations (<provider>.Platform).
-	TierPlatform = "platform"
+	// TierAccount marks organization-level cloud and SaaS account foundations (<provider>.Account).
+	TierAccount = "account"
 	// TierResource marks project-shared and per-environment resources (StatelessResource and StatefulResource).
 	TierResource = "resource"
 )
 
-// PlatformInfo captures validated metadata for an organization-level PlatformResource.
-type PlatformInfo struct {
+// AccountInfo captures validated metadata for an organization-level AccountResource.
+type AccountInfo struct {
 	Name          string
 	CanonicalName string
 	Org           string
@@ -24,17 +24,17 @@ type PlatformInfo struct {
 	Tags          map[string]string
 }
 
-// PlatformSpec holds organization-level inputs for registering a PlatformResource.
-type PlatformSpec struct {
+// AccountSpec holds organization-level inputs for registering an AccountResource.
+type AccountSpec struct {
 	Name string
 	Org  string
 	Kind string
 }
 
-// PlatformResource marks organization-wide foundation handles provisioned once per org.
-type PlatformResource interface {
+// AccountResource marks organization-level cloud or SaaS account handles provisioned in infra/platform.
+type AccountResource interface {
 	pulumi.Resource
-	OpenBasePlatform() PlatformInfo
+	OpenBaseAccount() AccountInfo
 	Link() LinkDescriptor
 }
 
@@ -50,7 +50,7 @@ type OIDCIssuer struct {
 	PrincipalClaim     string
 }
 
-// OIDCProviderSource is implemented by account providers (such as *vercel.Platform or OIDCIssuer) that publish an OIDC trust spec.
+// OIDCProviderSource is implemented by account resources (such as *vercel.Account or OIDCIssuer) that publish an OIDC trust spec.
 type OIDCProviderSource interface {
 	OIDCIssuerSpec() (OIDCIssuer, bool)
 }
@@ -80,91 +80,91 @@ func GitHubActionsOIDC(githubOrg string) OIDCIssuer {
 	}
 }
 
-// PlatformMeta stores PlatformInfo and Links on structs that directly embed pulumi.ResourceState.
-type PlatformMeta struct {
-	info PlatformInfo
+// AccountMeta stores AccountInfo and Links on structs that directly embed pulumi.ResourceState.
+type AccountMeta struct {
+	info AccountInfo
 	link LinkDescriptor
 }
 
-// OpenBasePlatform returns the validated organization metadata for the platform component.
-func (b *PlatformMeta) OpenBasePlatform() PlatformInfo { return b.info }
+// OpenBaseAccount returns the validated organization metadata for the account component.
+func (b *AccountMeta) OpenBaseAccount() AccountInfo { return b.info }
 
-// Link returns the LinkDescriptor exported by the platform component.
-func (b *PlatformMeta) Link() LinkDescriptor { return b.link }
+// Link returns the LinkDescriptor exported by the account component.
+func (b *AccountMeta) Link() LinkDescriptor { return b.link }
 
-// SetLink sets the LinkDescriptor exported by the platform component without stack exports.
-func (b *PlatformMeta) SetLink(desc LinkDescriptor) { b.link = desc }
+// SetLink sets the LinkDescriptor exported by the account component without stack exports.
+func (b *AccountMeta) SetLink(desc LinkDescriptor) { b.link = desc }
 
 // PublishLink sets the LinkDescriptor and records stack exports and openbaseManifest entries on ctx.
-func (b *PlatformMeta) PublishLink(ctx *pulumi.Context, desc LinkDescriptor) {
+func (b *AccountMeta) PublishLink(ctx *pulumi.Context, desc LinkDescriptor) {
 	b.link = desc
 	RecordStackExports(ctx, desc)
 }
 
-// InitPlatform validates spec and registers an organization-level PlatformResource component.
-func InitPlatform(
+// InitAccount validates spec and registers an organization-level AccountResource component.
+func InitAccount(
 	ctx *pulumi.Context,
 	typeToken, defaultKind string,
 	self pulumi.ComponentResource,
-	holder *PlatformMeta,
-	spec PlatformSpec,
+	holder *AccountMeta,
+	spec AccountSpec,
 	opts ...pulumi.ResourceOption,
-) (PlatformInfo, error) {
+) (AccountInfo, error) {
 	org := OrgScope(spec.Org, ctx.Organization())
 	if err := ValidateIdentifier("name", spec.Name); err != nil {
-		return PlatformInfo{}, err
+		return AccountInfo{}, err
 	}
 	kind := spec.Kind
 	if kind == "" {
 		kind = defaultKind
 	}
-	info := PlatformInfo{
+	info := AccountInfo{
 		Name:          spec.Name,
 		CanonicalName: BoundedName(fmt.Sprintf("%s-%s", org, spec.Name), 63),
 		Org:           org,
 		Kind:          kind,
 		Tags: map[string]string{
-			TagTier: TierPlatform,
+			TagTier: TierAccount,
 			TagOrg:  org,
 		},
 	}
 	holder.info = info
 	if err := ctx.RegisterComponentResource(typeToken, spec.Name, self, opts...); err != nil {
-		return PlatformInfo{}, err
+		return AccountInfo{}, err
 	}
 	return info, nil
 }
 
-// GCPPlatformLabels builds GCP-valid labels for an organization-level PlatformResource.
-func GCPPlatformLabels(info PlatformInfo, extra map[string]string) pulumi.StringMap {
+// GCPAccountLabels builds GCP-valid labels for an organization-level AccountResource.
+func GCPAccountLabels(info AccountInfo, extra map[string]string) pulumi.StringMap {
 	labels := pulumi.StringMap{
-		"openbase-tier": pulumi.String(TierPlatform),
+		"openbase-tier": pulumi.String(TierAccount),
 		"openbase-org":  pulumi.String(sanitizeGCPLabelValue(info.Org)),
 	}
 	appendExtraGCPLabels(labels, extra)
 	return labels
 }
 
-// CustomPlatformArgs configures an escape-hatch organization PlatformResource component.
-type CustomPlatformArgs struct {
+// CustomAccountArgs configures an escape-hatch organization AccountResource component.
+type CustomAccountArgs struct {
 	Org        string
 	Kind       string
 	Attributes map[string]pulumi.StringInput
 }
 
-// CustomPlatform is an escape-hatch organization PlatformResource handle.
-type CustomPlatform struct {
+// CustomAccount is an escape-hatch organization AccountResource handle.
+type CustomAccount struct {
 	pulumi.ResourceState
-	PlatformMeta
+	AccountMeta
 }
 
-// NewCustomPlatform registers an escape-hatch PlatformResource with canonical org tags and attributes.
-func NewCustomPlatform(ctx *pulumi.Context, name string, args *CustomPlatformArgs, opts ...pulumi.ResourceOption) (*CustomPlatform, error) {
+// NewCustomAccount registers an escape-hatch AccountResource with canonical org tags and attributes.
+func NewCustomAccount(ctx *pulumi.Context, name string, args *CustomAccountArgs, opts ...pulumi.ResourceOption) (*CustomAccount, error) {
 	if args == nil {
-		args = &CustomPlatformArgs{}
+		args = &CustomAccountArgs{}
 	}
-	res := &CustomPlatform{}
-	info, err := InitPlatform(ctx, "openbase:core:PlatformResource", "custom-platform", res, &res.PlatformMeta, PlatformSpec{
+	res := &CustomAccount{}
+	info, err := InitAccount(ctx, "openbase:core:AccountResource", "custom-account", res, &res.AccountMeta, AccountSpec{
 		Name: name,
 		Org:  args.Org,
 		Kind: args.Kind,

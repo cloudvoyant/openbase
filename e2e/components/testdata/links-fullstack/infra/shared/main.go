@@ -16,27 +16,28 @@ func main() {
 		gcpProject := os.Getenv("OPENBASE_TEST_GCP_PROJECT")
 		forceDestroy := true
 
-		plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
+		plat, err := openbase.LookupPlatform(ctx)
 		if err != nil {
 			return err
 		}
-		if _, err := gcp.NewProject(ctx, "gcp-project", &gcp.ProjectArgs{
-			Project:       appProject,
-			PlatformStack: plat,
+		gcpAcc := gcp.LookupAccount(plat)
+		if _, err := gcp.NewProject(ctx, "gcp", &gcp.ProjectArgs{
+			ProjectName: appProject,
+			Account:     gcpAcc,
 		}); err != nil {
 			return err
 		}
-		if _, err := vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
-			Project:              appProject,
-			PlatformStack:        plat,
+		if _, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
+			ProjectName:          appProject,
+			Account:              vercel.LookupAccount(plat),
 			VercelProjectName:    "openbase-e2e-" + appProject,
 			SkipStageEnvironment: true,
 		}); err != nil {
 			return err
 		}
 		_, err = gcp.NewBucket(ctx, "shared-assets", &gcp.BucketArgs{
-			Project:         appProject,
-			GCPProject:      pulumi.String(gcpProject),
+			ProjectName:     appProject,
+			Account:         gcpAcc,
 			BucketNamespace: gcpProject,
 			ForceDestroy:    &forceDestroy,
 		})

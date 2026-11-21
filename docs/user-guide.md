@@ -1,8 +1,8 @@
 # OpenBase user guide
 
-OpenBase components use standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...)`) across three Premise root programs:
+OpenBase components use standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...)`) and typed cross-stack lookups (`<pkg>.LookupAccount` and `<pkg>.LookupProject`) across three Premise root programs:
 
-1. `infra/platform/main.go` runs once per organization on stack `platform` (`gcp.NewPlatform`, `vercel.NewPlatform`, `neon.NewPlatform`, `kinde.NewPlatform`) to enable GCP APIs, create one Workload Identity Pool and wildcard HTTPS Load Balancer, export Vercel team and Neon organization defaults, and connect `NonProd` and `Prod` Kinde tenants.
+1. `infra/platform/main.go` runs once per organization on stack `platform` (`gcp.NewAccount`, `vercel.NewAccount`, `neon.NewAccount`, `kinde.NewAccount`) to bootstrap cloud and SaaS accounts.
 2. `infra/shared/main.go` runs once per application repository on stack `shared` (`pm infra apply --shared`) to provision cross-environment resources (`gcp.NewProject`, `vercel.NewProject`, `neon.NewProject`, `kinde.NewProject`, or shared `gcp.NewBucket` stores).
 3. `infra/env/main.go` runs on `dev`, `stage`, `prod`, and `preview-<slug>` stacks (`pm infra apply --env ...`) to provision isolated compute, copy-on-write Neon branches, storage overlays, OIDC bindings, and any native Pulumi resources directly on `ctx`.
 
@@ -16,11 +16,11 @@ flowchart TD
     EnvProg --> Stage["Stack: stage (BranchFrom: prod)"]
     EnvProg --> Prod["Stack: prod"]
     EnvProg --> Preview["Stack: preview-<slug> (BranchFrom: dev)"]
-    OrgStack -->|"openbase.LookupPlatform(ctx)"| ProjStack
-    ProjStack -->|"openbase.LookupShared(ctx) + openbaseManifest"| Dev
-    ProjStack -->|"openbase.LookupShared(ctx) + openbaseManifest"| Stage
-    ProjStack -->|"openbase.LookupShared(ctx) + openbaseManifest"| Prod
-    ProjStack -->|"openbase.LookupShared(ctx) + openbaseManifest"| Preview
+    OrgStack -->|"openbase.LookupPlatform + <pkg>.LookupAccount"| ProjStack
+    ProjStack -->|"openbase.LookupShared + <pkg>.LookupProject"| Dev
+    ProjStack -->|"openbase.LookupShared + <pkg>.LookupProject"| Stage
+    ProjStack -->|"openbase.LookupShared + <pkg>.LookupProject"| Prod
+    ProjStack -->|"openbase.LookupShared + <pkg>.LookupProject"| Preview
 ```
 
 ## 1. Install OpenBase
@@ -29,9 +29,9 @@ flowchart TD
 go get github.com/cloudvoyant/openbase/libs/components@latest
 ```
 
-## 2. Organization platform (`infra/platform/main.go`)
+## 2. Organization accounts (`infra/platform/main.go`)
 
-Deploy one organization platform stack into your shared Pulumi backend (`gs://<org>-pulumi-state`):
+Deploy one organization platform stack into your shared Pulumi backend (`gs://<org>-pulumi-state`). SaaS providers (`vercel`, `neon`, `kinde`) register one `NewAccount` that isolates environments internally, while cloud IaaS providers (`gcp`) register one `NewAccount` per cloud account:
 
 ```go
 package main
@@ -49,7 +49,7 @@ import (
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		cfg := config.New(ctx, "")
-		vercelPlat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
+		vercelAcc, err := vercel.NewAccount(ctx, "vercel", &vercel.AccountArgs{
 			Org:        "acme",
 			TeamID:     "team_123",
 			TeamSlug:   "acme",
@@ -58,31 +58,31 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if _, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
+		if _, err := gcp.NewAccount(ctx, "gcp", &gcp.AccountArgs{
 			Org:                "acme",
 			GCPProject:         pulumi.String("acme-cloud"),
 			GCPProjectNumber:   "123456789012",
-			Links:              []core.OIDCProviderSource{vercelPlat, core.GitHubActionsOIDC("acme")},
+			Links:              []core.OIDCProviderSource{vercelAcc, core.GitHubActionsOIDC("acme")},
 			BaseDomain:         "gcp.acme.io",
 			EnableLoadBalancer: true,
 		}); err != nil {
 			return err
 		}
-		if _, err := neon.NewPlatform(ctx, "neon-platform", &neon.PlatformArgs{
+		if _, err := neon.NewAccount(ctx, "neon", &neon.AccountArgs{
 			Org:             "acme",
 			OrgID:           "org-acme",
 			DefaultRegionID: "aws-us-east-1",
 		}); err != nil {
 			return err
 		}
-		_, err = kinde.NewPlatform(ctx, "kinde-platform", &kinde.PlatformArgs{
+		_, err = kinde.NewAccount(ctx, "kinde", &kinde.AccountArgs{
 			Org: "acme",
-			NonProd: kinde.TenantCredentials{
+			NonProd: kinde.EnvironmentCredentials{
 				Domain:       "acme-nonprod.kinde.com",
 				ClientID:     cfg.Require("kindeNonProdClientId"),
 				ClientSecret: cfg.RequireSecret("kindeNonProdClientSecret"),
 			},
-			Prod: kinde.TenantCredentials{
+			Prod: kinde.EnvironmentCredentials{
 				Domain:       "acme.kinde.com",
 				ClientID:     cfg.Require("kindeProdClientId"),
 				ClientSecret: cfg.RequireSecret("kindeProdClientSecret"),
@@ -95,7 +95,7 @@ func main() {
 
 ## 3. Shared repository project (`infra/shared/main.go`)
 
-Set `workspace.infra.directory: infra/env` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Call `openbase.LookupPlatform(ctx)` once and pass `PlatformStack` into each `<provider>.NewProject` constructor:
+Set `workspace.infra.directory: infra/env` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Call `openbase.LookupPlatform(ctx)` once and pass `<provider>.LookupAccount(plat)` into each `<provider>.NewProject` constructor:
 
 ```go
 package main
@@ -114,21 +114,21 @@ func main() {
 		if err != nil {
 			return err
 		}
-		authProj, err := kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
-			PlatformStack:  plat,
+		authProj, err := kinde.NewProject(ctx, "auth", &kinde.ProjectArgs{
+			Account:        kinde.LookupAccount(plat),
 			VercelTeamSlug: "acme",
 			BaseDomain:     "vercel.acme.io",
 		})
 		if err != nil {
 			return err
 		}
-		if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{
-			PlatformStack: plat,
+		if _, err := neon.NewProject(ctx, "db", &neon.ProjectArgs{
+			Account: neon.LookupAccount(plat),
 		}); err != nil {
 			return err
 		}
-		_, err = vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
-			PlatformStack:   plat,
+		_, err = vercel.NewProject(ctx, "web", &vercel.ProjectArgs{
+			Account:         vercel.LookupAccount(plat),
 			EnableBlobStore: true,
 			PreviewEnv: map[string]pulumi.StringInput{
 				"KINDE_ISSUER_URL": authProj.NonProdIssuerURL,
@@ -145,7 +145,7 @@ func main() {
 
 ## 4. Per-environment stack (`infra/env/main.go`)
 
-`openbase.LookupShared(ctx)` resolves `<org>/<project>-shared/shared` automatically, and stateful constructors set default branching (`stage` from `prod`, `preview-*` from `dev`). `Links` grants IAM and OIDC access, while callers wire their own `Env` and `Secrets` keys directly from typed resource outputs:
+`openbase.LookupShared(ctx)` resolves `<org>/<project>-shared/shared`, and `<provider>.LookupProject(shared)` returns typed shared project handles. Stateful constructors set default branching (`stage` from `prod`, `preview-*` from `dev`), `Links` grants IAM and OIDC access, and callers wire their own `Env` and `Secrets` keys directly from typed resource outputs:
 
 ```go
 package main
@@ -167,15 +167,16 @@ func main() {
 		if err != nil {
 			return err
 		}
+		webProj := vercel.LookupProject(shared)
 		db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-			Shared: shared,
-			APIKey: cfg.RequireSecret("neonApiKey"),
+			Project: neon.LookupProject(shared),
+			APIKey:  cfg.RequireSecret("neonApiKey"),
 		})
 		if err != nil {
 			return err
 		}
 		uploads, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
-			Shared:             shared,
+			Project:            webProj,
 			TeamID:             "team_123",
 			BlobReadWriteToken: cfg.RequireSecret("blobReadWriteToken"),
 		})
@@ -183,20 +184,16 @@ func main() {
 			return err
 		}
 		auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-			Shared:         shared,
-			VercelTeamSlug: "acme",
-			BaseDomain:     "vercel.acme.io",
+			Project: kinde.LookupProject(shared),
 		})
 		if err != nil {
 			return err
 		}
 		_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-			Shared:     shared,
-			TeamID:     "team_123",
-			TeamSlug:   "acme",
-			BaseDomain: "vercel.acme.io",
-			SourceDir:  "../../apps/web",
-			Links:      []core.Resource{uploads},
+			Project:   webProj,
+			TeamID:    "team_123",
+			SourceDir: "../../apps/web",
+			Links:     []core.Resource{uploads},
 			Env: map[string]pulumi.StringInput{
 				"BLOB_BASE_URL":        uploads.BlobBaseURL,
 				"BLOB_PREFIX":          pulumi.String(uploads.BlobPrefix),
@@ -219,7 +216,7 @@ func main() {
 
 ## 5. Hybrid multi-app and cross-cloud WIF
 
-An `infra/env/main.go` program can deploy multiple apps and services (such as a `vercel.NewWebApp` frontend and an internal `gcp.NewCloudRunService` API) and link shared resources from `infra/shared`. Call `gcp.NewFederatedIdentity` (or pass `gcp.WIFBroker`) so external OIDC callers receive federated Google Cloud service accounts at the `Links` boundary:
+An `infra/env/main.go` program can deploy multiple apps and services (such as a `vercel.NewWebApp` frontend and an internal `gcp.NewCloudRunService` API) and link shared resources from `infra/shared`. Pass `Account: gcpAcc` and `ClaimValue: webProj.ProjectID` to `gcp.NewFederatedIdentity` so external OIDC callers receive federated Google Cloud service accounts without magic output strings:
 
 ```go
 plat, err := openbase.LookupPlatform(ctx, "acme/platform/platform")
@@ -230,23 +227,24 @@ shared, err := openbase.LookupShared(ctx)
 if err != nil {
 	return err
 }
+gcpAcc := gcp.LookupAccount(plat)
+webProj := vercel.LookupProject(shared)
 sharedAssets := shared.Resource(
 	"shared-assets",
 	core.WithRemoteKind("gcp-bucket"),
 )
 fed, err := gcp.NewFederatedIdentity(ctx, "web-wif", &gcp.FederatedIdentityArgs{
-	GCPProject:     pulumi.String("acme-cloud"),
-	PoolName:       plat.Output("workloadIdentityPoolName"),
-	OIDCProvider:   plat.Output("vercelOidcProviderName"),
+	Account:        gcpAcc,
 	SourceProvider: "vercel",
 	ClaimKey:       "project_id",
-	ClaimValue:     shared.Output("vercelProjectId"),
+	ClaimValue:     webProj.ProjectID,
 })
 if err != nil {
 	return err
 }
 ordersAPI, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
-	GCPProject: pulumi.String("acme-cloud"),
+	Account:    gcpAcc,
+	Project:    gcp.LookupProject(shared),
 	Visibility: gcp.VisibilityInternal,
 	Image:      pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
 	Links:      []core.Resource{sharedAssets},
@@ -261,7 +259,7 @@ if err != nil {
 	return err
 }
 _, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-	Shared:    shared,
+	Project:   webProj,
 	SourceDir: "../../apps/web",
 	Links:     []core.Resource{ordersAPI, sharedAssets},
 	Brokers:   []core.IdentityBroker{fed},
@@ -279,9 +277,8 @@ _, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
 OpenBase components register directly on `*pulumi.Context` with the same `New<Resource>(ctx, name, &<Resource>Args{...}, opts...)` signature as native Pulumi SDK resources. You can declare native Pulumi resources alongside OpenBase components and wire outputs in both directions:
 
 ```go
-// 1. Raw Pulumi resource created directly on ctx.
 rawSecret, err := secretmanager.NewSecret(ctx, "raw-partner-key", &secretmanager.SecretArgs{
-	Project:     pulumi.String("acme-cloud"),
+	Project:     gcpAcc.GCPProject,
 	SecretId:    pulumi.String("storefront-" + ctx.Stack() + "-partner-key"),
 	Replication: &secretmanager.SecretReplicationArgs{Auto: &secretmanager.SecretReplicationAutoArgs{}},
 })
@@ -296,10 +293,10 @@ if err != nil {
 	return err
 }
 
-// 2. Pass raw Pulumi outputs into an OpenBase resource.
 api, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
-	GCPProject: pulumi.String("acme-cloud"),
-	Image:      pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
+	Account: gcpAcc,
+	Project: gcp.LookupProject(shared),
+	Image:   pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
 	Env: map[string]pulumi.StringInput{
 		"RAW_SECRET_VERSION": rawSecretVer.Name,
 	},
@@ -308,41 +305,43 @@ if err != nil {
 	return err
 }
 
-// 3. Pass typed OpenBase outputs (such as ServiceAccountEmail) into raw Pulumi IAM resources.
 _, err = secretmanager.NewSecretIamMember(ctx, "raw-partner-key-accessor", &secretmanager.SecretIamMemberArgs{
-	Project:  pulumi.String("acme-cloud"),
+	Project:  gcpAcc.GCPProject,
 	SecretId: rawSecret.SecretId,
 	Role:     pulumi.String("roles/secretmanager.secretAccessor"),
 	Member:   pulumi.Sprintf("serviceAccount:%s", api.ServiceAccountEmail),
 })
 ```
 
-When an organization spans multiple Google Cloud projects or multiple cloud accounts, pass standard `pulumi.Provider(...)` options directly to `NewPlatform`, `NewProject`, or environment constructors:
+When an organization spans multiple cloud accounts (such as `nonprod` versus `prod` or `core` versus `analytics`), register named `NewAccount` resources with explicit `pulumi.Provider(...)` options and select them by name via `gcp.LookupAccount(plat, "<name>")`:
 
 ```go
-// infra/platform/main.go: multiple GCP projects or accounts
-analyticsGCP, err := gcpprov.NewProvider(ctx, "gcp-analytics", &gcpprov.ProviderArgs{
-	Project: pulumi.String("acme-analytics"),
+// infra/platform/main.go: multiple GCP accounts
+prodGCP, err := gcpprov.NewProvider(ctx, "gcp-prod-provider", &gcpprov.ProviderArgs{
+	Project: pulumi.String("acme-prod"),
 })
-_, err = gcp.NewPlatform(ctx, "gcp-core", &gcp.PlatformArgs{
+_, err = gcp.NewAccount(ctx, "gcp-nonprod", &gcp.AccountArgs{
 	Org:        "acme",
-	GCPProject: pulumi.String("acme-cloud"),
+	GCPProject: pulumi.String("acme-nonprod"),
 })
-_, err = gcp.NewPlatform(ctx, "gcp-analytics", &gcp.PlatformArgs{
+_, err = gcp.NewAccount(ctx, "gcp-prod", &gcp.AccountArgs{
 	Org:        "acme",
-	GCPProject: pulumi.String("acme-analytics"),
-}, pulumi.Provider(analyticsGCP))
+	GCPProject: pulumi.String("acme-prod"),
+}, pulumi.Provider(prodGCP))
 
-// infra/shared/main.go: target a specific named platform entry via PlatformResource
-_, err = gcp.NewProject(ctx, "ar-analytics", &gcp.ProjectArgs{
-	PlatformStack:    plat,
-	PlatformResource: "gcp-analytics",
-}, pulumi.Provider(analyticsGCP))
+// infra/shared/main.go: select a named account explicitly
+_, err = gcp.NewProject(ctx, "registry", &gcp.ProjectArgs{
+	Account: gcp.LookupAccount(plat, "gcp-prod"),
+}, pulumi.Provider(prodGCP))
 
-// infra/env/main.go: target multiple GCP projects or accounts in one environment
-_, err = gcp.NewBucket(ctx, "analytics-events", &gcp.BucketArgs{
-	GCPProject: pulumi.String("acme-analytics"),
-}, pulumi.Provider(analyticsGCP))
+// infra/env/main.go: route nonprod vs prod stacks by ctx.Stack()
+gcpAccName := "gcp-nonprod"
+if ctx.Stack() == "stage" || ctx.Stack() == "prod" {
+	gcpAccName = "gcp-prod"
+}
+_, err = gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
+	Account: gcp.LookupAccount(plat, gcpAccName),
+}, pulumi.Provider(envGCP))
 ```
 
 ## 7. Zero-copy storage reads in Go
@@ -354,7 +353,7 @@ _, err = gcp.NewBucket(ctx, "analytics-events", &gcp.BucketArgs{
 
 - [Architecture Overview](./architecture/index.md)
 - [Cross-Stack Lookups and Manifests](./architecture/scopes.md)
-- [Core Resources and Tier Contracts](./architecture/resources.md)
+- [Core Resources and Account Contracts](./architecture/resources.md)
 - [GCP Provider](./architecture/providers/gcp/index.md)
 - [Vercel Provider](./architecture/providers/vercel/index.md)
 - [Neon Provider](./architecture/providers/neon/index.md)

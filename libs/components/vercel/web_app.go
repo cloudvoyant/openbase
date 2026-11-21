@@ -17,11 +17,11 @@ import (
 var _ core.StatelessResource = (*WebApp)(nil)
 
 // ErrProjectSourceRequired reports a missing Vercel project reference on WebAppArgs.
-var ErrProjectSourceRequired = errors.New("vercel: vercelProject, shared, projectStackRef, or vercelProjectId is required")
+var ErrProjectSourceRequired = errors.New("vercel: project or vercelProjectId is required")
 
 // WebAppArgs configures a per-environment Vercel WebApp deployment, aliases, env vars, and OIDC identity brokering.
 type WebAppArgs struct {
-	Project                  string
+	ProjectName              string
 	Repo                     string
 	Environment              string
 	Kind                     string
@@ -29,9 +29,7 @@ type WebAppArgs struct {
 	Brokers                  []core.IdentityBroker
 	Env                      map[string]pulumi.StringInput
 	Secrets                  map[string]pulumi.StringInput
-	VercelProject            *Project
-	Shared                   *core.ScopeRef
-	ProjectStackRef          string
+	Project                  ProjectInput
 	VercelProjectID          pulumi.StringInput
 	VercelProjectName        string
 	TeamID                   string
@@ -77,7 +75,7 @@ func NewWebApp(ctx *pulumi.Context, name string, args *WebAppArgs, opts ...pulum
 	res := &WebApp{}
 	meta, err := core.InitStateless(ctx, "openbase:vercel:WebApp", "vercel-webapp", res, &res.StatelessMeta, core.StatelessSpec{
 		Name:        name,
-		Project:     spec.Project,
+		Project:     spec.ProjectName,
 		Repo:        spec.Repo,
 		Environment: spec.Environment,
 		Kind:        spec.Kind,
@@ -110,7 +108,7 @@ func NewWebApp(ctx *pulumi.Context, name string, args *WebAppArgs, opts ...pulum
 // Private helpers ------------------------------------------------------------
 
 func normalizeWebAppArgs(args *WebAppArgs) (WebAppArgs, error) {
-	if args == nil || (args.VercelProject == nil && args.Shared == nil && args.ProjectStackRef == "" && args.VercelProjectID == nil) {
+	if args == nil || (args.Project == nil && args.VercelProjectID == nil) {
 		return WebAppArgs{}, ErrProjectSourceRequired
 	}
 	spec := *args
@@ -136,10 +134,7 @@ func provisionWebApp(
 	spec WebAppArgs,
 	res *WebApp,
 ) error {
-	refs, err := resolveWebAppRefs(ctx, name, meta, spec)
-	if err != nil {
-		return err
-	}
+	refs := resolveWebAppRefs(meta, spec)
 	resolved, err := resolveWebAppLinks(ctx, meta, spec, refs)
 	if err != nil {
 		return err
@@ -154,67 +149,10 @@ func provisionWebApp(
 	return createOptionalDeploymentAndAliases(ctx, name, meta, spec, refs, resolved, aliasHost, res)
 }
 
-func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec WebAppArgs) (webAppRefs, error) {
+func resolveWebAppRefs(meta core.ResourceMeta, spec WebAppArgs) webAppRefs {
 	refs := initExplicitWebRefs(meta, spec)
-	applyProjectStructWebRefs(&refs, spec.VercelProject)
-	sr, err := core.ResolveStackReference(ctx, name+"-project-ref", spec.Shared, spec.ProjectStackRef)
-	if err != nil || sr == nil {
-		return refs, err
-	}
-	applyProjectStackRefWebRefs(&refs, sr, spec)
-	return refs, nil
-}
-
-func applyProjectStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebAppArgs) {
-	if !isOutSet(refs.projectID) {
-		refs.projectID = preferVercelStackOutput(sr, "vercelProjectId", "projectId")
-	}
-	if !isOutSet(refs.devEnvID) {
-		refs.devEnvID = optionalVercelStackOutput(sr, "devCustomEnvironmentId")
-	}
-	if !isOutSet(refs.stageEnvID) {
-		refs.stageEnvID = optionalVercelStackOutput(sr, "stageCustomEnvironmentId")
-	}
-	applyOptionalProjectNamingRefs(refs, sr, spec)
-}
-
-func applyOptionalProjectNamingRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebAppArgs) {
-	if spec.VercelProject != nil {
-		return
-	}
-	if spec.VercelProjectName == "" {
-		refs.projectName = optionalVercelStackOutput(sr, "vercelProjectName")
-	}
-	if spec.TeamSlug == "" {
-		refs.teamSlug = optionalVercelStackOutput(sr, "teamSlug")
-	}
-	if spec.BaseDomain == "" {
-		refs.baseDomain = optionalVercelStackOutput(sr, "baseDomain")
-	}
-}
-
-func preferVercelStackOutput(sr *pulumi.StackReference, primaryKey, fallbackKey string) pulumi.StringOutput {
-	return pulumi.All(
-		sr.GetOutput(pulumi.String(primaryKey)),
-		sr.GetOutput(pulumi.String(fallbackKey)),
-	).ApplyT(func(vs []any) string {
-		if first, ok := vs[0].(string); ok && first != "" {
-			return first
-		}
-		if second, ok := vs[1].(string); ok {
-			return second
-		}
-		return ""
-	}).(pulumi.StringOutput)
-}
-
-func optionalVercelStackOutput(sr *pulumi.StackReference, key string) pulumi.StringOutput {
-	return sr.GetOutput(pulumi.String(key)).ApplyT(func(v any) string {
-		if s, ok := v.(string); ok {
-			return s
-		}
-		return ""
-	}).(pulumi.StringOutput)
+	applyProjectInputWebRefs(&refs, spec)
+	return refs
 }
 
 func initExplicitWebRefs(meta core.ResourceMeta, spec WebAppArgs) webAppRefs {
@@ -235,21 +173,32 @@ func initExplicitWebRefs(meta core.ResourceMeta, spec WebAppArgs) webAppRefs {
 	return refs
 }
 
-func applyProjectStructWebRefs(refs *webAppRefs, proj *Project) {
-	if proj == nil {
+func applyProjectInputWebRefs(refs *webAppRefs, spec WebAppArgs) {
+	if spec.Project == nil {
 		return
 	}
-	if !isOutSet(refs.projectID) {
-		refs.projectID = proj.ProjectID
+	pv := spec.Project.vercelProjectValues()
+	if !isOutSet(refs.projectID) && isOutSet(pv.projectID) {
+		refs.projectID = pv.projectID
 	}
-	refs.projectName = proj.VercelProjectName
-	refs.teamSlug = proj.TeamSlug
-	refs.baseDomain = proj.BaseDomain
-	if !isOutSet(refs.devEnvID) && proj.DevEnvironment != nil {
-		refs.devEnvID = proj.DevCustomEnvironmentID
+	if !isOutSet(refs.devEnvID) && isOutSet(pv.devCustomEnvironmentID) {
+		refs.devEnvID = pv.devCustomEnvironmentID
 	}
-	if !isOutSet(refs.stageEnvID) && proj.StageEnvironment != nil {
-		refs.stageEnvID = proj.StageCustomEnvironmentID
+	if !isOutSet(refs.stageEnvID) && isOutSet(pv.stageCustomEnvironmentID) {
+		refs.stageEnvID = pv.stageCustomEnvironmentID
+	}
+	applyProjectInputNamingRefs(refs, pv, spec)
+}
+
+func applyProjectInputNamingRefs(refs *webAppRefs, pv vercelProjectData, spec WebAppArgs) {
+	if spec.VercelProjectName == "" && isOutSet(pv.vercelProjectName) {
+		refs.projectName = pv.vercelProjectName
+	}
+	if spec.TeamSlug == "" && isOutSet(pv.teamSlug) {
+		refs.teamSlug = pv.teamSlug
+	}
+	if spec.BaseDomain == "" && isOutSet(pv.baseDomain) {
+		refs.baseDomain = pv.baseDomain
 	}
 }
 
@@ -325,7 +274,7 @@ func shouldSkipProjectEnvVars(env core.Environment, spec WebAppArgs, refs webApp
 }
 
 func usesDevCustomEnv(spec WebAppArgs) bool {
-	return spec.EnableDevEnvironment || spec.DevCustomEnvironmentID != nil || (spec.VercelProject != nil && spec.VercelProject.DevEnvironment != nil)
+	return spec.EnableDevEnvironment || spec.DevCustomEnvironmentID != nil || (spec.Project != nil && spec.Project.vercelProjectValues().hasDevCustomEnv)
 }
 
 func registerProjectEnvMap(
