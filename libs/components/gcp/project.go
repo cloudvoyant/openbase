@@ -9,17 +9,14 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.StatelessResource              = (*ProjectResource)(nil)
-	_ core.ScopedSpecOf[*ProjectResource] = Project{}
-)
+var _ core.StatelessResource = (*Project)(nil)
 
-// Project declares an application's shared Docker Artifact Registry repository in Premise's infra/shared stack.
-type Project struct {
-	Name             string
+// ProjectArgs configures an application's shared Docker Artifact Registry repository in Premise's infra/shared stack.
+type ProjectArgs struct {
 	Project          string
 	Repo             string
-	Platform         *PlatformResource
+	Platform         *Platform
+	PlatformStack    *core.ScopeRef
 	PlatformStackRef string
 	PlatformResource string
 	GCPProject       pulumi.StringPtrInput
@@ -28,8 +25,8 @@ type Project struct {
 	ExtraLabels      map[string]string
 }
 
-// ProjectResource is the provisioned handle for an application's shared Docker Artifact Registry repository.
-type ProjectResource struct {
+// Project is the provisioned handle for an application's shared Docker Artifact Registry repository.
+type Project struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -39,23 +36,29 @@ type ProjectResource struct {
 	RepositoryURL pulumi.StringOutput
 }
 
-// Register provisions per-application shared GCP Artifact Registry resources in Premise's infra/shared stack.
-func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
-	p.Name = defaultStr(p.Name, "gcp")
-	res := &ProjectResource{}
+// NewProject provisions per-application shared GCP Artifact Registry resources on the shared stack.
+func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pulumi.ResourceOption) (*Project, error) {
+	if err := core.RequireSharedStack(ctx); err != nil {
+		return nil, err
+	}
+	if args == nil {
+		args = &ProjectArgs{}
+	}
+	name = defaultStr(name, "gcp")
+	res := &Project{}
 	meta, err := core.InitStateless(ctx, "openbase:gcp:Project", "gcp-project", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
+		Name:        name,
+		Project:     args.Project,
+		Repo:        args.Repo,
 		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionGCPProject(ctx, p.Name, meta, p, res); err != nil {
+	if err := provisionGCPProject(ctx, name, meta, *args, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
+	res.PublishLink(ctx, core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
 		Attributes: map[string]pulumi.StringOutput{
@@ -76,42 +79,9 @@ func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 	})
 }
 
-// RegisterInScope adapts gcp.Project to openbase.Project.
-func (p Project) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return p.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers gcp.Project with inherited Project and PlatformRef defaults.
-func (p Project) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
-	if p.Project == "" {
-		p.Project = scope.Project
-	}
-	if p.Repo == "" {
-		p.Repo = scope.Repo
-	}
-	if p.Platform == nil && scope.Platform != nil {
-		p.Platform = resolveInMemoryGCPPlatform(scope.Platform, p.PlatformResource)
-	}
-	if p.PlatformStackRef == "" {
-		p.PlatformStackRef = scope.PlatformStackName()
-	}
-	return p.Register(ctx, opts...)
-}
-
 // Private helpers ------------------------------------------------------------
 
-func resolveInMemoryGCPPlatform(ref *core.PlatformRef, resName string) *PlatformResource {
-	if resName != "" {
-		if plat, ok := ref.PlatformHandleByName(resName).(*PlatformResource); ok {
-			return plat
-		}
-		return nil
-	}
-	plat, _ := ref.PlatformHandle("gcp-platform").(*PlatformResource)
-	return plat
-}
-
-func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Project, res *ProjectResource) error {
+func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec ProjectArgs, res *Project) error {
 	location := defaultStr(spec.Location, "us-central1")
 	baseDomain, gcpProj, deps, err := resolveProjectPlatformInputs(ctx, name, spec)
 	if err != nil {
@@ -137,18 +107,19 @@ func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMet
 func resolveProjectPlatformInputs(
 	ctx *pulumi.Context,
 	name string,
-	spec Project,
+	spec ProjectArgs,
 ) (pulumi.StringOutput, pulumi.StringPtrInput, []pulumi.Resource, error) {
 	if spec.Platform != nil {
 		return resolveDirectPlatformInputs(spec)
 	}
-	if spec.PlatformStackRef == "" {
-		return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), spec.GCPProject, nil, nil
+	sr, err := core.ResolveStackReference(ctx, name+"-platform-ref", spec.PlatformStack, spec.PlatformStackRef)
+	if err != nil || sr == nil {
+		return pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(), spec.GCPProject, nil, err
 	}
-	return resolveRemotePlatformInputs(ctx, name, spec)
+	return resolveRemotePlatformInputs(sr, spec)
 }
 
-func resolveDirectPlatformInputs(spec Project) (pulumi.StringOutput, pulumi.StringPtrInput, []pulumi.Resource, error) {
+func resolveDirectPlatformInputs(spec ProjectArgs) (pulumi.StringOutput, pulumi.StringPtrInput, []pulumi.Resource, error) {
 	deps := make([]pulumi.Resource, 0, len(spec.Platform.EnabledServices))
 	for _, svc := range spec.Platform.EnabledServices {
 		deps = append(deps, svc)
@@ -166,14 +137,9 @@ func resolveDirectPlatformInputs(spec Project) (pulumi.StringOutput, pulumi.Stri
 }
 
 func resolveRemotePlatformInputs(
-	ctx *pulumi.Context,
-	name string,
-	spec Project,
+	sr *pulumi.StackReference,
+	spec ProjectArgs,
 ) (pulumi.StringOutput, pulumi.StringPtrInput, []pulumi.Resource, error) {
-	sr, err := pulumi.NewStackReference(ctx, name+"-platform-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.PlatformStackRef)})
-	if err != nil {
-		return pulumi.StringOutput{}, nil, nil, err
-	}
 	gcpProj := spec.GCPProject
 	if gcpProj == nil {
 		gcpProj = resolveStackGCPProjectPtr(sr, spec.PlatformResource)

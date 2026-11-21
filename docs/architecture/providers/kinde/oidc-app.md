@@ -32,7 +32,7 @@ flowchart LR
 
 - `resolveTenantCredOutputs` picks `nonProd` or `prod` credentials based on `meta.Environment`.
 - `resolveSiteURL` computes `https://{project}-{dev|stage|prod|previewId}.{baseDomain}` (or explicit `SiteURL` and `.vercel.app` fallback).
-- `OidcAppResource` exposes `IssuerURL`, `ClientID`, `ClientSecret`, `SiteURL`, `RedirectURL`, `PostLoginRedirectURL`, and `PostLogoutRedirectURL` so callers wire whichever OIDC environment variables their SDK expects.
+- `OidcApp` exposes `IssuerURL`, `ClientID`, `ClientSecret`, `SiteURL`, `RedirectURL`, `PostLoginRedirectURL`, and `PostLogoutRedirectURL` so callers wire whichever OIDC environment variables their SDK expects.
 
 ### Data and Control Flow
 
@@ -49,19 +49,17 @@ sequenceDiagram
     Browser->>App: 5. Exchange authorization code with KINDE_CLIENT_SECRET
 ```
 
-`OidcApp` computes `KINDE_REDIRECT_URL` (`<SiteURL><CallbackPath>`) during `Register`. At runtime, the workload redirects unauthenticated users to Kinde and exchanges the authorization code using `KINDE_CLIENT_SECRET`.
+`NewOidcApp` computes `KINDE_REDIRECT_URL` (`<SiteURL><CallbackPath>`) during registration. At runtime, the workload redirects unauthenticated users to Kinde and exchanges the authorization code using `KINDE_CLIENT_SECRET`.
 
 ### Interfaces and Contracts
 
 ```go
-auth, err := kinde.OidcApp{
-	Name:            "auth",
-	Project:         "storefront",
-	Environment:     "stage",
-	ProjectStackRef: "cloudvoyant/storefront-shared/shared",
-	BaseDomain:      "vercel.cloudvoyant.io",
-	CallbackPath:    "/api/auth/kinde_callback",
-}.Register(ctx)
+auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
+	Project:      "storefront",
+	Shared:       shared,
+	BaseDomain:   "vercel.cloudvoyant.io",
+	CallbackPath: "/api/auth/kinde_callback",
+})
 ```
 
 | Environment | Selected Tenant | Exported `KINDE_REDIRECT_URL` (`BaseDomain = vercel.acme.io`) |
@@ -75,7 +73,7 @@ auth, err := kinde.OidcApp{
 
 ### Explicit SiteURL override
 
-Cloud Run `openbase.Environment` programs compute `siteURL` from `BaseDomain` or `gcp.CloudRunRegionalURL` and pass `SiteURL` directly to `kinde.OidcApp` so container environment variables match the deployed Cloud Run URL before the container starts.
+Cloud Run `infra/env/main.go` programs compute `siteURL` from `BaseDomain` or `gcp.CloudRunRegionalURL` and pass `SiteURL` directly to `kinde.NewOidcApp` so container environment variables match the deployed Cloud Run URL before the container starts.
 
 ## References
 

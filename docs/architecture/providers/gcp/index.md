@@ -77,22 +77,23 @@ sequenceDiagram
 ### Interfaces and Contracts
 
 ```go
-// Tier 1: Organization (core.PlatformResource)
-plat, err := gcp.Platform{
+// Tier 1: Organization (infra/platform/main.go)
+plat, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
 	Org:                "cloudvoyant",
 	GCPProject:         pulumi.String("cloudvoyant-openbase"),
 	GCPProjectNumber:   "785485436615",
 	Links:              []core.OIDCProviderSource{vercelPlat, core.GitHubActionsOIDC("cloudvoyant")},
 	BaseDomain:         "gcp.cloudvoyant.io",
 	EnableLoadBalancer: true,
-}.Register(ctx)
+})
 
-// Shared Project Resource in infra/shared (core.StatelessResource)
-proj, err := gcp.Project{
-	Project:          "storefront",
-	Repo:             "cloudvoyant/storefront",
-	PlatformStackRef: "cloudvoyant/platform/platform",
-}.Register(ctx)
+// Shared Project Resource in infra/shared/main.go
+platRef, err := openbase.LookupPlatform(ctx, "cloudvoyant/platform/platform")
+proj, err := gcp.NewProject(ctx, "gcp-project", &gcp.ProjectArgs{
+	Project:       "storefront",
+	Repo:          "cloudvoyant/storefront",
+	PlatformStack: platRef,
+})
 ```
 
 | Spec | Contract | Synthesized `pulumi-gcp` Resources | Key Outputs |

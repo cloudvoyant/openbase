@@ -21,25 +21,25 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-func TestUnifiedScopes(t *testing.T) {
-	t.Run("given unified openbase.Platform, openbase.Project, and openbase.Environment scopes", func(t *testing.T) {
-		t.Run("when registering a Vercel + Neon + Kinde Project on shared and a preview Environment, then preview inherits dev branching and Kinde NonProd tenant", func(t *testing.T) {
+func TestComponentsComposition(t *testing.T) {
+	t.Run("given idiomatic Pulumi Go constructors across platform, shared, and environment stacks", func(t *testing.T) {
+		t.Run("when registering Vercel + Neon + Kinde on shared and a preview stack, then preview inherits dev branching and Kinde NonProd tenant", func(t *testing.T) {
 			runVercelProjectAndPreviewSpec(t)
 		})
 
-		t.Run("when registering a Cloud Run + GCS + Neon + Kinde Project on shared and a stage Environment, then stage branches DB from prod and binds Kinde prod tenant", func(t *testing.T) {
+		t.Run("when registering Cloud Run + GCS + Neon + Kinde on shared and a stage stack, then stage branches DB from prod and binds Kinde prod tenant", func(t *testing.T) {
 			runCloudRunProjectAndStageSpec(t)
 		})
 
-		t.Run("when linking a remote shared gcp.Bucket from openbaseManifest into a Vercel WebApp with WIFBroker, then it mints a federated SA and grants bucket IAM", func(t *testing.T) {
+		t.Run("when linking a remote shared gcp.Bucket from openbaseManifest into vercel.NewWebApp with WIFBroker, then it mints a federated SA and grants bucket IAM", func(t *testing.T) {
 			runHybridRemoteBucketWIFSpec(t)
 		})
 
-		t.Run("when registering Project on a non-shared stack or Environment on the shared stack, then Register returns ErrInvalidEnvironment", func(t *testing.T) {
+		t.Run("when registering a shared Project resource on a non-shared stack or an unrecognized stack tier, then constructors return ErrInvalidEnvironment", func(t *testing.T) {
 			runStackGuardrailSpec(t)
 		})
 
-		t.Run("when registering multiple GCP projects/accounts and raw Pulumi resources alongside openbase.Add, then manifest lookups and explicit providers compose cleanly", func(t *testing.T) {
+		t.Run("when registering multiple GCP accounts and raw Pulumi resources alongside OpenBase constructors, then manifest lookups and explicit providers compose cleanly", func(t *testing.T) {
 			runMultiGCPAndRawPulumiSpec(t)
 		})
 	})
@@ -87,40 +87,53 @@ func runVercelProjectAndPreviewSpec(t *testing.T) {
 }
 
 func deployOrgPlatform(ctx *pulumi.Context) error {
-	vercelPlat := vercel.Platform{TeamID: "team_123", TeamSlug: "cloudvoyant"}
-	_, err := openbase.Platform{
-		Org: "cloudvoyant",
-		Resources: []core.PlatformSpecItem{
-			vercelPlat,
-			gcp.Platform{
-				GCPProject:       pulumi.String("cloudvoyant-openbase"),
-				GCPProjectNumber: "785485436615",
-				Links:            []core.OIDCProviderSource{vercelPlat},
-				SkipKeyRing:      true,
-			},
-			neon.Platform{OrgID: "org-neon", DefaultRegionID: "aws-us-east-1"},
-			sampleKindePlatform(),
-		},
-	}.Register(ctx)
-	return err
-}
-
-func deploySharedVercelProject(ctx *pulumi.Context) error {
-	proj, err := openbase.NewProject(ctx, openbase.Project{
-		Project:          "storefront",
-		PlatformStackRef: "organization/platform/platform",
+	vercelPlat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
+		Org:      "cloudvoyant",
+		TeamID:   "team_123",
+		TeamSlug: "cloudvoyant",
 	})
 	if err != nil {
 		return err
 	}
-	authProj, err := openbase.Add(proj, kinde.Project{VercelTeamSlug: "cloudvoyant"})
+	if _, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
+		Org:              "cloudvoyant",
+		GCPProject:       pulumi.String("cloudvoyant-openbase"),
+		GCPProjectNumber: "785485436615",
+		Links:            []core.OIDCProviderSource{vercelPlat},
+		SkipKeyRing:      true,
+	}); err != nil {
+		return err
+	}
+	if _, err := neon.NewPlatform(ctx, "neon-platform", &neon.PlatformArgs{
+		Org:             "cloudvoyant",
+		OrgID:           "org-neon",
+		DefaultRegionID: "aws-us-east-1",
+	}); err != nil {
+		return err
+	}
+	_, err = kinde.NewPlatform(ctx, "kinde-platform", sampleKindePlatformArgs())
+	return err
+}
+
+func deploySharedVercelProject(ctx *pulumi.Context) error {
+	plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
 	if err != nil {
 		return err
 	}
-	if _, err := openbase.Add(proj, neon.Project{}); err != nil {
+	authProj, err := kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
+		PlatformStack:  plat,
+		VercelTeamSlug: "cloudvoyant",
+	})
+	if err != nil {
 		return err
 	}
-	_, err = openbase.Add(proj, vercel.Project{
+	if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{
+		PlatformStack: plat,
+	}); err != nil {
+		return err
+	}
+	_, err = vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
+		PlatformStack:   plat,
 		EnableBlobStore: true,
 		PreviewEnv: map[string]pulumi.StringInput{
 			"KINDE_ISSUER_URL": authProj.NonProdIssuerURL,
@@ -138,27 +151,27 @@ func deployPreviewVercelEnv(
 	dbBranchFrom, blobFallback *string,
 	urlCh, issuerCh chan string,
 ) error {
-	env, err := openbase.NewEnvironment(ctx, openbase.Environment{Project: "storefront"})
+	shared, err := openbase.LookupShared(ctx)
 	if err != nil {
 		return err
 	}
-	db, err := openbase.Add(env, neon.Database{Name: "db"})
+	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{Shared: shared})
 	if err != nil {
 		return err
 	}
-	blobs, err := openbase.Add(env, vercel.BlobStore{
-		Name:               "uploads",
+	blobs, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
+		Shared:             shared,
 		BlobReadWriteToken: pulumi.String("vercel_blob_rw_tok"),
 	})
 	if err != nil {
 		return err
 	}
-	auth, err := openbase.Add(env, kinde.OidcApp{Name: "auth"})
+	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{Shared: shared})
 	if err != nil {
 		return err
 	}
-	web, err := openbase.Add(env, vercel.WebApp{
-		Name:      "web",
+	web, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
+		Shared:    shared,
 		SourceDir: ".",
 		Links:     []core.Resource{blobs},
 		Env: map[string]pulumi.StringInput{
@@ -210,40 +223,42 @@ func runCloudRunProjectAndStageSpec(t *testing.T) {
 }
 
 func deploySharedCloudRunProject(ctx *pulumi.Context) error {
+	plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
+	if err != nil {
+		return err
+	}
 	cb, err := gcp.BuildCloudRunCallbackURLs("orders", "web", "785485436615", "us-central1", "", "")
 	if err != nil {
 		return err
 	}
-	_, err = openbase.Project{
-		Project:          "orders",
-		PlatformStackRef: "organization/platform/platform",
-		Resources: []core.ScopedSpec{
-			gcp.Project{},
-			neon.Project{},
-			kinde.Project{
-				StageDomain:              cb.StageHost,
-				ProdDomain:               cb.ProdHost,
-				ExtraNonProdRedirectURIs: cb.ExtraNonProdRedirects,
-				ExtraNonProdLogoutURIs:   cb.ExtraNonProdLogouts,
-				ExtraProdRedirectURIs:    cb.ExtraProdRedirect,
-				ExtraProdLogoutURIs:      cb.ExtraProdLogout,
-			},
-		},
-	}.Register(ctx)
+	if _, err := gcp.NewProject(ctx, "gcp-project", &gcp.ProjectArgs{PlatformStack: plat}); err != nil {
+		return err
+	}
+	if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{PlatformStack: plat}); err != nil {
+		return err
+	}
+	_, err = kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
+		PlatformStack:            plat,
+		StageDomain:              cb.StageHost,
+		ProdDomain:               cb.ProdHost,
+		ExtraNonProdRedirectURIs: cb.ExtraNonProdRedirects,
+		ExtraNonProdLogoutURIs:   cb.ExtraNonProdLogouts,
+		ExtraProdRedirectURIs:    cb.ExtraProdRedirect,
+		ExtraProdLogoutURIs:      cb.ExtraProdLogout,
+	})
 	return err
 }
 
 func deployStageCloudRunEnv(ctx *pulumi.Context, dbBranchFrom *string, issuerCh chan string) error {
-	env, err := openbase.NewEnvironment(ctx, openbase.Environment{Project: "orders"})
+	shared, err := openbase.LookupShared(ctx)
 	if err != nil {
 		return err
 	}
-	db, err := openbase.Add(env, neon.Database{Name: "db"})
+	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{Shared: shared})
 	if err != nil {
 		return err
 	}
-	bkt, err := openbase.Add(env, gcp.Bucket{
-		Name:            "uploads",
+	bkt, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
 		GCPProject:      pulumi.String("cloudvoyant-openbase"),
 		BucketNamespace: "cloudvoyant-openbase",
 	})
@@ -254,15 +269,14 @@ func deployStageCloudRunEnv(ctx *pulumi.Context, dbBranchFrom *string, issuerCh 
 	if err != nil {
 		return err
 	}
-	auth, err := openbase.Add(env, kinde.OidcApp{
-		Name:    "auth",
+	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
+		Shared:  shared,
 		SiteURL: pulumi.String(siteURL),
 	})
 	if err != nil {
 		return err
 	}
-	_, err = openbase.Add(env, gcp.CloudRunService{
-		Name:             "web",
+	_, err = gcp.NewCloudRunService(ctx, "web", &gcp.CloudRunServiceArgs{
 		GCPProject:       pulumi.String("cloudvoyant-openbase"),
 		GCPProjectNumber: pulumi.String("785485436615"),
 		Image:            pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
@@ -296,9 +310,19 @@ func runHybridRemoteBucketWIFSpec(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		env, err := openbase.NewEnvironment(ctx, openbase.Environment{
-			Project:  "storefront",
-			Platform: platRef,
+		sharedRef, err := openbase.LookupShared(ctx)
+		if err != nil {
+			return err
+		}
+		sharedAssets := sharedRef.Resource(
+			"shared-assets",
+			core.WithRemoteKind("gcp-bucket"),
+		)
+		sharedAssets.Attr("bucketName").ApplyT(func(v string) string { bktNameCh <- v; return v })
+		_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
+			Shared:    sharedRef,
+			SourceDir: ".",
+			Links:     []core.Resource{sharedAssets},
 			Brokers: []core.IdentityBroker{
 				gcp.WIFBroker{
 					GCPProject:   pulumi.String("cloudvoyant-openbase"),
@@ -306,19 +330,6 @@ func runHybridRemoteBucketWIFSpec(t *testing.T) {
 					OIDCProvider: platRef.Output("vercelOidcProviderName"),
 				},
 			},
-		})
-		if err != nil {
-			return err
-		}
-		sharedAssets := env.Project().Resource(
-			"shared-assets",
-			core.WithRemoteKind("gcp-bucket"),
-		)
-		sharedAssets.Attr("bucketName").ApplyT(func(v string) string { bktNameCh <- v; return v })
-		_, err = openbase.Add(env, vercel.WebApp{
-			Name:      "web",
-			SourceDir: ".",
-			Links:     []core.Resource{sharedAssets},
 			Env: map[string]pulumi.StringInput{
 				"BUCKET_NAME": sharedAssets.Attr("bucketName"),
 			},
@@ -340,26 +351,27 @@ func runStackGuardrailSpec(t *testing.T) {
 	t.Helper()
 	// Arrange / Act.
 	errProjOnDev := pulumi.RunErr(func(ctx *pulumi.Context) error {
-		_, err := openbase.Project{Project: "storefront"}.Register(ctx)
+		_, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{OrgID: "org-1"})
 		return err
 	}, pulumi.WithMocks("storefront", "dev", newScopeMocks()))
 
-	errEnvOnShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
-		_, err := openbase.Environment{Project: "storefront"}.Register(ctx)
+	errUnknownStack := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		_, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{GCPProject: pulumi.String("cloudvoyant-openbase")})
 		return err
-	}, pulumi.WithMocks("storefront", "shared", newScopeMocks()))
+	}, pulumi.WithMocks("storefront", "qa-invalid", newScopeMocks()))
 
 	// Assert.
 	if !errors.Is(errProjOnDev, core.ErrInvalidEnvironment) {
 		t.Fatalf("expected ErrInvalidEnvironment for Project on dev, got %v", errProjOnDev)
 	}
-	if !errors.Is(errEnvOnShared, core.ErrInvalidEnvironment) {
-		t.Fatalf("expected ErrInvalidEnvironment for Environment on shared, got %v", errEnvOnShared)
+	if !errors.Is(errUnknownStack, core.ErrInvalidEnvironment) {
+		t.Fatalf("expected ErrInvalidEnvironment for unrecognized stack, got %v", errUnknownStack)
 	}
 }
 
-func sampleKindePlatform() kinde.Platform {
-	return kinde.Platform{
+func sampleKindePlatformArgs() *kinde.PlatformArgs {
+	return &kinde.PlatformArgs{
+		Org: "cloudvoyant",
 		NonProd: kinde.TenantCredentials{
 			Domain:       "nonprod-test.kinde.com",
 			ClientID:     pulumi.String("nonprod-cid"),
@@ -555,25 +567,21 @@ func runMultiGCPAndRawPulumiSpec(t *testing.T) {
 }
 
 func deployMultiAccountGCPPlatform(ctx *pulumi.Context) error {
-	plat, err := openbase.NewPlatform(ctx, openbase.Platform{Org: "cloudvoyant"})
-	if err != nil {
-		return err
-	}
 	analyticsProv, err := gcpprov.NewProvider(ctx, "gcp-analytics-account", &gcpprov.ProviderArgs{
 		Project: pulumi.String("cloudvoyant-analytics"),
 	})
 	if err != nil {
 		return err
 	}
-	if _, err := openbase.AddPlatform(plat, gcp.Platform{
-		Name:        "gcp-core",
+	if _, err := gcp.NewPlatform(ctx, "gcp-core", &gcp.PlatformArgs{
+		Org:         "cloudvoyant",
 		GCPProject:  pulumi.String("cloudvoyant-openbase"),
 		SkipKeyRing: true,
 	}); err != nil {
 		return err
 	}
-	_, err = openbase.AddPlatform(plat, gcp.Platform{
-		Name:        "gcp-analytics",
+	_, err = gcp.NewPlatform(ctx, "gcp-analytics", &gcp.PlatformArgs{
+		Org:         "cloudvoyant",
 		GCPProject:  pulumi.String("cloudvoyant-analytics"),
 		BaseDomain:  "analytics.acme.io",
 		SkipKeyRing: true,
@@ -582,18 +590,17 @@ func deployMultiAccountGCPPlatform(ctx *pulumi.Context) error {
 }
 
 func deployMultiProjectGCPShared(ctx *pulumi.Context, analyticsRepoURL chan<- string) error {
-	proj, err := openbase.NewProject(ctx, openbase.Project{
-		Project:          "orders",
-		PlatformStackRef: "organization/platform/platform",
-	})
+	plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
 	if err != nil {
 		return err
 	}
-	if _, err := openbase.Add(proj, gcp.Project{Name: "gcp-core"}); err != nil {
+	if _, err := gcp.NewProject(ctx, "gcp-core", &gcp.ProjectArgs{
+		PlatformStack: plat,
+	}); err != nil {
 		return err
 	}
-	analyticsAR, err := openbase.Add(proj, gcp.Project{
-		Name:             "gcp-analytics",
+	analyticsAR, err := gcp.NewProject(ctx, "gcp-analytics", &gcp.ProjectArgs{
+		PlatformStack:    plat,
 		PlatformResource: "gcp-analytics",
 	})
 	if err != nil {
@@ -604,15 +611,15 @@ func deployMultiProjectGCPShared(ctx *pulumi.Context, analyticsRepoURL chan<- st
 }
 
 func deployEnvWithRawPulumi(ctx *pulumi.Context) error {
-	env, err := openbase.NewEnvironment(ctx, openbase.Environment{Project: "orders"})
+	uploads, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
+		GCPProject: pulumi.String("cloudvoyant-openbase"),
+	})
 	if err != nil {
 		return err
 	}
-	uploads, err := openbase.Add(env, gcp.Bucket{Name: "uploads", GCPProject: pulumi.String("cloudvoyant-openbase")})
-	if err != nil {
-		return err
-	}
-	if _, err := openbase.Add(env, gcp.Bucket{Name: "analytics-events", GCPProject: pulumi.String("cloudvoyant-analytics")}); err != nil {
+	if _, err := gcp.NewBucket(ctx, "analytics-events", &gcp.BucketArgs{
+		GCPProject: pulumi.String("cloudvoyant-analytics"),
+	}); err != nil {
 		return err
 	}
 	rawSecret, err := secretmanager.NewSecret(ctx, "raw-partner-key", &secretmanager.SecretArgs{
@@ -623,8 +630,7 @@ func deployEnvWithRawPulumi(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	svc, err := openbase.Add(env, gcp.CloudRunService{
-		Name:       "api",
+	svc, err := gcp.NewCloudRunService(ctx, "api", &gcp.CloudRunServiceArgs{
 		GCPProject: pulumi.String("cloudvoyant-openbase"),
 		Image:      pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/orders/api:v1"),
 		Links:      []core.Resource{uploads},

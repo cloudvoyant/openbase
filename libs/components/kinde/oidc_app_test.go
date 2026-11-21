@@ -29,27 +29,25 @@ func TestKindeOidcApp(t *testing.T) {
 
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := sampleKindePlatformSpec().Register(ctx)
+				_, err := kinde.NewPlatform(ctx, "kinde-platform", sampleKindePlatformArgs())
 				return err
 			}, pulumi.WithMocks("platform", "platform", platMocks))
 
 			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := kinde.Project{
-					Name:             "project-oidc",
+				_, err := kinde.NewProject(ctx, "project-oidc", &kinde.ProjectArgs{
 					Project:          "storefront",
 					PlatformStackRef: "organization/platform/platform",
 					VercelTeamSlug:   "cloudvoyant",
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
 
 			errPreview := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				prevApp, err := kinde.OidcApp{
-					Name:            "oidc",
+				prevApp, err := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{
 					Project:         "storefront",
 					Environment:     "preview-pr-5",
 					ProjectStackRef: "organization/storefront-shared/shared",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -60,12 +58,11 @@ func TestKindeOidcApp(t *testing.T) {
 			}, pulumi.WithMocks("storefront", "preview-pr-5", previewMocks))
 
 			errStage := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				stageApp, err := kinde.OidcApp{
-					Name:            "oidc",
+				stageApp, err := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{
 					Project:         "storefront",
 					Environment:     "stage",
 					ProjectStackRef: "organization/storefront-shared/shared",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -87,9 +84,9 @@ func TestKindeOidcApp(t *testing.T) {
 			assertKindeEq(t, "preview redirect", <-previewRedirectCh, "https://openbase-storefront-pr-5-cloudvoyant.vercel.app/api/auth/kinde_callback")
 			got := sharedMocks.appRedirects["project-oidc-nonprod-app"]
 			for _, want := range []string{
-				"https://storefront.vercel.app/api/auth/kinde_callback",
-				"https://storefront-cloudvoyant.vercel.app/api/auth/kinde_callback",
-				"https://storefront-*-cloudvoyant.vercel.app/api/auth/kinde_callback",
+				"https://openbase-storefront.vercel.app/api/auth/kinde_callback",
+				"https://openbase-storefront-cloudvoyant.vercel.app/api/auth/kinde_callback",
+				"https://openbase-storefront-*-cloudvoyant.vercel.app/api/auth/kinde_callback",
 			} {
 				if !slices.Contains(got, want) {
 					t.Fatalf("expected nonProd redirects %v to include %q", got, want)
@@ -97,19 +94,18 @@ func TestKindeOidcApp(t *testing.T) {
 			}
 		})
 
-		t.Run("when tenant credentials or OidcApp sources are missing, then Register rejects with sentinel errors", func(t *testing.T) {
+		t.Run("when tenant credentials or OidcApp sources are missing, then NewProject and NewOidcApp reject with sentinel errors", func(t *testing.T) {
 			// Arrange / Act.
 			errMissingCreds := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := kinde.Project{Project: "storefront"}.Register(ctx)
+				_, e := kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{Project: "storefront"})
 				return e
 			}, pulumi.WithMocks("storefront-shared", "shared", newKindeMocks()))
 
 			errMissingOidcSrc := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := kinde.OidcApp{
-					Name:        "oidc",
+				_, e := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{
 					Project:     "storefront",
 					Environment: "dev",
-				}.Register(ctx)
+				})
 				return e
 			}, pulumi.WithMocks("storefront", "dev", newKindeMocks()))
 
@@ -126,8 +122,8 @@ func TestKindeOidcApp(t *testing.T) {
 
 // Private helpers ------------------------------------------------------------
 
-func sampleKindePlatformSpec() kinde.Platform {
-	return kinde.Platform{
+func sampleKindePlatformArgs() *kinde.PlatformArgs {
+	return &kinde.PlatformArgs{
 		NonProd: kinde.TenantCredentials{
 			Domain:       "nonprod-test.kinde.com",
 			ClientID:     pulumi.String("nonprod-m2m-id"),

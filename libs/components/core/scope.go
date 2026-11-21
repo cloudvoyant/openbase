@@ -2,6 +2,7 @@ package core
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
@@ -9,94 +10,72 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-// ManifestOutputKey is the structured stack output key written by Platform, Project, and Environment stacks.
+// ManifestOutputKey is the structured stack output key written by OpenBase components on a stack.
 const ManifestOutputKey = "openbaseManifest"
 
-// Scope carries inherited Platform, Project, Environment, and IdentityBroker context into scoped resource registrations.
-type Scope struct {
-	Org        string
-	Project    string
-	Repo       string
-	Env        Environment
-	Platform   *PlatformRef
-	ProjectRef *ProjectRef
-	Brokers    []IdentityBroker
-}
-
-// DefaultDBBranchFrom returns "prod" on stage, "dev" on preview-*, and "" otherwise.
-func (s Scope) DefaultDBBranchFrom() string {
-	if s.Env == EnvStage {
+// DefaultBranchFrom returns the conventional parent branch ("prod" on stage when stageFromProd is true, "dev" on preview-*).
+func DefaultBranchFrom(env Environment, explicit string, stageFromProd bool) string {
+	if explicit != "" {
+		return explicit
+	}
+	if stageFromProd && env == EnvStage {
 		return string(EnvProd)
 	}
-	if s.Env.IsPreview() {
+	if env.IsPreview() {
 		return string(EnvDev)
 	}
 	return ""
 }
 
-// DefaultStorageBranchFrom returns "dev" on preview-* and "" on persistent stacks.
-func (s Scope) DefaultStorageBranchFrom() string {
-	if s.Env.IsPreview() {
-		return string(EnvDev)
-	}
-	return ""
-}
-
-// BranchStackRef formats "<org>/<project>/<branch>" when branch is non-empty.
-func (s Scope) BranchStackRef(ctx *pulumi.Context, branch string) string {
-	if branch == "" {
-		return ""
+// DefaultBranchStackRef formats "<org>/<project>/<branchFrom>" when branchFrom is non-empty and explicitRef is empty.
+func DefaultBranchStackRef(ctx *pulumi.Context, project, branchFrom, explicitRef string) string {
+	if explicitRef != "" || branchFrom == "" || ctx == nil {
+		return explicitRef
 	}
 	org := ctx.Organization()
 	if org == "" {
-		org = s.Org
+		org = "organization"
 	}
 	proj := ctx.Project()
 	if proj == "" {
-		proj = s.Project
+		proj = project
 	}
-	return fmt.Sprintf("%s/%s/%s", org, proj, branch)
+	return fmt.Sprintf("%s/%s/%s", org, proj, branchFrom)
 }
 
-// PlatformStackName returns the active Platform stack reference string, or "".
-func (s Scope) PlatformStackName() string {
-	if s.Platform == nil {
-		return ""
+// RecordStackExports exports non-colliding StackExports and updates openbaseManifest on ctx.
+func RecordStackExports(ctx *pulumi.Context, desc LinkDescriptor) {
+	if ctx == nil {
+		return
 	}
-	return s.Platform.StackName()
-}
-
-// ProjectStackName returns the active Project stack reference string, or "".
-func (s Scope) ProjectStackName() string {
-	if s.ProjectRef == nil {
-		return ""
+	exportTrackersMu.Lock()
+	tr, ok := exportTrackers[ctx]
+	if !ok {
+		tr = &ctxExportTracker{exported: map[string]bool{}}
+		exportTrackers[ctx] = tr
 	}
-	return s.ProjectRef.StackName()
+	for k, v := range desc.StackExports {
+		if tr.exported[k] {
+			continue
+		}
+		tr.exported[k] = true
+		ctx.Export(k, v)
+	}
+	if desc.Name != "" {
+		tr.descriptors = append(tr.descriptors, desc)
+	}
+	descriptors := append([]LinkDescriptor(nil), tr.descriptors...)
+	exportTrackersMu.Unlock()
+
+	org := OrgScope(ctx.Organization())
+	project := strings.TrimSuffix(ctx.Project(), "-shared")
+	if project == "platform" {
+		project = ""
+	}
+	ctx.Export(ManifestOutputKey, BuildManifestMap(org, project, "", descriptors))
 }
 
-// PlatformSpecItem is implemented by organization-level specs registered inside openbase.Platform.
-type PlatformSpecItem interface {
-	RegisterPlatformInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (PlatformResource, error)
-}
-
-// PlatformSpecItemOf preserves the concrete PlatformResource pointer type R when calling openbase.AddPlatform.
-type PlatformSpecItemOf[R PlatformResource] interface {
-	PlatformSpecItem
-	RegisterTypedPlatformInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (R, error)
-}
-
-// ScopedSpec is implemented by shared or environment specs registered inside openbase.Project or openbase.Environment.
-type ScopedSpec interface {
-	RegisterInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (Resource, error)
-}
-
-// ScopedSpecOf preserves the concrete resource pointer type R when calling openbase.Add.
-type ScopedSpecOf[R Resource] interface {
-	ScopedSpec
-	RegisterTypedInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (R, error)
-}
-
-// RemoteGrantHandler binds IAM/access on a remote Project or Platform resource referenced via ScopeRef.Resource(name).
+// RemoteGrantHandler binds IAM/access on a remote shared or platform resource referenced via ScopeRef.Resource(name).
 type RemoteGrantHandler func(grantCtx LinkGrantContext, remote *RemoteResource) error
 
 // RegisterRemoteGrantHandler registers an access-grant handler for a remote resource kind (e.g. "gcp-bucket").
@@ -114,7 +93,7 @@ func WithRemoteKind(kind string) RemoteOption {
 	return func(r *RemoteResource) { r.kind = kind }
 }
 
-// ScopeRef provides typed lookup over an in-memory or StackReference-backed Platform or Project scope.
+// ScopeRef provides typed output and resource lookup over an in-memory map or a Pulumi StackReference.
 type ScopeRef struct {
 	stackName string
 	sr        *pulumi.StackReference
@@ -153,6 +132,23 @@ func (r *ScopeRef) StackReference() *pulumi.StackReference {
 	return r.sr
 }
 
+// ResolveStackReference returns r.StackReference() when non-nil, or creates a new StackReference for explicitRef.
+func ResolveStackReference(ctx *pulumi.Context, resName string, ref *ScopeRef, explicitRef string) (*pulumi.StackReference, error) {
+	if ref != nil && ref.sr != nil {
+		return ref.sr, nil
+	}
+	stackName := explicitRef
+	if stackName == "" && ref != nil {
+		stackName = ref.stackName
+	}
+	if stackName == "" {
+		return nil, nil
+	}
+	return pulumi.NewStackReference(ctx, resName, &pulumi.StackReferenceArgs{
+		Name: pulumi.String(stackName),
+	})
+}
+
 // Output reads a top-level stack output key as a StringOutput (returning "" when absent).
 func (r *ScopeRef) Output(key string) pulumi.StringOutput {
 	if r == nil || r.sr == nil {
@@ -166,7 +162,7 @@ func (r *ScopeRef) Output(key string) pulumi.StringOutput {
 	}).(pulumi.StringOutput)
 }
 
-// Resource returns a linkable RemoteResource handle for a named resource in the parent Platform or Project stack.
+// Resource returns a linkable RemoteResource handle for a named resource in the referenced stack.
 func (r *ScopeRef) Resource(name string, opts ...RemoteOption) *RemoteResource {
 	if r == nil {
 		return nil
@@ -184,14 +180,6 @@ func (r *ScopeRef) Resource(name string, opts ...RemoteOption) *RemoteResource {
 	return out
 }
 
-// PlatformHandleByName returns an in-memory PlatformResource by logical name when available in the same process.
-func (r *ScopeRef) PlatformHandleByName(name string) PlatformResource {
-	if r == nil {
-		return nil
-	}
-	return r.localPlat[name]
-}
-
 // LookupManifestAttr reads a string attribute for a named resource inside a remote stack's openbaseManifest output.
 func LookupManifestAttr(sr *pulumi.StackReference, resName, key string) pulumi.StringOutput {
 	if sr == nil || resName == "" || key == "" {
@@ -200,46 +188,7 @@ func LookupManifestAttr(sr *pulumi.StackReference, resName, key string) pulumi.S
 	return lookupManifestMapField(sr, resName, "attributes", key)
 }
 
-// PlatformHandle returns an in-memory PlatformResource by kind when available in the same process.
-func (r *ScopeRef) PlatformHandle(kind string) PlatformResource {
-	if r == nil {
-		return nil
-	}
-	for _, item := range r.localPlat {
-		if item.OpenBasePlatform().Kind == kind {
-			return item
-		}
-	}
-	return nil
-}
-
-// ResourceHandle returns an in-memory Resource by kind when available in the same process.
-func (r *ScopeRef) ResourceHandle(kind string) Resource {
-	if r == nil {
-		return nil
-	}
-	for _, item := range r.localRes {
-		if item.OpenBaseMeta().Kind == kind {
-			return item
-		}
-	}
-	return nil
-}
-
-// PlatformRef references an organization Platform stack.
-type PlatformRef struct {
-	*ScopeRef
-	Org string
-}
-
-// ProjectRef references a repository's shared Project stack (and optional PlatformRef).
-type ProjectRef struct {
-	*ScopeRef
-	Project  string
-	Platform *PlatformRef
-}
-
-// RemoteResource adapts a resource exported in a parent Platform or Project stack into a local core.Resource for Links.
+// RemoteResource adapts a resource exported in a remote stack into a local core.Resource for Links.
 type RemoteResource struct {
 	pulumi.ResourceState
 	name      string
@@ -249,7 +198,7 @@ type RemoteResource struct {
 	localDesc *LinkDescriptor
 }
 
-// Name returns the resource's logical name inside the parent stack.
+// Name returns the resource's logical name inside the referenced stack.
 func (r *RemoteResource) Name() string { return r.name }
 
 // OpenBaseMeta returns synthetic shared metadata for the remote resource.
@@ -260,7 +209,7 @@ func (r *RemoteResource) OpenBaseMeta() ResourceMeta {
 	return ResourceMeta{Name: r.name, Kind: r.kind, Environment: EnvShared}
 }
 
-// Link reconstructs a LinkDescriptor from in-memory state or the parent stack's openbaseManifest output.
+// Link reconstructs a LinkDescriptor from in-memory state or the referenced stack's openbaseManifest output.
 func (r *RemoteResource) Link() LinkDescriptor {
 	if r.local != nil {
 		return r.local.Link()
@@ -314,7 +263,15 @@ func BuildManifestMap(org, project, platformStack string, descriptors []LinkDesc
 
 // Private helpers ------------------------------------------------------------
 
+type ctxExportTracker struct {
+	exported    map[string]bool
+	descriptors []LinkDescriptor
+}
+
 var (
+	exportTrackersMu sync.Mutex
+	exportTrackers   = map[*pulumi.Context]*ctxExportTracker{}
+
 	remoteGrantMu       sync.RWMutex
 	remoteGrantHandlers = map[string]RemoteGrantHandler{}
 )

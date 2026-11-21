@@ -20,15 +20,14 @@ func TestBucketLifecycleAndBranchGrants(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				bkt, err := gcp.Bucket{
-					Name:            "uploads",
+				bkt, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
 					Project:         "storefront",
 					Environment:     "prod",
 					BucketNamespace: "cv-openbase",
 					CORS: []gcp.BucketCORSRule{
 						{Origins: []string{"https://app.example.com"}, Methods: []string{"GET", "PUT"}},
 					},
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -55,13 +54,13 @@ func TestBucketLifecycleAndBranchGrants(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				bkt, err := gcp.Bucket{
-					Name:            "uploads",
-					Project:         "storefront",
-					Environment:     "preview-pr-42",
-					BranchFrom:      "dev",
-					BucketNamespace: "cv-openbase",
-				}.Register(ctx)
+				bkt, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
+					Project:            "storefront",
+					Environment:        "preview-pr-42",
+					BranchFrom:         "dev",
+					BucketNamespace:    "cv-openbase",
+					FallbackBucketName: pulumi.String("cv-openbase-storefront-dev-uploads"),
+				})
 				if err != nil {
 					return err
 				}

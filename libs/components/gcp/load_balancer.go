@@ -14,17 +14,13 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.StatelessResource                        = (*CloudLoadBalancerResource)(nil)
-	_ core.ScopedSpecOf[*CloudLoadBalancerResource] = CloudLoadBalancer{}
-)
+var _ core.StatelessResource = (*CloudLoadBalancer)(nil)
 
-// ErrBaseDomainRequired reports a missing BaseDomain on CloudLoadBalancer.
+// ErrBaseDomainRequired reports a missing BaseDomain on CloudLoadBalancerArgs.
 var ErrBaseDomainRequired = errors.New("gcp: baseDomain is required for CloudLoadBalancer")
 
-// CloudLoadBalancer declares a GCP Global External Application Load Balancer routing *.{BaseDomain} to Cloud Run via Serverless NEG URL mask (org, shared, or environment scoped).
-type CloudLoadBalancer struct {
-	Name        string
+// CloudLoadBalancerArgs configures a GCP Global External Application Load Balancer routing *.{BaseDomain} to Cloud Run via Serverless NEG URL mask.
+type CloudLoadBalancerArgs struct {
 	Project     string
 	Repo        string
 	Environment string
@@ -34,8 +30,8 @@ type CloudLoadBalancer struct {
 	ExtraLabels map[string]string
 }
 
-// CloudLoadBalancerResource holds the Global IPv4, wildcard Certificate Manager TLS resources, and Serverless NEG URL-mask routing resources.
-type CloudLoadBalancerResource struct {
+// CloudLoadBalancer holds the Global IPv4, wildcard Certificate Manager TLS resources, and Serverless NEG URL-mask routing resources.
+type CloudLoadBalancer struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -56,31 +52,37 @@ type CloudLoadBalancerResource struct {
 	URLMask           string
 }
 
-// Register provisions a shared GCP Global HTTPS Load Balancer for *.{BaseDomain}.
-func (lb CloudLoadBalancer) Register(
+// NewCloudLoadBalancer provisions a shared GCP Global HTTPS Load Balancer for *.{BaseDomain}.
+func NewCloudLoadBalancer(
 	ctx *pulumi.Context,
+	name string,
+	args *CloudLoadBalancerArgs,
 	opts ...pulumi.ResourceOption,
-) (*CloudLoadBalancerResource, error) {
-	base := core.NormalizeDomain(lb.BaseDomain)
+) (*CloudLoadBalancer, error) {
+	if args == nil {
+		args = &CloudLoadBalancerArgs{}
+	}
+	base := core.NormalizeDomain(args.BaseDomain)
 	if base == "" {
 		return nil, ErrBaseDomainRequired
 	}
-	lb.Name = defaultStr(lb.Name, "lb")
-	lb.Location = defaultStr(lb.Location, "us-central1")
-	res := &CloudLoadBalancerResource{BaseDomain: base, URLMask: "<service>." + base}
+	name = defaultStr(name, "lb")
+	spec := *args
+	spec.Location = defaultStr(spec.Location, "us-central1")
+	res := &CloudLoadBalancer{BaseDomain: base, URLMask: "<service>." + base}
 	meta, err := core.InitStateless(ctx, "openbase:gcp:CloudLoadBalancer", "gcp-cloud-load-balancer", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        lb.Name,
-		Project:     lb.Project,
-		Repo:        lb.Repo,
-		Environment: lb.Environment,
+		Name:        name,
+		Project:     spec.Project,
+		Repo:        spec.Repo,
+		Environment: spec.Environment,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionWildcardLoadBalancer(ctx, lb.Name, base, meta, lb, res); err != nil {
+	if err := provisionWildcardLoadBalancer(ctx, name, base, meta, spec, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
+	res.PublishLink(ctx, core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
 		Attributes: map[string]pulumi.StringOutput{
@@ -99,33 +101,14 @@ func (lb CloudLoadBalancer) Register(
 	return res, registerLoadBalancerOutputs(ctx, base, res)
 }
 
-// RegisterInScope adapts gcp.CloudLoadBalancer to openbase.Project and openbase.Environment.
-func (lb CloudLoadBalancer) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return lb.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers gcp.CloudLoadBalancer using inherited Scope metadata.
-func (lb CloudLoadBalancer) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*CloudLoadBalancerResource, error) {
-	if lb.Project == "" {
-		lb.Project = scope.Project
-	}
-	if lb.Repo == "" {
-		lb.Repo = scope.Repo
-	}
-	if lb.Environment == "" && scope.Env != "" {
-		lb.Environment = scope.Env.String()
-	}
-	return lb.Register(ctx, opts...)
-}
-
 // Private helpers ------------------------------------------------------------
 
 func provisionWildcardLoadBalancer(
 	ctx *pulumi.Context,
 	name, base string,
 	meta core.ResourceMeta,
-	spec CloudLoadBalancer,
-	res *CloudLoadBalancerResource,
+	spec CloudLoadBalancerArgs,
+	res *CloudLoadBalancer,
 ) error {
 	deps, err := enableLoadBalancerAPIs(ctx, name, spec.GCPProject, res)
 	if err != nil {
@@ -178,9 +161,9 @@ func createWildcardCertificateMap(
 	ctx *pulumi.Context,
 	name, base string,
 	meta core.ResourceMeta,
-	spec CloudLoadBalancer,
+	spec CloudLoadBalancerArgs,
 	deps []pulumi.Resource,
-	res *CloudLoadBalancerResource,
+	res *CloudLoadBalancer,
 ) (pulumi.StringOutput, error) {
 	labels := core.GCPLabels(meta, spec.ExtraLabels)
 	dnsAuth, err := certificatemanager.NewDnsAuthorization(ctx, name+"-dns-auth", &certificatemanager.DnsAuthorizationArgs{
@@ -230,10 +213,10 @@ func attachCertificateToMap(
 	ctx *pulumi.Context,
 	name, base string,
 	meta core.ResourceMeta,
-	spec CloudLoadBalancer,
+	spec CloudLoadBalancerArgs,
 	cert *certificatemanager.Certificate,
 	labels pulumi.StringMap,
-	res *CloudLoadBalancerResource,
+	res *CloudLoadBalancer,
 ) (pulumi.StringOutput, error) {
 	cmap, err := certificatemanager.NewCertificateMapResource(ctx, name+"-cert-map", &certificatemanager.CertificateMapResourceArgs{
 		Project: spec.GCPProject,
@@ -263,11 +246,11 @@ func createServerlessMaskFrontend(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec CloudLoadBalancer,
+	spec CloudLoadBalancerArgs,
 	addr *compute.GlobalAddress,
 	certMapURI pulumi.StringOutput,
 	deps []pulumi.Resource,
-	res *CloudLoadBalancerResource,
+	res *CloudLoadBalancer,
 ) error {
 	neg, err := compute.NewRegionNetworkEndpointGroup(ctx, name+"-neg", &compute.RegionNetworkEndpointGroupArgs{
 		Project:             spec.GCPProject,
@@ -302,11 +285,11 @@ func wireHTTPSForwardingRule(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec CloudLoadBalancer,
+	spec CloudLoadBalancerArgs,
 	addr *compute.GlobalAddress,
 	backend *compute.BackendService,
 	certMapURI pulumi.StringOutput,
-	res *CloudLoadBalancerResource,
+	res *CloudLoadBalancer,
 ) error {
 	umap, err := compute.NewURLMap(ctx, name+"-urlmap", &compute.URLMapArgs{
 		Project:        spec.GCPProject,
@@ -344,7 +327,7 @@ func wireHTTPSForwardingRule(
 	return nil
 }
 
-func registerLoadBalancerOutputs(ctx *pulumi.Context, base string, res *CloudLoadBalancerResource) error {
+func registerLoadBalancerOutputs(ctx *pulumi.Context, base string, res *CloudLoadBalancer) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"baseDomain":        pulumi.String(base),
 		"urlMask":           pulumi.String(res.URLMask),

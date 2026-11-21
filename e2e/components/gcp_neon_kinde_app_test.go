@@ -57,7 +57,7 @@ func TestGCPNeonKindeApp(t *testing.T) {
 		)
 	})
 
-	t.Run("given separate openbase.Platform (infra/platform), openbase.Project (infra/shared), and openbase.Environment (infra/env) GCP programs", func(t *testing.T) {
+	t.Run("given separate infra/platform, infra/shared, and infra/env GCP Pulumi programs", func(t *testing.T) {
 		for _, stack := range []string{"platform", "shared", "dev", "prod", "stage", "preview-pr-12"} {
 			h.InitStack(t, stack)
 		}

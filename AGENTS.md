@@ -12,7 +12,7 @@
 
 ### Repository layout
 
-- Place unified `Platform`, `Project`, and `Environment` scopes in the root `libs/components` package, shared lifecycle contracts in `libs/components/core`, and provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`. See [docs/architecture/index.md](./docs/architecture/index.md).
+- Place cross-stack lookup helpers (`LookupPlatform` and `LookupShared`) in the root `libs/components` package, shared lifecycle contracts in `libs/components/core`, and provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`. See [docs/architecture/index.md](./docs/architecture/index.md).
 - Keep top-level `e2e/` organized by target suite, with component end-to-end suites and consumer fixtures under [e2e/components](./e2e/README.md).
 
 ### File layout
@@ -23,12 +23,12 @@
 
 ### Go
 
-- Separate organization `Platform` specs (`core.PlatformResource`: `openbase.Platform` and `<provider>.Platform` in `infra/platform/main.go` on a dedicated `platform` stack) from shared `Project` specs (`openbase.Project` and `<provider>.Project` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming) and environment `Resource` specs (`openbase.Environment` and concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
+- Follow standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...) (*<Resource>, error)`) across organization foundations (`<provider>.NewPlatform` in `infra/platform/main.go` on a dedicated `platform` stack), shared project resources (`<provider>.NewProject` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming), and environment resources (concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
 - [Proposed] Keep every handwritten function at or below cyclomatic complexity `10` as enforced by [.golangci.yml](./.golangci.yml).
 
 ### Pulumi
 
-- Embed `pulumi.ResourceState` directly on concrete `*Resource` structs alongside `core.PlatformMeta`, `core.StatelessMeta`, or `core.StatefulMeta`.
+- Embed `pulumi.ResourceState` directly on concrete component structs alongside `core.PlatformMeta`, `core.StatelessMeta`, or `core.StatefulMeta`.
 - [Proposed] Gate `BranchFrom` on preview or child stacks so persistent root stacks do not reference themselves as a branch parent.
 
 ## Testing

@@ -58,15 +58,11 @@ When `preview-pr-42` runs `pulumi up`, it branches instantaneously from `dev` wi
 ### Interfaces and Contracts
 
 ```go
-db, err := neon.Database{
-	Name:            "db",
-	Project:         "storefront",
-	Environment:     "preview-pr-42",
-	BranchFrom:      "dev",
-	ProjectStackRef: "cloudvoyant/storefront-shared/shared",
-	BranchStackRef:  "cloudvoyant/storefront/dev",
-	APIKey:          cfg.RequireSecret("neonApiKey"),
-}.Register(ctx)
+db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
+	Project: "storefront",
+	Shared:  shared,
+	APIKey:  cfg.RequireSecret("neonApiKey"),
+})
 ```
 
 | Output Field | Secret | Host Target | Purpose |

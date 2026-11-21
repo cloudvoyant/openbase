@@ -19,14 +19,13 @@ func main() {
 		baseDomain := os.Getenv("OPENBASE_BASE_DOMAIN")
 		platformRef := envOrDefault("OPENBASE_PLATFORM_STACK_REF", "", "organization/platform/platform")
 
-		proj, err := openbase.NewProject(ctx, openbase.Project{
-			Project:          appProject,
-			PlatformStackRef: platformRef,
-		})
+		plat, err := openbase.LookupPlatform(ctx, platformRef)
 		if err != nil {
 			return err
 		}
-		authProj, err := openbase.Add(proj, kinde.Project{
+		authProj, err := kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
+			Project:                    appProject,
+			PlatformStack:              plat,
 			AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", vProjName),
 			VercelProjectName:          vProjName,
 			VercelTeamSlug:             teamSlug,
@@ -38,10 +37,15 @@ func main() {
 		if err != nil {
 			return err
 		}
-		if _, err := openbase.Add(proj, neon.Project{}); err != nil {
+		if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{
+			Project:       appProject,
+			PlatformStack: plat,
+		}); err != nil {
 			return err
 		}
-		_, err = openbase.Add(proj, vercel.Project{
+		_, err = vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
+			Project:           appProject,
+			PlatformStack:     plat,
 			VercelProjectName: vProjName,
 			EnableBlobStore:   true,
 			PreviewEnv: map[string]pulumi.StringInput{

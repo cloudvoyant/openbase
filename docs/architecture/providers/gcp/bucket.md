@@ -57,13 +57,11 @@ Reads try the primary bucket first and fall back to the parent bucket only on `s
 
 ```go
 // Infrastructure (infra/env/main.go)
-uploads, err := gcp.Bucket{
-	Name:            "uploads",
+uploads, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
 	Project:         "storefront",
-	Environment:     "preview-pr-42",
-	BranchFrom:      "dev",
+	GCPProject:      pulumi.String("cloudvoyant-openbase"),
 	BucketNamespace: "cloudvoyant-openbase",
-}.Register(ctx)
+})
 
 // Application runtime
 store, err := overlayfs.NewStore(gcsClient, primaryBucket, fallbackBucket)
@@ -82,7 +80,7 @@ GCS bucket names share one global namespace. `BucketNamespace` prepends the orga
 
 ### Explicit bucket outputs
 
-`BucketResource` exposes typed `BucketName`, `BucketURL`, and `FallbackBucketName` outputs so callers wire whichever environment variable names their application expects while `Links` binds `roles/storage.objectAdmin` and `roles/storage.objectViewer` IAM permissions.
+`Bucket` exposes typed `BucketName`, `BucketURL`, and `FallbackBucketName` outputs so callers wire whichever environment variable names their application expects while `Links` binds `roles/storage.objectAdmin` and `roles/storage.objectViewer` IAM permissions.
 
 ## References
 

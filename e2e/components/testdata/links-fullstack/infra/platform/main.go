@@ -5,7 +5,6 @@ import (
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
-	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/core"
 	"github.com/cloudvoyant/openbase/libs/components/gcp"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
@@ -17,19 +16,21 @@ func main() {
 		teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
 
-		vercelPlat := vercel.Platform{TeamID: teamID, TeamSlug: teamSlug}
-		_, err := openbase.Platform{
-			Org: teamSlug,
-			Resources: []core.PlatformSpecItem{
-				vercelPlat,
-				gcp.Platform{
-					GCPProject:  pulumi.String(gcpProject),
-					PoolSuffix:  os.Getenv("OPENBASE_TEST_RUN_ID"),
-					Links:       []core.OIDCProviderSource{vercelPlat},
-					SkipKeyRing: true,
-				},
-			},
-		}.Register(ctx)
+		vercelPlat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
+			Org:      teamSlug,
+			TeamID:   teamID,
+			TeamSlug: teamSlug,
+		})
+		if err != nil {
+			return err
+		}
+		_, err = gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
+			Org:         teamSlug,
+			GCPProject:  pulumi.String(gcpProject),
+			PoolSuffix:  os.Getenv("OPENBASE_TEST_RUN_ID"),
+			Links:       []core.OIDCProviderSource{vercelPlat},
+			SkipKeyRing: true,
+		})
 		return err
 	})
 }

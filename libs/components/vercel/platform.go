@@ -13,15 +13,13 @@ import (
 // Public API -----------------------------------------------------------------
 
 var (
-	_ core.PlatformResource                      = (*PlatformResource)(nil)
-	_ core.PlatformSpecItemOf[*PlatformResource] = Platform{}
-	_ core.OIDCProviderSource                    = Platform{}
-	_ core.OIDCProviderSource                    = (*PlatformResource)(nil)
+	_ core.PlatformResource   = (*Platform)(nil)
+	_ core.OIDCProviderSource = PlatformArgs{}
+	_ core.OIDCProviderSource = (*Platform)(nil)
 )
 
-// Platform declares account/team-level Vercel settings provisioned once per organization.
-type Platform struct {
-	Name           string
+// PlatformArgs configures account/team-level Vercel settings provisioned once per organization.
+type PlatformArgs struct {
 	Org            string
 	TeamID         string
 	TeamSlug       string
@@ -29,8 +27,8 @@ type Platform struct {
 	BaseDomain     string
 }
 
-// PlatformResource holds team-level Vercel configuration exported for downstream vercel.Project stacks and OIDC federation.
-type PlatformResource struct {
+// Platform holds team-level Vercel configuration exported for downstream vercel.Project stacks and OIDC federation.
+type Platform struct {
 	pulumi.ResourceState
 	core.PlatformMeta
 
@@ -40,25 +38,28 @@ type PlatformResource struct {
 	oidcSpec   core.OIDCIssuer
 }
 
-// Register exports team-level Vercel settings for consumption by vercel.Project stacks and linked cloud IAM pools.
-func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
-	p.Name = defaultVercelStr(p.Name, "vercel-platform")
-	orgScope := core.OrgScope(p.Org, p.TeamSlug, ctx.Organization())
-	issuer, _ := p.OIDCIssuerSpec()
-	res := &PlatformResource{
-		TeamID:     pulumi.String(p.TeamID).ToStringOutput(),
-		TeamSlug:   pulumi.String(p.TeamSlug).ToStringOutput(),
-		BaseDomain: pulumi.String(core.NormalizeDomain(p.BaseDomain)).ToStringOutput(),
+// NewPlatform exports team-level Vercel settings for consumption by vercel.Project stacks and linked cloud IAM pools.
+func NewPlatform(ctx *pulumi.Context, name string, args *PlatformArgs, opts ...pulumi.ResourceOption) (*Platform, error) {
+	if args == nil {
+		args = &PlatformArgs{}
+	}
+	name = defaultVercelStr(name, "vercel-platform")
+	orgScope := core.OrgScope(args.Org, args.TeamSlug, ctx.Organization())
+	issuer, _ := args.OIDCIssuerSpec()
+	res := &Platform{
+		TeamID:     pulumi.String(args.TeamID).ToStringOutput(),
+		TeamSlug:   pulumi.String(args.TeamSlug).ToStringOutput(),
+		BaseDomain: pulumi.String(core.NormalizeDomain(args.BaseDomain)).ToStringOutput(),
 		oidcSpec:   issuer,
 	}
 	info, err := core.InitPlatform(ctx, "openbase:vercel:Platform", "vercel-platform", res, &res.PlatformMeta, core.PlatformSpec{
-		Name: p.Name,
+		Name: name,
 		Org:  orgScope,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
+	res.PublishLink(ctx, core.LinkDescriptor{
 		Name: info.Name,
 		Kind: info.Kind,
 		Attributes: map[string]pulumi.StringOutput{
@@ -80,26 +81,13 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 	})
 }
 
-// RegisterPlatformInScope adapts vercel.Platform to openbase.Platform.
-func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.PlatformResource, error) {
-	return p.RegisterTypedPlatformInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedPlatformInScope registers vercel.Platform with inherited Org defaults and explicit ResourceOptions.
-func (p Platform) RegisterTypedPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
-	if p.Org == "" {
-		p.Org = scope.Org
-	}
-	return p.Register(ctx, opts...)
-}
-
 // OIDCIssuerSpec publishes Vercel's team or global OIDC issuer descriptor for cross-provider federation.
-func (p Platform) OIDCIssuerSpec() (core.OIDCIssuer, bool) {
+func (p PlatformArgs) OIDCIssuerSpec() (core.OIDCIssuer, bool) {
 	return OIDCIssuer(p.TeamSlug, p.OIDCIssuerMode)
 }
 
 // OIDCIssuerSpec returns the provisioned Vercel team OIDC issuer descriptor.
-func (r *PlatformResource) OIDCIssuerSpec() (core.OIDCIssuer, bool) {
+func (r *Platform) OIDCIssuerSpec() (core.OIDCIssuer, bool) {
 	if r == nil {
 		return core.OIDCIssuer{}, false
 	}

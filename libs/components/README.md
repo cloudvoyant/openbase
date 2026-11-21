@@ -10,15 +10,15 @@ go get github.com/cloudvoyant/openbase/libs/components@v0.1.0
 
 ## Packages
 
-| Package | Role | Declarative Specs |
+| Package | Role | Constructors and Helpers |
 | --- | --- | --- |
-| `libs/components` | Unified `Platform`, `Project`, and `Environment` scopes, typed `Add`, and cross-stack `LookupPlatform` and `LookupProject` | `Platform`, `Project`, `Environment`, `NewProject`, `NewEnvironment`, `Add`, `LookupPlatform`, `LookupProject` |
-| `libs/components/core` | `PlatformResource` and `Resource` (`StatelessResource`, `StatefulResource`) contracts, environment rules, domain formulas, naming, tags, `Links`, and `IdentityBroker` | `PlatformResource`, `StatelessResource`, `StatefulResource`, `Platform`, `Stateless`, `Stateful`, `ResolveLinks` |
-| `libs/components/gcp` | GCP org platform, per-app Artifact Registry project, wildcard HTTPS load balancing, Cloud Run v2, `FederatedIdentity` and `WIFBroker`, and GCS storage | `Platform`, `Project`, `CloudLoadBalancer`, `CloudRunService`, `Bucket`, `FederatedIdentity`, `WIFBroker`, `overlayfs` |
-| `libs/components/vercel` | Vercel team platform, per-app project (`staging` CustomEnvironment, domains, bypass), WebApp, and Blob storage | `Platform`, `Project`, `WebApp`, `BlobStore` |
-| `libs/components/neon` | Neon org defaults, per-app Neon Project cluster, and branched serverless PostgreSQL | `Platform`, `Project`, `Database` |
-| `libs/components/kinde` | Two-tenant Kinde org connections (`NonProd` and `Prod`), per-app OIDC `Application` pairs, and environment routing | `Platform`, `Project`, `OidcApp` |
-| `libs/components/synthetic` | Deterministic offline doubles for fast unit tests | `Service`, `Storage` |
+| `libs/components` | Cross-stack `LookupPlatform` and `LookupShared` helpers and supported environment conventions | `LookupPlatform`, `LookupShared`, `SupportedEnvironments` |
+| `libs/components/core` | `PlatformResource` and `Resource` (`StatelessResource`, `StatefulResource`) contracts, environment rules, domain formulas, naming, tags, `Links`, `ScopeRef`, and `IdentityBroker` | `PlatformResource`, `StatelessResource`, `StatefulResource`, `NewCustomPlatform`, `NewStateless`, `NewStateful`, `ResolveLinks` |
+| `libs/components/gcp` | GCP org platform, per-app Artifact Registry project, wildcard HTTPS load balancing, Cloud Run v2, `FederatedIdentity` and `WIFBroker`, and GCS storage | `NewPlatform`, `NewProject`, `NewCloudLoadBalancer`, `NewCloudRunService`, `NewBucket`, `NewFederatedIdentity`, `WIFBroker`, `overlayfs` |
+| `libs/components/vercel` | Vercel team platform, per-app project (`staging` CustomEnvironment, domains, bypass), WebApp, and Blob storage | `NewPlatform`, `NewProject`, `NewWebApp`, `NewBlobStore` |
+| `libs/components/neon` | Neon org defaults, per-app Neon Project cluster, and branched serverless PostgreSQL | `NewPlatform`, `NewProject`, `NewDatabase` |
+| `libs/components/kinde` | Two-tenant Kinde org connections (`NonProd` and `Prod`), per-app OIDC `Application` pairs, and environment routing | `NewPlatform`, `NewProject`, `NewOidcApp` |
+| `libs/components/synthetic` | Deterministic offline doubles for fast unit tests | `NewService`, `NewStorage` |
 
 Standalone consumer fixtures and live cloud end-to-end suites live in [e2e/components](../../e2e/README.md).
 

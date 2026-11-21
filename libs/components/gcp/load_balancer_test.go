@@ -20,11 +20,11 @@ func TestCloudLoadBalancer(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				lb, err := gcp.CloudLoadBalancer{
+				lb, err := gcp.NewCloudLoadBalancer(ctx, "lb", &gcp.CloudLoadBalancerArgs{
 					Project:    "storefront",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
 					BaseDomain: "gcp.cloudvoyant.io",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -52,10 +52,10 @@ func TestCloudLoadBalancer(t *testing.T) {
 			mocks.assertCount(t, "gcp:compute/globalForwardingRule:GlobalForwardingRule", 1)
 		})
 
-		t.Run("when BaseDomain is empty, then Register rejects with ErrBaseDomainRequired", func(t *testing.T) {
+		t.Run("when BaseDomain is empty, then NewCloudLoadBalancer rejects with ErrBaseDomainRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := gcp.CloudLoadBalancer{Project: "storefront"}.Register(ctx)
+				_, e := gcp.NewCloudLoadBalancer(ctx, "lb", &gcp.CloudLoadBalancerArgs{Project: "storefront"})
 				return e
 			}, pulumi.WithMocks("storefront", "prod", newGCPMocks()))
 

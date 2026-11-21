@@ -25,17 +25,15 @@ func TestSyntheticComponents(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				uploads, err := synthetic.Storage{
-					Name:        "uploads",
+				uploads, err := synthetic.NewStorage(ctx, "uploads", &synthetic.StorageArgs{
 					Project:     "storefront",
 					Environment: "preview-pr-12",
 					BranchFrom:  "dev",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
-				api, err := synthetic.Service{
-					Name:        "api",
+				api, err := synthetic.NewService(ctx, "api", &synthetic.ServiceArgs{
 					Project:     "storefront",
 					Environment: "preview-pr-12",
 					Links:       []core.Resource{uploads},
@@ -43,7 +41,7 @@ func TestSyntheticComponents(t *testing.T) {
 						"PRIMARY_BUCKET":  uploads.BucketName,
 						"FALLBACK_BUCKET": uploads.FallbackBucketName,
 					},
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}

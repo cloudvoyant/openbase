@@ -1,4 +1,4 @@
-// Package synthetic provides deterministic offline StatelessResource and StatefulResource specs for tests.
+// Package synthetic provides deterministic offline StatelessResource and StatefulResource components for tests.
 package synthetic
 
 import (
@@ -11,11 +11,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatelessResource = (*ServiceResource)(nil)
+var _ core.StatelessResource = (*Service)(nil)
 
-// Service declares an offline synthetic StatelessResource spec.
-type Service struct {
-	Name        string
+// ServiceArgs configures an offline synthetic StatelessResource component.
+type ServiceArgs struct {
 	Project     string
 	Repo        string
 	Environment string
@@ -26,8 +25,8 @@ type Service struct {
 	Endpoint    string
 }
 
-// ServiceResource is the deterministic offline StatelessResource handle returned by Service.Register.
-type ServiceResource struct {
+// Service is the deterministic offline StatelessResource handle returned by NewService.
+type Service struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 	URL          pulumi.StringOutput
@@ -36,21 +35,48 @@ type ServiceResource struct {
 	Granted      []string
 }
 
-// Register validates and provisions a synthetic StatelessResource without cloud provider dependencies.
-func (s Service) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ServiceResource, error) {
-	svc := &ServiceResource{}
+// NewService registers a synthetic StatelessResource without cloud provider dependencies.
+func NewService(ctx *pulumi.Context, name string, args *ServiceArgs, opts ...pulumi.ResourceOption) (*Service, error) {
+	if args == nil {
+		args = &ServiceArgs{}
+	}
+	svc := &Service{}
 	meta, err := core.InitStateless(ctx, "openbase:synthetic:Service", "synthetic-service", svc, &svc.StatelessMeta, core.StatelessSpec{
-		Name:        s.Name,
-		Project:     s.Project,
-		Repo:        s.Repo,
-		Environment: s.Environment,
-		Kind:        s.Kind,
-		Links:       s.Links,
+		Name:        name,
+		Project:     args.Project,
+		Repo:        args.Repo,
+		Environment: args.Environment,
+		Kind:        args.Kind,
+		Links:       args.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	_, err = core.ResolveLinks(core.LinkGrantContext{
+	if _, err := resolveSyntheticServiceLinks(ctx, meta, args.Links); err != nil {
+		return nil, err
+	}
+	populateSyntheticEnvMaps(args, svc)
+	endpoint := args.Endpoint
+	if endpoint == "" {
+		endpoint = fmt.Sprintf("https://%s.synthetic.local", meta.CanonicalName)
+	}
+	svc.URL = pulumi.String(endpoint).ToStringOutput()
+	svc.PublishLink(ctx, core.LinkDescriptor{
+		Name:       name,
+		Kind:       meta.Kind,
+		Attributes: map[string]pulumi.StringOutput{"url": svc.URL},
+		GrantAccess: func(g core.LinkGrantContext) error {
+			svc.Granted = append(svc.Granted, g.ConsumerName)
+			return nil
+		},
+	})
+	return svc, ctx.RegisterResourceOutputs(svc, pulumi.Map{"url": svc.URL})
+}
+
+// Private helpers ------------------------------------------------------------
+
+func resolveSyntheticServiceLinks(ctx *pulumi.Context, meta core.ResourceMeta, links []core.Resource) (map[string]pulumi.StringOutput, error) {
+	return core.ResolveLinks(core.LinkGrantContext{
 		Ctx:          ctx,
 		ConsumerName: meta.CanonicalName,
 		ConsumerMeta: meta,
@@ -59,34 +85,16 @@ func (s Service) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 			Provider: "synthetic",
 			NativeID: pulumi.String(meta.CanonicalName + "@synthetic.local").ToStringOutput(),
 		},
-	}, s.Links)
-	if err != nil {
-		return nil, err
-	}
+	}, links)
+}
+
+func populateSyntheticEnvMaps(args *ServiceArgs, svc *Service) {
 	svc.ResolvedEnv = map[string]pulumi.StringOutput{}
-	for k, v := range s.Env {
+	for k, v := range args.Env {
 		svc.ResolvedEnv[k] = v.ToStringOutput()
 	}
 	svc.ResolvedSecs = map[string]pulumi.StringOutput{}
-	for k, v := range s.Secrets {
+	for k, v := range args.Secrets {
 		svc.ResolvedSecs[k] = pulumi.ToSecret(v.ToStringOutput()).(pulumi.StringOutput)
 	}
-	endpoint := s.Endpoint
-	if endpoint == "" {
-		endpoint = fmt.Sprintf("https://%s.synthetic.local", meta.CanonicalName)
-	}
-	svc.URL = pulumi.String(endpoint).ToStringOutput()
-	svc.SetLink(core.LinkDescriptor{
-		Name:       s.Name,
-		Kind:       meta.Kind,
-		Attributes: map[string]pulumi.StringOutput{"url": svc.URL},
-		GrantAccess: func(g core.LinkGrantContext) error {
-			svc.Granted = append(svc.Granted, g.ConsumerName)
-			return nil
-		},
-	})
-	if err := ctx.RegisterResourceOutputs(svc, pulumi.Map{"url": svc.URL}); err != nil {
-		return nil, err
-	}
-	return svc, nil
 }

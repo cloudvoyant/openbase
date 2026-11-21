@@ -65,21 +65,22 @@ sequenceDiagram
 ### Interfaces and Contracts
 
 ```go
-// Tier 1: Organization Account (core.PlatformResource)
-plat, err := neon.Platform{
+// Tier 1: Organization Account (infra/platform/main.go)
+plat, err := neon.NewPlatform(ctx, "neon-platform", &neon.PlatformArgs{
 	Org:             "cloudvoyant",
 	OrgID:           "org-cloudvoyant",
 	DefaultRegionID: "aws-us-east-1",
-}.Register(ctx)
+})
 
-// Shared Project Resource in infra/shared (core.StatefulResource)
-proj, err := neon.Project{
+// Shared Project Resource in infra/shared/main.go
+platRef, err := openbase.LookupPlatform(ctx, "cloudvoyant/platform/platform")
+proj, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{
 	Project:                 "storefront",
 	Repo:                    "cloudvoyant/storefront",
-	PlatformStackRef:        "cloudvoyant/platform/platform",
+	PlatformStack:           platRef,
 	PostgresVersion:         17,
 	HistoryRetentionSeconds: 86400,
-}.Register(ctx)
+})
 ```
 
 | Spec | Contract | Synthesized `neon` Resources | Key Outputs |

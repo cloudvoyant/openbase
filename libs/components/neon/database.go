@@ -14,17 +14,13 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.StatefulResource                = (*DatabaseResource)(nil)
-	_ core.ScopedSpecOf[*DatabaseResource] = Database{}
-)
+var _ core.StatefulResource = (*Database)(nil)
 
-// ErrProjectIDRequired reports a missing NeonProject, ProjectID, and ProjectStackRef on Database.
-var ErrProjectIDRequired = errors.New("neon: neonProject, projectId, or projectStackRef is required")
+// ErrProjectIDRequired reports a missing NeonProject, Shared, ProjectID, and ProjectStackRef on DatabaseArgs.
+var ErrProjectIDRequired = errors.New("neon: neonProject, shared, projectId, or projectStackRef is required")
 
-// Database declares a per-environment Neon branch, compute endpoint, role, and database spec.
-type Database struct {
-	Name            string
+// DatabaseArgs configures a per-environment Neon branch, compute endpoint, role, and database.
+type DatabaseArgs struct {
 	Project         string
 	Repo            string
 	Environment     string
@@ -32,7 +28,8 @@ type Database struct {
 	BranchFrom      string
 	Backup          *bool
 	Links           []core.Resource
-	NeonProject     *ProjectResource
+	NeonProject     *Project
+	Shared          *core.ScopeRef
 	ProjectID       pulumi.StringInput
 	DefaultBranchID pulumi.StringInput
 	ParentBranchID  pulumi.StringInput
@@ -45,8 +42,8 @@ type Database struct {
 	SuspendSeconds  *int
 }
 
-// DatabaseResource is the provisioned Neon PostgreSQL branch handle with pooled DATABASE_URL and direct DIRECT_URL secrets.
-type DatabaseResource struct {
+// Database is the provisioned Neon PostgreSQL branch handle with pooled DATABASE_URL and direct DIRECT_URL secrets.
+type Database struct {
 	pulumi.ResourceState
 	core.StatefulMeta
 
@@ -61,59 +58,34 @@ type DatabaseResource struct {
 	DirectURL   pulumi.StringOutput
 }
 
-// Register provisions a Neon PostgreSQL branch satisfying core.StatefulResource.
-func (d Database) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*DatabaseResource, error) {
-	if d.NeonProject == nil && d.ProjectID == nil && d.ProjectStackRef == "" {
+// NewDatabase provisions a Neon PostgreSQL branch satisfying core.StatefulResource.
+func NewDatabase(ctx *pulumi.Context, name string, args *DatabaseArgs, opts ...pulumi.ResourceOption) (*Database, error) {
+	if args == nil || !hasNeonProjectSource(args) {
 		return nil, ErrProjectIDRequired
 	}
-	res := &DatabaseResource{}
+	spec := *args
+	applyDefaultDBBranching(ctx, &spec)
+	res := &Database{}
 	meta, err := core.InitStateful(ctx, "openbase:neon:Database", "neon-database", res, &res.StatefulMeta, core.StatefulSpec{
-		Name:        d.Name,
-		Project:     d.Project,
-		Repo:        d.Repo,
-		Environment: d.Environment,
-		Kind:        d.Kind,
-		BranchFrom:  d.BranchFrom,
-		Backup:      d.Backup,
-		Links:       d.Links,
+		Name:        name,
+		Project:     spec.Project,
+		Repo:        spec.Repo,
+		Environment: spec.Environment,
+		Kind:        spec.Kind,
+		BranchFrom:  spec.BranchFrom,
+		Backup:      spec.Backup,
+		Links:       spec.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	inheritNeonProjectAPISettings(&d)
-	if err := provisionNeonBranch(ctx, d.Name, meta, d, res); err != nil {
+	spec.BranchStackRef = core.DefaultBranchStackRef(ctx, meta.Project, meta.BranchFrom.String(), spec.BranchStackRef)
+	inheritNeonProjectAPISettings(&spec)
+	if err := provisionNeonBranch(ctx, name, meta, &spec, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildDatabaseLink(meta, res))
-	if err := registerDatabaseOutputs(ctx, meta, res); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-
-// RegisterInScope adapts neon.Database to openbase.Project and openbase.Environment.
-func (d Database) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return d.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers neon.Database with inherited Scope metadata, BranchFrom, and ProjectStackRef.
-func (d Database) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*DatabaseResource, error) {
-	d.Project = defaultIdentifier(d.Project, scope.Project)
-	d.Repo = defaultIdentifier(d.Repo, scope.Repo)
-	d.Environment = defaultIdentifier(d.Environment, string(scope.Env))
-	d.BranchFrom = defaultIdentifier(d.BranchFrom, scope.DefaultDBBranchFrom())
-	if d.NeonProject == nil && scope.ProjectRef != nil {
-		if np, ok := scope.ProjectRef.ResourceHandle("neon-project").(*ProjectResource); ok {
-			d.NeonProject = np
-		}
-	}
-	if d.ProjectStackRef == "" && d.NeonProject == nil && d.ProjectID == nil {
-		d.ProjectStackRef = scope.ProjectStackName()
-	}
-	if d.BranchFrom != "" && d.BranchStackRef == "" {
-		d.BranchStackRef = scope.BranchStackRef(ctx, d.BranchFrom)
-	}
-	return d.Register(ctx, opts...)
+	res.PublishLink(ctx, buildDatabaseLink(meta, res))
+	return res, registerDatabaseOutputs(ctx, meta, res)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -123,12 +95,22 @@ type neonParentRefs struct {
 	parentBranchID pulumi.StringOutput
 }
 
+func hasNeonProjectSource(args *DatabaseArgs) bool {
+	return args.NeonProject != nil || args.Shared != nil || args.ProjectID != nil || args.ProjectStackRef != ""
+}
+
+func applyDefaultDBBranching(ctx *pulumi.Context, spec *DatabaseArgs) {
+	if env, err := core.ResolveEnvironment(ctx, spec.Environment); err == nil {
+		spec.BranchFrom = core.DefaultBranchFrom(env, spec.BranchFrom, true)
+	}
+}
+
 func provisionNeonBranch(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Database,
-	res *DatabaseResource,
+	spec *DatabaseArgs,
+	res *Database,
 ) error {
 	refs, err := resolveNeonRefs(ctx, name, meta, spec)
 	if err != nil {
@@ -155,13 +137,13 @@ func provisionNeonBranch(
 	return configureCredentialsAndURLs(ctx, name, meta, spec, refs.projectID, branch, ep, res)
 }
 
-func resolveNeonRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Database) (neonParentRefs, error) {
+func resolveNeonRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec *DatabaseArgs) (neonParentRefs, error) {
 	refs, defaultBranch := initDirectNeonRefs(spec)
-	if spec.ProjectStackRef != "" {
-		sr, err := pulumi.NewStackReference(ctx, name+"-project-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.ProjectStackRef)})
-		if err != nil {
-			return neonParentRefs{}, err
-		}
+	sr, err := core.ResolveStackReference(ctx, name+"-project-ref", spec.Shared, spec.ProjectStackRef)
+	if err != nil {
+		return neonParentRefs{}, err
+	}
+	if sr != nil {
 		if !isSet(refs.projectID) {
 			refs.projectID = preferStackOutput(sr, "neonProjectId", "projectId")
 		}
@@ -177,7 +159,7 @@ func resolveNeonRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, s
 	return refs, nil
 }
 
-func initDirectNeonRefs(spec Database) (neonParentRefs, pulumi.StringOutput) {
+func initDirectNeonRefs(spec *DatabaseArgs) (neonParentRefs, pulumi.StringOutput) {
 	var refs neonParentRefs
 	var defaultBranch pulumi.StringOutput
 	if spec.NeonProject != nil {
@@ -197,7 +179,7 @@ func resolveParentBranch(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Database,
+	spec *DatabaseArgs,
 	defaultBranch pulumi.StringOutput,
 ) (pulumi.StringOutput, error) {
 	if spec.ParentBranchID != nil {
@@ -220,7 +202,7 @@ func createNeonEndpoint(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Database,
+	spec *DatabaseArgs,
 	projectID pulumi.StringOutput,
 	branch *neonprov.Branch,
 	parent pulumi.Resource,
@@ -240,7 +222,7 @@ func createNeonEndpoint(
 	}, pulumi.Parent(parent))
 }
 
-func inheritNeonProjectAPISettings(d *Database) {
+func inheritNeonProjectAPISettings(d *DatabaseArgs) {
 	if d.NeonProject == nil {
 		return
 	}
@@ -256,11 +238,11 @@ func configureCredentialsAndURLs(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Database,
+	spec *DatabaseArgs,
 	projectID pulumi.StringOutput,
 	branch *neonprov.Branch,
 	ep *neonprov.Endpoint,
-	res *DatabaseResource,
+	res *Database,
 ) error {
 	roleName := defaultIdentifier(spec.RoleName, "openbase_app")
 	dbName := defaultIdentifier(spec.DatabaseName, "openbase")
@@ -277,12 +259,12 @@ func ensureRoleAndDatabase(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Database,
+	spec *DatabaseArgs,
 	projectID pulumi.StringOutput,
 	branch *neonprov.Branch,
 	ep *neonprov.Endpoint,
 	roleName, dbName string,
-	res *DatabaseResource,
+	res *Database,
 ) (pulumi.StringOutput, error) {
 	if meta.BranchFrom != "" {
 		readyBranchID := pulumi.All(branch.ID(), ep.ID()).ApplyT(func(vs []any) string {
@@ -331,7 +313,7 @@ func formatPostgresURL(roleName string, password, host pulumi.StringOutput, dbNa
 	return pulumi.ToSecret(raw).(pulumi.StringOutput)
 }
 
-func buildDatabaseLink(meta core.ResourceMeta, res *DatabaseResource) core.LinkDescriptor {
+func buildDatabaseLink(meta core.ResourceMeta, res *Database) core.LinkDescriptor {
 	return core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
@@ -350,7 +332,7 @@ func buildDatabaseLink(meta core.ResourceMeta, res *DatabaseResource) core.LinkD
 	}
 }
 
-func registerDatabaseOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *DatabaseResource) error {
+func registerDatabaseOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *Database) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName": pulumi.String(meta.CanonicalName),
 		"branchId":      res.BranchID,

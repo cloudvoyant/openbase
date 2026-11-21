@@ -12,17 +12,14 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.StatelessResource              = (*ProjectResource)(nil)
-	_ core.ScopedSpecOf[*ProjectResource] = Project{}
-)
+var _ core.StatelessResource = (*Project)(nil)
 
-// Project declares an application's Vercel Project, CustomEnvironments, ProtectionBypass, Domains, and shared BlobStore in Premise's infra/shared stack.
-type Project struct {
-	Name                  string
+// ProjectArgs configures an application's Vercel Project, CustomEnvironments, ProtectionBypass, Domains, and shared BlobStore in Premise's infra/shared stack.
+type ProjectArgs struct {
 	Project               string
 	Repo                  string
-	Platform              *PlatformResource
+	Platform              *Platform
+	PlatformStack         *core.ScopeRef
 	PlatformStackRef      string
 	VercelProjectName     string
 	TeamID                string
@@ -50,8 +47,8 @@ type Project struct {
 	PreviewSecrets        map[string]pulumi.StringInput
 }
 
-// ProjectResource is the provisioned handle for an application's Vercel Project, custom environments, domains, and bypass secret.
-type ProjectResource struct {
+// Project is the provisioned handle for an application's Vercel Project, custom environments, domains, and bypass secret.
+type Project struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -81,48 +78,30 @@ type ProjectResource struct {
 	BlobBaseURL              pulumi.StringOutput
 }
 
-// Register provisions cross-environment Vercel project assets in Premise's infra/shared stack.
-func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
-	p.Name = defaultVercelStr(p.Name, "vercel")
-	res := &ProjectResource{}
+// NewProject provisions cross-environment Vercel project assets on the shared stack.
+func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pulumi.ResourceOption) (*Project, error) {
+	if err := core.RequireSharedStack(ctx); err != nil {
+		return nil, err
+	}
+	if args == nil {
+		args = &ProjectArgs{}
+	}
+	name = defaultVercelStr(name, "vercel")
+	res := &Project{}
 	meta, err := core.InitStateless(ctx, "openbase:vercel:Project", "vercel-project", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
+		Name:        name,
+		Project:     args.Project,
+		Repo:        args.Repo,
 		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionVercelProject(ctx, p.Name, meta, p, res); err != nil {
+	if err := provisionVercelProject(ctx, name, meta, *args, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildVercelProjectLink(meta, res))
+	res.PublishLink(ctx, buildVercelProjectLink(meta, res))
 	return res, registerVercelProjectOutputs(ctx, res)
-}
-
-// RegisterInScope adapts vercel.Project to openbase.Project.
-func (p Project) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return p.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers vercel.Project with inherited Project and PlatformRef defaults.
-func (p Project) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
-	if p.Project == "" {
-		p.Project = scope.Project
-	}
-	if p.Repo == "" {
-		p.Repo = scope.Repo
-	}
-	if p.Platform == nil && scope.Platform != nil {
-		if plat, ok := scope.Platform.PlatformHandle("vercel-platform").(*PlatformResource); ok {
-			p.Platform = plat
-		}
-	}
-	if p.PlatformStackRef == "" {
-		p.PlatformStackRef = scope.PlatformStackName()
-	}
-	return p.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -137,8 +116,8 @@ func provisionVercelProject(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Project,
-	res *ProjectResource,
+	spec ProjectArgs,
+	res *Project,
 ) error {
 	plat, err := resolveVercelPlatformRefs(ctx, name, spec)
 	if err != nil {
@@ -166,10 +145,10 @@ func provisionVercelProjectChildren(
 	name string,
 	meta core.ResourceMeta,
 	vProjName string,
-	spec Project,
+	spec ProjectArgs,
 	plat resolvedVercelPlatform,
 	proj *vercelprov.Project,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	if err := createDevCustomEnv(ctx, name, spec, plat.teamID, proj, res); err != nil {
 		return err
@@ -189,8 +168,8 @@ func provisionVercelProjectChildren(
 func seedOptionalPreviewEnvVars(
 	ctx *pulumi.Context,
 	name string,
-	spec Project,
-	res *ProjectResource,
+	spec ProjectArgs,
+	res *Project,
 ) error {
 	if len(spec.PreviewEnv) == 0 && len(spec.PreviewSecrets) == 0 {
 		return nil
@@ -214,7 +193,7 @@ func writePreviewEnvMap(
 	name string,
 	vars map[string]pulumi.StringOutput,
 	sensitive bool,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	teamPtr := nonEmptyStringPtrOutput(res.TeamID)
 	for _, k := range sortedMapKeys(vars) {
@@ -235,25 +214,22 @@ func writePreviewEnvMap(
 	return nil
 }
 
-func resolveVercelPlatformRefs(ctx *pulumi.Context, name string, spec Project) (resolvedVercelPlatform, error) {
+func resolveVercelPlatformRefs(ctx *pulumi.Context, name string, spec ProjectArgs) (resolvedVercelPlatform, error) {
 	p := resolvedVercelPlatform{
 		teamID:   pulumi.String(spec.TeamID).ToStringOutput(),
 		teamSlug: pulumi.String(spec.TeamSlug).ToStringOutput(),
 		baseDom:  pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput(),
 	}
 	applyVercelPlatformStruct(&p, spec)
-	if spec.PlatformStackRef == "" {
-		return p, nil
-	}
-	sr, err := pulumi.NewStackReference(ctx, name+"-platform-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.PlatformStackRef)})
-	if err != nil {
-		return resolvedVercelPlatform{}, err
+	sr, err := core.ResolveStackReference(ctx, name+"-platform-ref", spec.PlatformStack, spec.PlatformStackRef)
+	if err != nil || sr == nil {
+		return p, err
 	}
 	applyVercelPlatformStackRef(&p, sr, spec)
 	return p, nil
 }
 
-func applyVercelPlatformStruct(p *resolvedVercelPlatform, spec Project) {
+func applyVercelPlatformStruct(p *resolvedVercelPlatform, spec ProjectArgs) {
 	if spec.Platform == nil {
 		return
 	}
@@ -268,7 +244,7 @@ func applyVercelPlatformStruct(p *resolvedVercelPlatform, spec Project) {
 	}
 }
 
-func applyVercelPlatformStackRef(p *resolvedVercelPlatform, sr *pulumi.StackReference, spec Project) {
+func applyVercelPlatformStackRef(p *resolvedVercelPlatform, sr *pulumi.StackReference, spec ProjectArgs) {
 	if spec.Platform != nil {
 		return
 	}
@@ -287,7 +263,7 @@ func createUnderlyingVercelProject(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Project,
+	spec ProjectArgs,
 	teamID pulumi.StringOutput,
 	parent pulumi.Resource,
 ) (*vercelprov.Project, string, error) {
@@ -315,10 +291,10 @@ func createUnderlyingVercelProject(
 func createDevCustomEnv(
 	ctx *pulumi.Context,
 	name string,
-	spec Project,
+	spec ProjectArgs,
 	teamID pulumi.StringOutput,
 	proj *vercelprov.Project,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	if !spec.EnableDevEnvironment {
 		res.DevCustomEnvironmentID = pulumi.String("").ToStringOutput()
@@ -342,10 +318,10 @@ func createDevCustomEnv(
 func createStageCustomEnv(
 	ctx *pulumi.Context,
 	name string,
-	spec Project,
+	spec ProjectArgs,
 	teamID pulumi.StringOutput,
 	proj *vercelprov.Project,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	if spec.SkipStageEnvironment {
 		res.StageCustomEnvironmentID = pulumi.String("").ToStringOutput()
@@ -369,10 +345,10 @@ func createStageCustomEnv(
 func createProjectDomains(
 	ctx *pulumi.Context,
 	name, project, vProjName string,
-	spec Project,
+	spec ProjectArgs,
 	plat resolvedVercelPlatform,
 	proj *vercelprov.Project,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	res.ProdDomainName = computeProjectTierDomainOutput(project, vProjName, core.EnvProd, spec.ProdDomain, plat)
 	res.StageDomainName = computeProjectTierDomainOutput(project, vProjName, core.EnvStage, spec.StageDomain, plat)
@@ -402,7 +378,7 @@ func createProjectDomains(
 	return nil
 }
 
-func shouldAttachPrimaryProjectDomain(explicit string, spec Project) bool {
+func shouldAttachPrimaryProjectDomain(explicit string, spec ProjectArgs) bool {
 	return explicit != "" || spec.BaseDomain != "" || spec.TeamSlug != "" || spec.Platform != nil || spec.PlatformStackRef != ""
 }
 
@@ -445,7 +421,7 @@ func attachTierDomains(
 	customEnvID pulumi.StringPtrInput,
 	teamID pulumi.StringOutput,
 	proj *vercelprov.Project,
-	res *ProjectResource,
+	res *Project,
 ) (*vercelprov.ProjectDomain, error) {
 	waitPrimary := explicitPrimary == "" && strings.HasSuffix(explicitPrimary, ".vercel.app")
 	first, err := vercelprov.NewProjectDomain(ctx, baseName, &vercelprov.ProjectDomainArgs{
@@ -477,10 +453,10 @@ func attachTierDomains(
 func createAutomationBypass(
 	ctx *pulumi.Context,
 	name string,
-	spec Project,
+	spec ProjectArgs,
 	teamID pulumi.StringOutput,
 	proj *vercelprov.Project,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	bp, err := vercelprov.NewProjectProtectionBypass(ctx, name+"-bypass", &vercelprov.ProjectProtectionBypassArgs{
 		ProjectId: proj.ID(),
@@ -500,10 +476,10 @@ func createOptionalProjectBlob(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Project,
+	spec ProjectArgs,
 	teamID pulumi.StringOutput,
 	proj *vercelprov.Project,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	if !spec.EnableBlobStore {
 		res.BlobStoreID = pulumi.String("").ToStringOutput()
@@ -535,7 +511,7 @@ func createOptionalProjectBlob(
 	return nil
 }
 
-func buildVercelProjectLink(meta core.ResourceMeta, res *ProjectResource) core.LinkDescriptor {
+func buildVercelProjectLink(meta core.ResourceMeta, res *Project) core.LinkDescriptor {
 	return core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
@@ -570,7 +546,7 @@ func buildVercelProjectLink(meta core.ResourceMeta, res *ProjectResource) core.L
 	}
 }
 
-func registerVercelProjectOutputs(ctx *pulumi.Context, res *ProjectResource) error {
+func registerVercelProjectOutputs(ctx *pulumi.Context, res *Project) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"projectId":                res.ProjectID,
 		"vercelProjectId":          res.ProjectID,

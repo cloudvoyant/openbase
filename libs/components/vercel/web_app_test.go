@@ -22,8 +22,7 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				app, err := vercel.WebApp{
-					Name:              "web",
+				app, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
 					Project:           "storefront",
 					Environment:       "preview-pr-22",
 					Secrets:           map[string]pulumi.StringInput{"SESSION_SECRET": pulumi.String("s3cr3t")},
@@ -38,7 +37,7 @@ func TestVercelWebApp(t *testing.T) {
 							OIDCProvider: pulumi.String("projects/123/locations/global/workloadIdentityPools/pool/providers/vercel-oidc"),
 						},
 					},
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -61,12 +60,11 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				app, err := vercel.WebApp{
-					Name:            "web",
+				app, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
 					Project:         "storefront",
 					Environment:     "stage",
 					ProjectStackRef: "org/storefront-shared/shared",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -79,14 +77,13 @@ func TestVercelWebApp(t *testing.T) {
 			assertVercelEq(t, "stage alias URL from StackReference", <-urlCh, "https://openbase-storefront-stage-cloudvoyant.vercel.app")
 		})
 
-		t.Run("when VercelProject, ProjectStackRef, and VercelProjectID are all omitted, then Register returns ErrProjectSourceRequired", func(t *testing.T) {
+		t.Run("when VercelProject, ProjectStackRef, and VercelProjectID are all omitted, then NewWebApp returns ErrProjectSourceRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := vercel.WebApp{
-					Name:        "web",
+				_, e := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
 					Project:     "storefront",
 					Environment: "dev",
-				}.Register(ctx)
+				})
 				return e
 			}, pulumi.WithMocks("storefront", "dev", newVercelMocks()))
 
@@ -102,18 +99,16 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				blobs, err := vercel.BlobStore{
-					Name:               "uploads",
+				blobs, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
 					Project:            "storefront",
 					Environment:        "dev",
 					ProjectStackRef:    "org/storefront-shared/shared",
 					BlobReadWriteToken: pulumi.String("vercel_blob_rw_tok"),
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
-				_, err = vercel.WebApp{
-					Name:        "web",
+				_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
 					Project:     "storefront",
 					Environment: "dev",
 					Links:       []core.Resource{blobs},
@@ -125,7 +120,7 @@ func TestVercelWebApp(t *testing.T) {
 						"BLOB_READ_WRITE_TOKEN": pulumi.String("vercel_blob_rw_tok"),
 					},
 					ProjectStackRef: "org/storefront-shared/shared",
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("storefront", "dev", mocks))
 
@@ -141,15 +136,14 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				app, err := vercel.WebApp{
-					Name:            "web",
+				app, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
 					Project:         "storefront",
 					Environment:     "preview-pr-22",
 					VercelProjectID: pulumi.String("prj_123"),
 					BaseDomain:      "vercel.cloudvoyant.io",
 					ExtraDomains:    []string{"pr22.storefront.io"},
 					SourceDir:       ".",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -170,15 +164,14 @@ func TestVercelWebApp(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := vercel.WebApp{
-					Name:                 "web",
+				_, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
 					Project:              "storefront",
 					Environment:          "stage",
 					Env:                  map[string]pulumi.StringInput{"KINDE_ISSUER_URL": pulumi.String("https://prod.kinde.com")},
 					ProjectStackRef:      "org/storefront-shared/shared",
 					SkipStageEnvironment: true,
 					SourceDir:            ".",
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("storefront", "stage", mocks))
 

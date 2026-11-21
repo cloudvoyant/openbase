@@ -11,14 +11,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.PlatformResource                      = (*PlatformResource)(nil)
-	_ core.PlatformSpecItemOf[*PlatformResource] = Platform{}
-)
+var _ core.PlatformResource = (*Platform)(nil)
 
-// Platform declares account/organization-level Neon settings and optional org API keys provisioned once per organization.
-type Platform struct {
-	Name            string
+// PlatformArgs configures account/organization-level Neon settings and optional org API keys provisioned once per organization.
+type PlatformArgs struct {
 	Org             string
 	OrgID           string
 	DefaultRegionID string
@@ -28,8 +24,8 @@ type Platform struct {
 	OrgAPIKeyName   string
 }
 
-// PlatformResource holds account-level Neon defaults exported for per-repo neon.Project stacks.
-type PlatformResource struct {
+// Platform holds account-level Neon defaults exported for per-repo neon.Project stacks.
+type Platform struct {
 	pulumi.ResourceState
 	core.PlatformMeta
 
@@ -40,61 +36,51 @@ type PlatformResource struct {
 	apiBaseURL      string
 }
 
-// Register provisions org-level Neon account configuration on a central platform stack.
-func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
-	p.Name = defaultIdentifier(p.Name, "neon-platform")
-	res := &PlatformResource{}
+// NewPlatform provisions org-level Neon account configuration on a central platform stack.
+func NewPlatform(ctx *pulumi.Context, name string, args *PlatformArgs, opts ...pulumi.ResourceOption) (*Platform, error) {
+	if args == nil {
+		args = &PlatformArgs{}
+	}
+	name = defaultIdentifier(name, "neon-platform")
+	res := &Platform{}
 	info, err := core.InitPlatform(ctx, "openbase:neon:Platform", "neon-platform", res, &res.PlatformMeta, core.PlatformSpec{
-		Name: p.Name,
-		Org:  p.Org,
+		Name: name,
+		Org:  args.Org,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	populateNeonPlatformDefaults(p, res)
-	if err := createOptionalNeonOrgKey(ctx, p.Name, info, p, res); err != nil {
+	populateNeonPlatformDefaults(args, res)
+	if err := createOptionalNeonOrgKey(ctx, name, info, args, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildNeonPlatformLink(info, res))
+	res.PublishLink(ctx, buildNeonPlatformLink(info, res))
 	return res, registerNeonPlatformOutputs(ctx, res)
-}
-
-// RegisterPlatformInScope adapts neon.Platform to openbase.Platform.
-func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.PlatformResource, error) {
-	return p.RegisterTypedPlatformInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedPlatformInScope registers neon.Platform with inherited Org defaults and explicit ResourceOptions.
-func (p Platform) RegisterTypedPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
-	if p.Org == "" {
-		p.Org = scope.Org
-	}
-	return p.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
 
-func populateNeonPlatformDefaults(spec Platform, res *PlatformResource) {
-	region := defaultIdentifier(spec.DefaultRegionID, "aws-us-east-1")
-	res.OrgID = pulumi.String(spec.OrgID).ToStringOutput()
+func populateNeonPlatformDefaults(args *PlatformArgs, res *Platform) {
+	region := defaultIdentifier(args.DefaultRegionID, "aws-us-east-1")
+	res.OrgID = pulumi.String(args.OrgID).ToStringOutput()
 	res.DefaultRegionID = pulumi.String(region).ToStringOutput()
-	res.apiKey = spec.APIKey
-	res.apiBaseURL = spec.APIBaseURL
+	res.apiKey = args.APIKey
+	res.apiBaseURL = args.APIBaseURL
 }
 
 func createOptionalNeonOrgKey(
 	ctx *pulumi.Context,
 	name string,
 	info core.PlatformInfo,
-	spec Platform,
-	res *PlatformResource,
+	args *PlatformArgs,
+	res *Platform,
 ) error {
-	if !spec.CreateOrgAPIKey || spec.OrgID == "" {
+	if !args.CreateOrgAPIKey || args.OrgID == "" {
 		return nil
 	}
-	keyName := defaultIdentifier(spec.OrgAPIKeyName, info.CanonicalName)
+	keyName := defaultIdentifier(args.OrgAPIKeyName, info.CanonicalName)
 	k, err := neonprov.NewOrgApiKey(ctx, name+"-org-key", &neonprov.OrgApiKeyArgs{
-		OrgId: pulumi.String(spec.OrgID),
+		OrgId: pulumi.String(args.OrgID),
 		Name:  pulumi.String(keyName),
 	}, pulumi.Parent(res))
 	if err != nil {
@@ -104,7 +90,7 @@ func createOptionalNeonOrgKey(
 	return nil
 }
 
-func buildNeonPlatformLink(info core.PlatformInfo, res *PlatformResource) core.LinkDescriptor {
+func buildNeonPlatformLink(info core.PlatformInfo, res *Platform) core.LinkDescriptor {
 	exports := map[string]pulumi.Input{
 		"neonOrgId":           res.OrgID,
 		"neonDefaultRegionId": res.DefaultRegionID,
@@ -123,7 +109,7 @@ func buildNeonPlatformLink(info core.PlatformInfo, res *PlatformResource) core.L
 	}
 }
 
-func registerNeonPlatformOutputs(ctx *pulumi.Context, res *PlatformResource) error {
+func registerNeonPlatformOutputs(ctx *pulumi.Context, res *Platform) error {
 	outs := pulumi.Map{
 		"neonOrgId":           res.OrgID,
 		"neonDefaultRegionId": res.DefaultRegionID,

@@ -21,8 +21,7 @@ func TestCloudRunService(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				svc, err := gcp.CloudRunService{
-					Name:                 "orders-api-service",
+				svc, err := gcp.NewCloudRunService(ctx, "orders-api-service", &gcp.CloudRunServiceArgs{
 					Project:              "storefront",
 					Environment:          "preview-feature-very-long-branch-slug-with-ticket-98765",
 					Secrets:              map[string]pulumi.StringInput{"API_SECRET": pulumi.String("top-secret")},
@@ -32,7 +31,7 @@ func TestCloudRunService(t *testing.T) {
 					Visibility:           gcp.VisibilityPublic,
 					StartupProbe:         &gcp.ProbeConfig{Path: "/healthz"},
 					LivenessProbe:        &gcp.ProbeConfig{Path: "/livez"},
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -59,26 +58,24 @@ func TestCloudRunService(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				backend, err := gcp.CloudRunService{
-					Name:        "orders",
+				backend, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
 					Project:     "storefront",
 					Environment: "prod",
 					Image:       pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
 					Visibility:  gcp.VisibilityInternal,
 					Domain:      "orders.example.com",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
-				caller, err := gcp.CloudRunService{
-					Name:        "gateway",
+				caller, err := gcp.NewCloudRunService(ctx, "gateway", &gcp.CloudRunServiceArgs{
 					Project:     "storefront",
 					Environment: "prod",
 					Links:       []core.Resource{backend},
 					Env:         map[string]pulumi.StringInput{"ORDERS_URL": backend.URL},
 					Image:       pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
 					Visibility:  gcp.VisibilityWorker,
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -96,25 +93,23 @@ func TestCloudRunService(t *testing.T) {
 			mocks.assertCount(t, "gcp:cloudrunv2/serviceIamMember:ServiceIamMember", 1)
 		})
 
-		t.Run("when Image is missing or Visibility is invalid, then Register rejects with sentinel errors", func(t *testing.T) {
+		t.Run("when Image is missing or Visibility is invalid, then NewCloudRunService rejects with sentinel errors", func(t *testing.T) {
 			// Arrange / Act.
 			errMissingImage := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := gcp.CloudRunService{
-					Name:        "api",
+				_, err := gcp.NewCloudRunService(ctx, "api", &gcp.CloudRunServiceArgs{
 					Project:     "storefront",
 					Environment: "dev",
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("storefront", "dev", newGCPMocks()))
 
 			errBadVisibility := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := gcp.CloudRunService{
-					Name:        "api",
+				_, err := gcp.NewCloudRunService(ctx, "api", &gcp.CloudRunServiceArgs{
 					Project:     "storefront",
 					Environment: "dev",
 					Image:       pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
 					Visibility:  "dmz",
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("storefront", "dev", newGCPMocks()))
 
@@ -171,14 +166,13 @@ func assertCloudRunBaseDomainAndMappings(t *testing.T) {
 
 	// Act.
 	err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-		svc, err := gcp.CloudRunService{
-			Name:        "web",
+		svc, err := gcp.NewCloudRunService(ctx, "web", &gcp.CloudRunServiceArgs{
 			Project:     "storefront",
 			Environment: "prod",
 			Image:       pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
 			BaseDomain:  "gcp.cloudvoyant.io",
 			Domains:     []string{"storefront.io", "www.storefront.io"},
-		}.Register(ctx)
+		})
 		if err != nil {
 			return err
 		}

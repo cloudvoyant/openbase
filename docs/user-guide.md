@@ -1,26 +1,26 @@
 # OpenBase user guide
 
-OpenBase organizes cloud infrastructure into three scopes in the root `github.com/cloudvoyant/openbase/libs/components` package:
+OpenBase components use standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...)`) across three Premise root programs:
 
-1. `openbase.Platform` runs once per organization in a dedicated platform repository (`infra/platform/main.go` on stack `platform`) to enable GCP APIs, create one Workload Identity Pool and wildcard HTTPS Load Balancer, export Vercel team and Neon organization defaults, and connect `NonProd` and `Prod` Kinde tenants.
-2. `openbase.Project` runs once per application repository in `infra/shared/main.go` (`shared` stack via `pm infra apply --shared`) to provision shared assets such as `gcp.Project`, `vercel.Project`, `neon.Project`, `kinde.Project`, or shared `gcp.Bucket` stores.
-3. `openbase.Environment` runs per `dev`, `stage`, `prod`, and `preview-<slug>` stack in `infra/env/main.go` (`pm infra apply --env ...`) to provision isolated compute, copy-on-write Neon branches, storage overlays, and OIDC bindings.
+1. `infra/platform/main.go` runs once per organization on stack `platform` (`gcp.NewPlatform`, `vercel.NewPlatform`, `neon.NewPlatform`, `kinde.NewPlatform`) to enable GCP APIs, create one Workload Identity Pool and wildcard HTTPS Load Balancer, export Vercel team and Neon organization defaults, and connect `NonProd` and `Prod` Kinde tenants.
+2. `infra/shared/main.go` runs once per application repository on stack `shared` (`pm infra apply --shared`) to provision cross-environment resources (`gcp.NewProject`, `vercel.NewProject`, `neon.NewProject`, `kinde.NewProject`, or shared `gcp.NewBucket` stores).
+3. `infra/env/main.go` runs on `dev`, `stage`, `prod`, and `preview-<slug>` stacks (`pm infra apply --env ...`) to provision isolated compute, copy-on-write Neon branches, storage overlays, OIDC bindings, and any native Pulumi resources directly on `ctx`.
 
 ## Stack topology
 
 ```mermaid
 flowchart TD
-    OrgProg["Platform Repo (infra/platform/main.go)"] --> OrgStack["Stack: acme/platform/platform (openbase.Platform)"]
-    ProjProg["App Shared Program (infra/shared/main.go)"] --> ProjStack["Stack: acme/storefront-shared/shared (openbase.Project)"]
-    EnvProg["App Environment Program (infra/env/main.go)"] --> Dev["Stack: dev (openbase.Environment)"]
+    OrgProg["Platform Repo (infra/platform/main.go)"] --> OrgStack["Stack: acme/platform/platform"]
+    ProjProg["App Shared Program (infra/shared/main.go)"] --> ProjStack["Stack: acme/storefront-shared/shared"]
+    EnvProg["App Environment Program (infra/env/main.go)"] --> Dev["Stack: dev"]
     EnvProg --> Stage["Stack: stage (BranchFrom: prod)"]
     EnvProg --> Prod["Stack: prod"]
     EnvProg --> Preview["Stack: preview-<slug> (BranchFrom: dev)"]
-    OrgStack -->|"LookupPlatform / PlatformStackRef"| ProjStack
-    ProjStack -->|"LookupProject / openbaseManifest"| Dev
-    ProjStack -->|"LookupProject / openbaseManifest"| Stage
-    ProjStack -->|"LookupProject / openbaseManifest"| Prod
-    ProjStack -->|"LookupProject / openbaseManifest"| Preview
+    OrgStack -->|"openbase.LookupPlatform(ctx)"| ProjStack
+    ProjStack -->|"openbase.LookupShared(ctx) + openbaseManifest"| Dev
+    ProjStack -->|"openbase.LookupShared(ctx) + openbaseManifest"| Stage
+    ProjStack -->|"openbase.LookupShared(ctx) + openbaseManifest"| Prod
+    ProjStack -->|"openbase.LookupShared(ctx) + openbaseManifest"| Preview
 ```
 
 ## 1. Install OpenBase
@@ -29,7 +29,7 @@ flowchart TD
 go get github.com/cloudvoyant/openbase/libs/components@latest
 ```
 
-## 2. Organization platform (`openbase.Platform`)
+## 2. Organization platform (`infra/platform/main.go`)
 
 Deploy one organization platform stack into your shared Pulumi backend (`gs://<org>-pulumi-state`):
 
@@ -37,7 +37,6 @@ Deploy one organization platform stack into your shared Pulumi backend (`gs://<o
 package main
 
 import (
-	openbase "github.com/cloudvoyant/openbase/libs/components"
 	"github.com/cloudvoyant/openbase/libs/components/core"
 	"github.com/cloudvoyant/openbase/libs/components/gcp"
 	"github.com/cloudvoyant/openbase/libs/components/kinde"
@@ -50,40 +49,45 @@ import (
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		cfg := config.New(ctx, "")
-		vercelPlat := vercel.Platform{
+		vercelPlat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
+			Org:        "acme",
 			TeamID:     "team_123",
 			TeamSlug:   "acme",
 			BaseDomain: "vercel.acme.io",
+		})
+		if err != nil {
+			return err
 		}
-		_, err := openbase.Platform{
+		if _, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
+			Org:                "acme",
+			GCPProject:         pulumi.String("acme-cloud"),
+			GCPProjectNumber:   "123456789012",
+			Links:              []core.OIDCProviderSource{vercelPlat, core.GitHubActionsOIDC("acme")},
+			BaseDomain:         "gcp.acme.io",
+			EnableLoadBalancer: true,
+		}); err != nil {
+			return err
+		}
+		if _, err := neon.NewPlatform(ctx, "neon-platform", &neon.PlatformArgs{
+			Org:             "acme",
+			OrgID:           "org-acme",
+			DefaultRegionID: "aws-us-east-1",
+		}); err != nil {
+			return err
+		}
+		_, err = kinde.NewPlatform(ctx, "kinde-platform", &kinde.PlatformArgs{
 			Org: "acme",
-			Resources: []core.PlatformSpecItem{
-				vercelPlat,
-				gcp.Platform{
-					GCPProject:         pulumi.String("acme-cloud"),
-					GCPProjectNumber:   "123456789012",
-					Links:              []core.OIDCProviderSource{vercelPlat, core.GitHubActionsOIDC("acme")},
-					BaseDomain:         "gcp.acme.io",
-					EnableLoadBalancer: true,
-				},
-				neon.Platform{
-					OrgID:           "org-acme",
-					DefaultRegionID: "aws-us-east-1",
-				},
-				kinde.Platform{
-					NonProd: kinde.TenantCredentials{
-						Domain:       "acme-nonprod.kinde.com",
-						ClientID:     cfg.Require("kindeNonProdClientId"),
-						ClientSecret: cfg.RequireSecret("kindeNonProdClientSecret"),
-					},
-					Prod: kinde.TenantCredentials{
-						Domain:       "acme.kinde.com",
-						ClientID:     cfg.Require("kindeProdClientId"),
-						ClientSecret: cfg.RequireSecret("kindeProdClientSecret"),
-					},
-				},
+			NonProd: kinde.TenantCredentials{
+				Domain:       "acme-nonprod.kinde.com",
+				ClientID:     cfg.Require("kindeNonProdClientId"),
+				ClientSecret: cfg.RequireSecret("kindeNonProdClientSecret"),
 			},
-		}.Register(ctx)
+			Prod: kinde.TenantCredentials{
+				Domain:       "acme.kinde.com",
+				ClientID:     cfg.Require("kindeProdClientId"),
+				ClientSecret: cfg.RequireSecret("kindeProdClientSecret"),
+			},
+		})
 		return err
 	})
 }
@@ -91,7 +95,7 @@ func main() {
 
 ## 3. Shared repository project (`infra/shared/main.go`)
 
-Set `workspace.infra.directory: infra/env` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Register any combination of shared project resources with `openbase.NewProject` and `openbase.Add` (inheriting organization settings and Kinde tenant connections from `PlatformStackRef`):
+Set `workspace.infra.directory: infra/env` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Call `openbase.LookupPlatform(ctx)` once and pass `PlatformStack` into each `<provider>.NewProject` constructor:
 
 ```go
 package main
@@ -106,24 +110,25 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		proj, err := openbase.NewProject(ctx, openbase.Project{
-			Project:          "storefront",
-			PlatformStackRef: "acme/platform/platform",
-		})
+		plat, err := openbase.LookupPlatform(ctx, "acme/platform/platform")
 		if err != nil {
 			return err
 		}
-		authProj, err := openbase.Add(proj, kinde.Project{
+		authProj, err := kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
+			PlatformStack:  plat,
 			VercelTeamSlug: "acme",
 			BaseDomain:     "vercel.acme.io",
 		})
 		if err != nil {
 			return err
 		}
-		if _, err := openbase.Add(proj, neon.Project{}); err != nil {
+		if _, err := neon.NewProject(ctx, "neon-project", &neon.ProjectArgs{
+			PlatformStack: plat,
+		}); err != nil {
 			return err
 		}
-		_, err = openbase.Add(proj, vercel.Project{
+		_, err = vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
+			PlatformStack:   plat,
 			EnableBlobStore: true,
 			PreviewEnv: map[string]pulumi.StringInput{
 				"KINDE_ISSUER_URL": authProj.NonProdIssuerURL,
@@ -140,7 +145,7 @@ func main() {
 
 ## 4. Per-environment stack (`infra/env/main.go`)
 
-`openbase.NewEnvironment` resolves `<org>/<project>-shared/shared` automatically and sets default stateful branching (`stage` from `prod`, `preview-*` from `dev`). `Links` grants IAM and OIDC access, while callers wire their own `Env` and `Secrets` keys directly from typed resource outputs:
+`openbase.LookupShared(ctx)` resolves `<org>/<project>-shared/shared` automatically, and stateful constructors set default branching (`stage` from `prod`, `preview-*` from `dev`). `Links` grants IAM and OIDC access, while callers wire their own `Env` and `Secrets` keys directly from typed resource outputs:
 
 ```go
 package main
@@ -158,37 +163,35 @@ import (
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
 		cfg := config.New(ctx, "")
-		env, err := openbase.NewEnvironment(ctx, openbase.Environment{
-			Project: "storefront",
-		})
+		shared, err := openbase.LookupShared(ctx)
 		if err != nil {
 			return err
 		}
-		db, err := openbase.Add(env, neon.Database{
-			Name:   "db",
+		db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
+			Shared: shared,
 			APIKey: cfg.RequireSecret("neonApiKey"),
 		})
 		if err != nil {
 			return err
 		}
-		uploads, err := openbase.Add(env, vercel.BlobStore{
-			Name:               "uploads",
+		uploads, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
+			Shared:             shared,
 			TeamID:             "team_123",
 			BlobReadWriteToken: cfg.RequireSecret("blobReadWriteToken"),
 		})
 		if err != nil {
 			return err
 		}
-		auth, err := openbase.Add(env, kinde.OidcApp{
-			Name:           "auth",
+		auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
+			Shared:         shared,
 			VercelTeamSlug: "acme",
 			BaseDomain:     "vercel.acme.io",
 		})
 		if err != nil {
 			return err
 		}
-		_, err = openbase.Add(env, vercel.WebApp{
-			Name:       "web",
+		_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
+			Shared:     shared,
 			TeamID:     "team_123",
 			TeamSlug:   "acme",
 			BaseDomain: "vercel.acme.io",
@@ -216,38 +219,33 @@ func main() {
 
 ## 5. Hybrid multi-app and cross-cloud WIF
 
-An `openbase.Environment` can host multiple apps and services (such as a `vercel.WebApp` frontend and an internal `gcp.CloudRunService` API) and link shared resources from `infra/shared`. Register `gcp.FederatedIdentity` (or `gcp.WIFBroker`) so external OIDC callers receive federated Google Cloud service accounts at the `Links` boundary while exposing typed service-account and WIF audience outputs:
+An `infra/env/main.go` program can deploy multiple apps and services (such as a `vercel.NewWebApp` frontend and an internal `gcp.NewCloudRunService` API) and link shared resources from `infra/shared`. Call `gcp.NewFederatedIdentity` (or pass `gcp.WIFBroker`) so external OIDC callers receive federated Google Cloud service accounts at the `Links` boundary:
 
 ```go
-platRef, err := openbase.LookupPlatform(ctx, "acme/platform/platform")
+plat, err := openbase.LookupPlatform(ctx, "acme/platform/platform")
 if err != nil {
 	return err
 }
-env, err := openbase.NewEnvironment(ctx, openbase.Environment{
-	Project:  "storefront",
-	Platform: platRef,
-})
+shared, err := openbase.LookupShared(ctx)
 if err != nil {
 	return err
 }
-sharedAssets := env.Project().Resource(
+sharedAssets := shared.Resource(
 	"shared-assets",
 	core.WithRemoteKind("gcp-bucket"),
 )
-fed, err := openbase.Add(env, gcp.FederatedIdentity{
-	Name:           "web-wif",
+fed, err := gcp.NewFederatedIdentity(ctx, "web-wif", &gcp.FederatedIdentityArgs{
 	GCPProject:     pulumi.String("acme-cloud"),
-	PoolName:       platRef.Output("workloadIdentityPoolName"),
-	OIDCProvider:   platRef.Output("vercelOidcProviderName"),
+	PoolName:       plat.Output("workloadIdentityPoolName"),
+	OIDCProvider:   plat.Output("vercelOidcProviderName"),
 	SourceProvider: "vercel",
 	ClaimKey:       "project_id",
-	ClaimValue:     env.Project().Output("vercelProjectId"),
+	ClaimValue:     shared.Output("vercelProjectId"),
 })
 if err != nil {
 	return err
 }
-ordersAPI, err := openbase.Add(env, gcp.CloudRunService{
-	Name:       "orders",
+ordersAPI, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
 	GCPProject: pulumi.String("acme-cloud"),
 	Visibility: gcp.VisibilityInternal,
 	Image:      pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
@@ -262,8 +260,8 @@ ordersAPI, err := openbase.Add(env, gcp.CloudRunService{
 if err != nil {
 	return err
 }
-_, err = openbase.Add(env, vercel.WebApp{
-	Name:      "web",
+_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
+	Shared:    shared,
 	SourceDir: "../../apps/web",
 	Links:     []core.Resource{ordersAPI, sharedAssets},
 	Brokers:   []core.IdentityBroker{fed},
@@ -278,18 +276,13 @@ _, err = openbase.Add(env, vercel.WebApp{
 
 ## 6. Mixing raw Pulumi resources and multiple cloud accounts
 
-OpenBase scopes wrap standard `*pulumi.Context` programs rather than replacing them. In any `infra/env/main.go` (or `infra/shared/main.go`), you can declare native Pulumi SDK resources directly alongside `openbase.Add` and wire outputs in both directions:
+OpenBase components register directly on `*pulumi.Context` with the same `New<Resource>(ctx, name, &<Resource>Args{...}, opts...)` signature as native Pulumi SDK resources. You can declare native Pulumi resources alongside OpenBase components and wire outputs in both directions:
 
 ```go
-env, err := openbase.NewEnvironment(ctx, openbase.Environment{Project: "storefront"})
-if err != nil {
-	return err
-}
-
 // 1. Raw Pulumi resource created directly on ctx.
 rawSecret, err := secretmanager.NewSecret(ctx, "raw-partner-key", &secretmanager.SecretArgs{
 	Project:     pulumi.String("acme-cloud"),
-	SecretId:    pulumi.String("storefront-" + env.OpenBaseMeta().Environment.String() + "-partner-key"),
+	SecretId:    pulumi.String("storefront-" + ctx.Stack() + "-partner-key"),
 	Replication: &secretmanager.SecretReplicationArgs{Auto: &secretmanager.SecretReplicationAutoArgs{}},
 })
 if err != nil {
@@ -304,8 +297,7 @@ if err != nil {
 }
 
 // 2. Pass raw Pulumi outputs into an OpenBase resource.
-api, err := openbase.Add(env, gcp.CloudRunService{
-	Name:       "orders",
+api, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
 	GCPProject: pulumi.String("acme-cloud"),
 	Image:      pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
 	Env: map[string]pulumi.StringInput{
@@ -325,32 +317,30 @@ _, err = secretmanager.NewSecretIamMember(ctx, "raw-partner-key-accessor", &secr
 })
 ```
 
-When an organization spans multiple Google Cloud projects or multiple cloud accounts (for example separate GCP or AWS provider credentials), register distinct named specs with `openbase.AddPlatform` and `openbase.Add`, passing explicit `pulumi.Provider(...)` options:
+When an organization spans multiple Google Cloud projects or multiple cloud accounts, pass standard `pulumi.Provider(...)` options directly to `NewPlatform`, `NewProject`, or environment constructors:
 
 ```go
 // infra/platform/main.go: multiple GCP projects or accounts
-plat, err := openbase.NewPlatform(ctx, openbase.Platform{Org: "acme"})
 analyticsGCP, err := gcpprov.NewProvider(ctx, "gcp-analytics", &gcpprov.ProviderArgs{
 	Project: pulumi.String("acme-analytics"),
 })
-_, err = openbase.AddPlatform(plat, gcp.Platform{
-	Name:       "gcp-core",
+_, err = gcp.NewPlatform(ctx, "gcp-core", &gcp.PlatformArgs{
+	Org:        "acme",
 	GCPProject: pulumi.String("acme-cloud"),
 })
-_, err = openbase.AddPlatform(plat, gcp.Platform{
-	Name:       "gcp-analytics",
+_, err = gcp.NewPlatform(ctx, "gcp-analytics", &gcp.PlatformArgs{
+	Org:        "acme",
 	GCPProject: pulumi.String("acme-analytics"),
 }, pulumi.Provider(analyticsGCP))
 
 // infra/shared/main.go: target a specific named platform entry via PlatformResource
-_, err = openbase.Add(proj, gcp.Project{
-	Name:             "ar-analytics",
+_, err = gcp.NewProject(ctx, "ar-analytics", &gcp.ProjectArgs{
+	PlatformStack:    plat,
 	PlatformResource: "gcp-analytics",
 }, pulumi.Provider(analyticsGCP))
 
 // infra/env/main.go: target multiple GCP projects or accounts in one environment
-_, err = openbase.Add(env, gcp.Bucket{
-	Name:       "analytics-events",
+_, err = gcp.NewBucket(ctx, "analytics-events", &gcp.BucketArgs{
 	GCPProject: pulumi.String("acme-analytics"),
 }, pulumi.Provider(analyticsGCP))
 ```
@@ -363,7 +353,7 @@ _, err = openbase.Add(env, gcp.Bucket{
 ## Further reading
 
 - [Architecture Overview](./architecture/index.md)
-- [Unified Scopes and Manifests](./architecture/scopes.md)
+- [Cross-Stack Lookups and Manifests](./architecture/scopes.md)
 - [Core Resources and Tier Contracts](./architecture/resources.md)
 - [GCP Provider](./architecture/providers/gcp/index.md)
 - [Vercel Provider](./architecture/providers/vercel/index.md)

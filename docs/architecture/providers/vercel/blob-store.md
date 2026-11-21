@@ -55,14 +55,11 @@ sequenceDiagram
 ### Interfaces and Contracts
 
 ```go
-blobs, err := vercel.BlobStore{
-	Name:               "uploads",
+blobs, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
 	Project:            "storefront",
-	Environment:        "preview-pr-20",
-	BranchFrom:         "dev",
-	ProjectStackRef:    "cloudvoyant/storefront-shared/shared",
+	Shared:             shared,
 	BlobReadWriteToken: rwToken,
-}.Register(ctx)
+})
 
 client := vercel.NewBlobOverlayClient(baseURL, token, "preview-pr-20/", "dev/")
 ```

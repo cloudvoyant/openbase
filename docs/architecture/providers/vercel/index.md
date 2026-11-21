@@ -68,19 +68,20 @@ Vercel Pro includes one free Custom Environment per project (`staging`). `prod` 
 ### Interfaces and Contracts
 
 ```go
-// Tier 1: Organization (core.PlatformResource)
-plat, err := vercel.Platform{
+// Tier 1: Organization (infra/platform/main.go)
+plat, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
 	Org:        "cloudvoyant",
 	TeamID:     "team_123",
 	TeamSlug:   "cloudvoyant",
 	BaseDomain: "vercel.cloudvoyant.io",
-}.Register(ctx)
+})
 
-// Shared Project Resource in infra/shared (core.StatelessResource)
-proj, err := vercel.Project{
+// Shared Project Resource in infra/shared/main.go
+platRef, err := openbase.LookupPlatform(ctx, "cloudvoyant/platform/platform")
+proj, err := vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
 	Project:          "storefront",
 	Repo:             "cloudvoyant/storefront",
-	PlatformStackRef: "cloudvoyant/platform/platform",
+	PlatformStack:    platRef,
 	ExtraProdDomains: []string{"storefront.io"},
 	EnableBlobStore:  true,
 	PreviewEnv: map[string]pulumi.StringInput{
@@ -90,7 +91,7 @@ proj, err := vercel.Project{
 	PreviewSecrets: map[string]pulumi.StringInput{
 		"KINDE_CLIENT_SECRET": kindeProj.NonProdClientSecret,
 	},
-}.Register(ctx)
+})
 ```
 
 | Mode | Flags on `vercel.Project` | Custom Environments Created | Attached `ProjectDomain`s |

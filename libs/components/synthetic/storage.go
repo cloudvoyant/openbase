@@ -10,11 +10,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var _ core.StatefulResource = (*StorageResource)(nil)
+var _ core.StatefulResource = (*Storage)(nil)
 
-// Storage declares an offline synthetic StatefulResource spec supporting BranchFrom overlays.
-type Storage struct {
-	Name        string
+// StorageArgs configures an offline synthetic StatefulResource component supporting BranchFrom overlays.
+type StorageArgs struct {
 	Project     string
 	Repo        string
 	Environment string
@@ -24,8 +23,8 @@ type Storage struct {
 	Links       []core.Resource
 }
 
-// StorageResource is the deterministic offline StatefulResource handle returned by Storage.Register.
-type StorageResource struct {
+// Storage is the deterministic offline StatefulResource handle returned by NewStorage.
+type Storage struct {
 	pulumi.ResourceState
 	core.StatefulMeta
 	BucketName         pulumi.StringOutput
@@ -33,34 +32,33 @@ type StorageResource struct {
 	GrantedConsumers   []string
 }
 
-// Register validates and provisions a synthetic StatefulResource without cloud provider dependencies.
-func (s Storage) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*StorageResource, error) {
-	st := &StorageResource{}
+// NewStorage registers a synthetic StatefulResource without cloud provider dependencies.
+func NewStorage(ctx *pulumi.Context, name string, args *StorageArgs, opts ...pulumi.ResourceOption) (*Storage, error) {
+	if args == nil {
+		args = &StorageArgs{}
+	}
+	st := &Storage{}
 	meta, err := core.InitStateful(ctx, "openbase:synthetic:Storage", "synthetic-storage", st, &st.StatefulMeta, core.StatefulSpec{
-		Name:        s.Name,
-		Project:     s.Project,
-		Repo:        s.Repo,
-		Environment: s.Environment,
-		Kind:        s.Kind,
-		BranchFrom:  s.BranchFrom,
-		Backup:      s.Backup,
-		Links:       s.Links,
+		Name:        name,
+		Project:     args.Project,
+		Repo:        args.Repo,
+		Environment: args.Environment,
+		Kind:        args.Kind,
+		BranchFrom:  args.BranchFrom,
+		Backup:      args.Backup,
+		Links:       args.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	bucket := meta.CanonicalName
-	fallback := ""
-	if meta.Environment.IsPreview() && meta.BranchFrom != "" {
-		fallback, err = core.CanonicalName(meta.Project, meta.BranchFrom, s.Name)
-		if err != nil {
-			return nil, err
-		}
+	fallback, err := computeSyntheticFallback(meta, name)
+	if err != nil {
+		return nil, err
 	}
-	st.BucketName = pulumi.String(bucket).ToStringOutput()
+	st.BucketName = pulumi.String(meta.CanonicalName).ToStringOutput()
 	st.FallbackBucketName = pulumi.String(fallback).ToStringOutput()
-	st.SetLink(core.LinkDescriptor{
-		Name: s.Name,
+	st.PublishLink(ctx, core.LinkDescriptor{
+		Name: name,
 		Kind: meta.Kind,
 		Attributes: map[string]pulumi.StringOutput{
 			"bucketName":         st.BucketName,
@@ -75,4 +73,13 @@ func (s Storage) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*
 		"bucket":         st.BucketName,
 		"fallbackBucket": st.FallbackBucketName,
 	})
+}
+
+// Private helpers ------------------------------------------------------------
+
+func computeSyntheticFallback(meta core.ResourceMeta, name string) (string, error) {
+	if meta.Environment.IsPreview() && meta.BranchFrom != "" {
+		return core.CanonicalName(meta.Project, meta.BranchFrom, name)
+	}
+	return "", nil
 }

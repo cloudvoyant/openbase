@@ -12,17 +12,14 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.StatelessResource              = (*ProjectResource)(nil)
-	_ core.ScopedSpecOf[*ProjectResource] = Project{}
-)
+var _ core.StatelessResource = (*Project)(nil)
 
-// Project declares an application's nonProd and prod Kinde OIDC Applications in Premise's infra/shared stack.
-type Project struct {
-	Name                       string
+// ProjectArgs configures an application's nonProd and prod Kinde OIDC Applications in Premise's infra/shared stack.
+type ProjectArgs struct {
 	Project                    string
 	Repo                       string
-	Platform                   *PlatformResource
+	Platform                   *Platform
+	PlatformStack              *core.ScopeRef
 	PlatformStackRef           string
 	AppName                    string
 	NonProd                    TenantCredentials
@@ -47,8 +44,8 @@ type Project struct {
 	SkipEmailPasswordConn      bool
 }
 
-// ProjectResource is the provisioned handle for an application's nonProd and prod Kinde OIDC Applications.
-type ProjectResource struct {
+// Project is the provisioned handle for an application's nonProd and prod Kinde OIDC Applications.
+type Project struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -68,60 +65,39 @@ type ProjectResource struct {
 	EmailPasswordConn   string
 }
 
-// Register provisions nonProd and prod Kinde OIDC Applications and exports credentials for per-environment kinde.OidcApp stacks.
-func (p Project) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
-	if err := validateKindeProject(p); err != nil {
+// NewProject provisions nonProd and prod Kinde OIDC Applications on the shared stack.
+func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pulumi.ResourceOption) (*Project, error) {
+	if err := core.RequireSharedStack(ctx); err != nil {
 		return nil, err
 	}
-	p.Name = defaultKindeStr(p.Name, "kinde")
-	res := &ProjectResource{}
+	if args == nil {
+		args = &ProjectArgs{}
+	}
+	if err := validateKindeProject(args); err != nil {
+		return nil, err
+	}
+	name = defaultKindeStr(name, "kinde")
+	res := &Project{}
 	meta, err := core.InitStateless(ctx, "openbase:kinde:Project", "kinde-project", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        p.Name,
-		Project:     p.Project,
-		Repo:        p.Repo,
+		Name:        name,
+		Project:     args.Project,
+		Repo:        args.Repo,
 		Environment: string(core.EnvShared),
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionTwoTenantApps(ctx, p.Name, meta, p, res); err != nil {
+	if err := provisionTwoTenantApps(ctx, name, meta, args, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildKindeProjectLink(meta, res))
+	res.PublishLink(ctx, buildKindeProjectLink(meta, res))
 	return res, registerProjectOidcOutputs(ctx, res)
-}
-
-// RegisterInScope adapts kinde.Project to openbase.Project.
-func (p Project) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return p.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers kinde.Project with inherited Project and PlatformRef defaults.
-func (p Project) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*ProjectResource, error) {
-	if p.Project == "" {
-		p.Project = scope.Project
-	}
-	if p.Repo == "" {
-		p.Repo = scope.Repo
-	}
-	if p.Platform == nil && scope.Platform != nil {
-		if plat, ok := scope.Platform.PlatformHandle("kinde-platform").(*PlatformResource); ok {
-			p.Platform = plat
-		}
-	}
-	if p.PlatformStackRef == "" {
-		p.PlatformStackRef = scope.PlatformStackName()
-	}
-	if p.VercelTeamSlug != "" && p.VercelProjectName == "" {
-		p.VercelProjectName = core.BoundedName("openbase-"+p.Project, 52)
-	}
-	return p.Register(ctx, opts...)
 }
 
 // Private helpers ------------------------------------------------------------
 
-func validateKindeProject(spec Project) error {
-	if spec.Platform != nil || spec.PlatformStackRef != "" {
+func validateKindeProject(spec *ProjectArgs) error {
+	if spec.Platform != nil || spec.PlatformStack != nil || spec.PlatformStackRef != "" {
 		return nil
 	}
 	if !hasTenantCreds(spec.NonProd) || !hasTenantCreds(spec.Prod) {
@@ -134,8 +110,8 @@ func provisionTwoTenantApps(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec Project,
-	res *ProjectResource,
+	spec *ProjectArgs,
+	res *Project,
 ) error {
 	nonProdProv, prodProv, err := resolveProjectTenantProviders(ctx, name, spec, res)
 	if err != nil {
@@ -153,8 +129,8 @@ func provisionTwoTenantApps(
 func resolveProjectTenantProviders(
 	ctx *pulumi.Context,
 	name string,
-	spec Project,
-	res *ProjectResource,
+	spec *ProjectArgs,
+	res *Project,
 ) (*kindeprov.Provider, *kindeprov.Provider, error) {
 	if spec.Platform != nil {
 		res.NonProdIssuerURL = spec.Platform.NonProdIssuerURL
@@ -165,14 +141,14 @@ func resolveProjectTenantProviders(
 	if hasTenantCreds(spec.NonProd) && hasTenantCreds(spec.Prod) {
 		return createExplicitTenantProviders(ctx, name, spec, res)
 	}
-	return createStackRefTenantProviders(ctx, name, spec.PlatformStackRef, res)
+	return createStackRefTenantProviders(ctx, name, spec.PlatformStack, spec.PlatformStackRef, res)
 }
 
 func createExplicitTenantProviders(
 	ctx *pulumi.Context,
 	name string,
-	spec Project,
-	res *ProjectResource,
+	spec *ProjectArgs,
+	res *Project,
 ) (*kindeprov.Provider, *kindeprov.Provider, error) {
 	nonProdIssuer := NormalizeIssuerURL(spec.NonProd.Domain)
 	prodIssuer := NormalizeIssuerURL(spec.Prod.Domain)
@@ -191,10 +167,12 @@ func createExplicitTenantProviders(
 
 func createStackRefTenantProviders(
 	ctx *pulumi.Context,
-	name, stackRef string,
-	res *ProjectResource,
+	name string,
+	scopeRef *core.ScopeRef,
+	stackRef string,
+	res *Project,
 ) (*kindeprov.Provider, *kindeprov.Provider, error) {
-	sr, err := pulumi.NewStackReference(ctx, name+"-platform-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(stackRef)})
+	sr, err := core.ResolveStackReference(ctx, name+"-platform-ref", scopeRef, stackRef)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -226,9 +204,9 @@ func createStackRefTenantProviders(
 func createNonProdApplication(
 	ctx *pulumi.Context,
 	name, appName, project string,
-	spec Project,
+	spec *ProjectArgs,
 	prov *kindeprov.Provider,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	redirects, logouts := buildNonProdCallbacks(project, spec)
 	appOpts := buildKindeAppOptions(res, prov, spec.ImportNonProdAppID, spec.RetainApplicationsOnDelete)
@@ -251,10 +229,10 @@ func createNonProdApplication(
 func attachNonProdEmailPassword(
 	ctx *pulumi.Context,
 	name string,
-	spec Project,
+	spec *ProjectArgs,
 	prov *kindeprov.Provider,
 	app *kindeprov.Application,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	if spec.SkipEmailPasswordConn {
 		return nil
@@ -286,9 +264,9 @@ func createProdApplication(
 	ctx *pulumi.Context,
 	name, appName string,
 	meta core.ResourceMeta,
-	spec Project,
+	spec *ProjectArgs,
 	prov *kindeprov.Provider,
-	res *ProjectResource,
+	res *Project,
 ) error {
 	redirects, logouts := buildProdCallbacks(meta.Project, spec)
 	appOpts := buildKindeAppOptions(res, prov, spec.ImportProdAppID, spec.RetainApplicationsOnDelete)
@@ -324,11 +302,21 @@ func buildKindeAppOptions(
 	return opts
 }
 
-func buildNonProdCallbacks(project string, spec Project) ([]string, []string) {
+func defaultVercelProjectForKinde(project string, spec *ProjectArgs) string {
+	if spec.VercelProjectName != "" {
+		return spec.VercelProjectName
+	}
+	if spec.VercelTeamSlug != "" && project != "" {
+		return core.BoundedName("openbase-"+project, 52)
+	}
+	return project
+}
+
+func buildNonProdCallbacks(project string, spec *ProjectArgs) ([]string, []string) {
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
 	redirects := []string{"http://localhost:5173" + cb, "http://localhost:3000" + cb}
 	logouts := []string{"http://localhost:5173/", "http://localhost:3000/"}
-	vProj := defaultKindeStr(spec.VercelProjectName, project)
+	vProj := defaultVercelProjectForKinde(project, spec)
 	for _, host := range nonProdCallbackHosts(project, vProj, spec) {
 		origin := NormalizeIssuerURL(host)
 		redirects = append(redirects, origin+cb)
@@ -339,7 +327,7 @@ func buildNonProdCallbacks(project string, spec Project) ([]string, []string) {
 	return sortAndCompact(redirects), sortAndCompact(logouts)
 }
 
-func nonProdCallbackHosts(project, vProj string, spec Project) []string {
+func nonProdCallbackHosts(project, vProj string, spec *ProjectArgs) []string {
 	hosts := nonProdVercelHosts(vProj, spec.VercelTeamSlug)
 	if base := core.NormalizeDomain(spec.BaseDomain); base != "" && project != "" {
 		hosts = append(hosts, "https://"+project+"-*."+base)
@@ -361,9 +349,9 @@ func nonProdVercelHosts(vProj, teamSlug string) []string {
 	}
 }
 
-func buildProdCallbacks(project string, spec Project) ([]string, []string) {
+func buildProdCallbacks(project string, spec *ProjectArgs) ([]string, []string) {
 	cb := ensureLeadingSlash(defaultKindeStr(spec.CallbackPath, "/api/auth/kinde_callback"))
-	vProj := defaultKindeStr(spec.VercelProjectName, project)
+	vProj := defaultVercelProjectForKinde(project, spec)
 	var redirects, logouts []string
 	for _, host := range prodVercelAndCustomHosts(project, vProj, spec) {
 		origin := NormalizeIssuerURL(host)
@@ -375,7 +363,7 @@ func buildProdCallbacks(project string, spec Project) ([]string, []string) {
 	return sortAndCompact(redirects), sortAndCompact(logouts)
 }
 
-func prodVercelAndCustomHosts(project, vProj string, spec Project) []string {
+func prodVercelAndCustomHosts(project, vProj string, spec *ProjectArgs) []string {
 	var hosts []string
 	if base := core.NormalizeDomain(spec.BaseDomain); base != "" && project != "" {
 		if pd, err := core.EnvironmentDomain(project, core.EnvProd, "web", base); err == nil {
@@ -389,7 +377,7 @@ func prodVercelAndCustomHosts(project, vProj string, spec Project) []string {
 	return core.DedupeDomains(hosts, spec.ExtraProdDomains, spec.ExtraStageDomains)
 }
 
-func appendProdFallbackOrExplicit(hosts []string, vProj string, spec Project) []string {
+func appendProdFallbackOrExplicit(hosts []string, vProj string, spec *ProjectArgs) []string {
 	if spec.ProdDomain != "" {
 		hosts = append(hosts, spec.ProdDomain)
 	} else if spec.VercelTeamSlug != "" {
@@ -408,7 +396,7 @@ func sortAndCompact(items []string) []string {
 	return slices.Compact(items)
 }
 
-func buildKindeProjectLink(meta core.ResourceMeta, res *ProjectResource) core.LinkDescriptor {
+func buildKindeProjectLink(meta core.ResourceMeta, res *Project) core.LinkDescriptor {
 	return core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
@@ -433,7 +421,7 @@ func buildKindeProjectLink(meta core.ResourceMeta, res *ProjectResource) core.Li
 	}
 }
 
-func registerProjectOidcOutputs(ctx *pulumi.Context, res *ProjectResource) error {
+func registerProjectOidcOutputs(ctx *pulumi.Context, res *Project) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"nonProdIssuerUrl":    res.NonProdIssuerURL,
 		"nonProdAppId":        res.NonProdAppID,

@@ -26,28 +26,27 @@ func TestNeonDatabase(t *testing.T) {
 
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := neon.Platform{
+				_, err := neon.NewPlatform(ctx, "neon-platform", &neon.PlatformArgs{
 					OrgID:           "org-test",
 					DefaultRegionID: "aws-us-east-1",
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("platform", "platform", platMocks))
 
 			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := neon.Project{
+				_, err := neon.NewProject(ctx, "neon", &neon.ProjectArgs{
 					Project:          "storefront",
 					PlatformStackRef: "organization/platform/platform",
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
 
 			errProd := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				db, err := neon.Database{
-					Name:            "db",
+				db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
 					Project:         "storefront",
 					Environment:     "prod",
 					ProjectStackRef: "organization/storefront-shared/shared",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -80,14 +79,13 @@ func TestNeonDatabase(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				db, err := neon.Database{
-					Name:           "db",
+				db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
 					Project:        "storefront",
 					Environment:    "preview-pr-12",
 					BranchFrom:     "dev",
 					ProjectID:      pulumi.String("proj-123"),
 					ParentBranchID: pulumi.String("br-dev-123"),
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -106,14 +104,13 @@ func TestNeonDatabase(t *testing.T) {
 			}
 		})
 
-		t.Run("when NeonProject, ProjectID, and ProjectStackRef are omitted, then Register returns ErrProjectIDRequired", func(t *testing.T) {
+		t.Run("when NeonProject, ProjectID, and ProjectStackRef are omitted, then NewDatabase returns ErrProjectIDRequired", func(t *testing.T) {
 			// Arrange / Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, e := neon.Database{
-					Name:        "db",
+				_, e := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
 					Project:     "storefront",
 					Environment: "dev",
-				}.Register(ctx)
+				})
 				return e
 			}, pulumi.WithMocks("storefront", "dev", newNeonMocks()))
 

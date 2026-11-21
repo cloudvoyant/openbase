@@ -67,44 +67,42 @@ func main() {
 		teamID := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_ID")
 		teamSlug := os.Getenv("OPENBASE_TEST_VERCEL_TEAM_SLUG")
 
-		env, err := openbase.NewEnvironment(ctx, openbase.Environment{
-			Project:          appProject,
-			PlatformStackRef: "organization/platform/platform",
-		})
-		if err != nil {
-			return err
-		}
-		uploads, err := openbase.Add(env, gcp.Bucket{
-			Name:            "uploads",
+		uploads, err := gcp.NewBucket(ctx, "uploads", &gcp.BucketArgs{
+			Project:         appProject,
 			GCPProject:      pulumi.String(gcpProject),
 			BucketNamespace: gcpProject,
 		})
 		if err != nil {
 			return err
 		}
-		if !env.OpenBaseMeta().Environment.IsPreview() {
+		if !uploads.OpenBaseMeta().Environment.IsPreview() {
 			return nil
 		}
-		return deployHybridPreview(ctx, env, appProject, gcpProject, teamID, teamSlug, uploads)
+		return deployHybridPreview(ctx, appProject, gcpProject, teamID, teamSlug, uploads)
 	})
 }
 
 func deployHybridPreview(
 	ctx *pulumi.Context,
-	env *openbase.EnvironmentResource,
 	appProject, gcpProject, teamID, teamSlug string,
-	uploads *gcp.BucketResource,
+	uploads *gcp.Bucket,
 ) error {
-	plat := env.Platform()
-	proj := env.Project()
-	sharedAssets := proj.Resource("shared-assets", core.WithRemoteKind("gcp-bucket"))
+	plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
+	if err != nil {
+		return err
+	}
+	shared, err := openbase.LookupShared(ctx)
+	if err != nil {
+		return err
+	}
+	sharedAssets := shared.Resource("shared-assets", core.WithRemoteKind("gcp-bucket"))
 
 	rawSecret, rawSecretVer, err := createRawPartnerSecret(ctx, appProject, gcpProject)
 	if err != nil {
 		return err
 	}
-	orders, err := openbase.Add(env, gcp.CloudRunService{
-		Name:       "orders",
+	orders, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
+		Project:    appProject,
 		GCPProject: pulumi.String(gcpProject),
 		Links:      []core.Resource{uploads, sharedAssets},
 		Env: map[string]pulumi.StringInput{
@@ -123,20 +121,33 @@ func deployHybridPreview(
 	if err := grantRawSecretAccess(ctx, gcpProject, rawSecret, orders.ServiceAccountEmail); err != nil {
 		return err
 	}
-	fed, err := openbase.Add(env, gcp.FederatedIdentity{
-		Name:           "web-wif",
+	ctx.Export("rawSecretId", rawSecret.SecretId)
+	return deployHybridFrontend(ctx, plat, shared, appProject, gcpProject, teamID, teamSlug, uploads, sharedAssets, orders)
+}
+
+func deployHybridFrontend(
+	ctx *pulumi.Context,
+	plat, shared *core.ScopeRef,
+	appProject, gcpProject, teamID, teamSlug string,
+	uploads *gcp.Bucket,
+	sharedAssets *core.RemoteResource,
+	orders *gcp.CloudRunService,
+) error {
+	fed, err := gcp.NewFederatedIdentity(ctx, "web-wif", &gcp.FederatedIdentityArgs{
+		Project:        appProject,
 		GCPProject:     pulumi.String(gcpProject),
 		PoolName:       plat.Output("workloadIdentityPoolName"),
 		OIDCProvider:   plat.Output("vercelOidcProviderName"),
 		SourceProvider: "vercel",
 		ClaimKey:       "project_id",
-		ClaimValue:     proj.Output("vercelProjectId"),
+		ClaimValue:     shared.Output("vercelProjectId"),
 	})
 	if err != nil {
 		return err
 	}
-	web, err := openbase.Add(env, vercel.WebApp{
-		Name:              "web",
+	web, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
+		Project:           appProject,
+		Shared:            shared,
 		VercelProjectName: "openbase-e2e-" + appProject,
 		TeamID:            teamID,
 		TeamSlug:          teamSlug,
@@ -159,7 +170,6 @@ func deployHybridPreview(
 	ctx.Export("webDeploymentId", web.DeploymentID)
 	ctx.Export("ordersUrl", orders.URL)
 	ctx.Export("ordersServiceName", orders.Service.Name)
-	ctx.Export("rawSecretId", rawSecret.SecretId)
 	return nil
 }
 

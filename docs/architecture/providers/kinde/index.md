@@ -71,21 +71,22 @@ sequenceDiagram
 ### Interfaces and Contracts
 
 ```go
-// Tier 1: Organization (core.PlatformResource)
-plat, err := kinde.Platform{
+// Tier 1: Organization (infra/platform/main.go)
+plat, err := kinde.NewPlatform(ctx, "kinde-platform", &kinde.PlatformArgs{
 	Org:     "cloudvoyant",
 	NonProd: nonProdTenantCreds,
 	Prod:    prodTenantCreds,
-}.Register(ctx)
+})
 
-// Shared Project Resource in infra/shared (core.StatelessResource)
-proj, err := kinde.Project{
-	Project:          "storefront",
-	Repo:             "cloudvoyant/storefront",
-	PlatformStackRef: "cloudvoyant/platform/platform",
-	VercelTeamSlug:   "cloudvoyant",
-	BaseDomain:       "vercel.cloudvoyant.io",
-}.Register(ctx)
+// Shared Project Resource in infra/shared/main.go
+platRef, err := openbase.LookupPlatform(ctx, "cloudvoyant/platform/platform")
+proj, err := kinde.NewProject(ctx, "kinde-project", &kinde.ProjectArgs{
+	Project:        "storefront",
+	Repo:           "cloudvoyant/storefront",
+	PlatformStack:  platRef,
+	VercelTeamSlug: "cloudvoyant",
+	BaseDomain:     "vercel.cloudvoyant.io",
+})
 ```
 
 | Spec | Contract | Synthesized `kinde` Resources | Key Outputs |

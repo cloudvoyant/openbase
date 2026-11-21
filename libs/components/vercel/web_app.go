@@ -14,17 +14,13 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.StatelessResource             = (*WebAppResource)(nil)
-	_ core.ScopedSpecOf[*WebAppResource] = WebApp{}
-)
+var _ core.StatelessResource = (*WebApp)(nil)
 
-// ErrProjectSourceRequired reports a missing Vercel project reference on WebApp.
-var ErrProjectSourceRequired = errors.New("vercel: vercelProject, projectStackRef, or vercelProjectId is required")
+// ErrProjectSourceRequired reports a missing Vercel project reference on WebAppArgs.
+var ErrProjectSourceRequired = errors.New("vercel: vercelProject, shared, projectStackRef, or vercelProjectId is required")
 
-// WebApp declares a per-environment Vercel WebApp deployment, aliases, env vars, and OIDC identity brokering.
-type WebApp struct {
-	Name                     string
+// WebAppArgs configures a per-environment Vercel WebApp deployment, aliases, env vars, and OIDC identity brokering.
+type WebAppArgs struct {
 	Project                  string
 	Repo                     string
 	Environment              string
@@ -33,7 +29,8 @@ type WebApp struct {
 	Brokers                  []core.IdentityBroker
 	Env                      map[string]pulumi.StringInput
 	Secrets                  map[string]pulumi.StringInput
-	VercelProject            *ProjectResource
+	VercelProject            *Project
+	Shared                   *core.ScopeRef
 	ProjectStackRef          string
 	VercelProjectID          pulumi.StringInput
 	VercelProjectName        string
@@ -55,8 +52,8 @@ type WebApp struct {
 	ExtraDomains             []string
 }
 
-// WebAppResource is the provisioned Vercel WebApp handle with scoped env vars, Deployment, and Aliases.
-type WebAppResource struct {
+// WebApp is the provisioned Vercel WebApp handle with scoped env vars, Deployment, and Aliases.
+type WebApp struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -71,30 +68,28 @@ type WebAppResource struct {
 	DeploymentID  pulumi.StringOutput
 }
 
-// Register provisions a Vercel WebApp component satisfying core.StatelessResource.
-func (w WebApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*WebAppResource, error) {
-	if w.VercelProject == nil && w.ProjectStackRef == "" && w.VercelProjectID == nil {
-		return nil, ErrProjectSourceRequired
+// NewWebApp provisions a Vercel WebApp component satisfying core.StatelessResource.
+func NewWebApp(ctx *pulumi.Context, name string, args *WebAppArgs, opts ...pulumi.ResourceOption) (*WebApp, error) {
+	spec, err := normalizeWebAppArgs(args)
+	if err != nil {
+		return nil, err
 	}
-	if w.SourceDir != "" && w.SourceDir != "." && w.PathPrefix == "" {
-		w.PathPrefix = w.SourceDir
-	}
-	res := &WebAppResource{}
+	res := &WebApp{}
 	meta, err := core.InitStateless(ctx, "openbase:vercel:WebApp", "vercel-webapp", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        w.Name,
-		Project:     w.Project,
-		Repo:        w.Repo,
-		Environment: w.Environment,
-		Kind:        w.Kind,
-		Links:       w.Links,
+		Name:        name,
+		Project:     spec.Project,
+		Repo:        spec.Repo,
+		Environment: spec.Environment,
+		Kind:        spec.Kind,
+		Links:       spec.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionWebApp(ctx, w.Name, meta, w, res); err != nil {
+	if err := provisionWebApp(ctx, name, meta, spec, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
+	res.PublishLink(ctx, core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
 		Attributes: map[string]pulumi.StringOutput{
@@ -109,41 +104,21 @@ func (w WebApp) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*W
 			"deploymentId": res.DeploymentID,
 		},
 	})
-	if err := registerWebAppOutputs(ctx, meta, res); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-
-// RegisterInScope adapts vercel.WebApp to openbase.Project and openbase.Environment.
-func (w WebApp) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return w.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers vercel.WebApp with inherited Scope metadata, Brokers, and ProjectStackRef.
-func (w WebApp) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*WebAppResource, error) {
-	if w.Project == "" {
-		w.Project = scope.Project
-	}
-	if w.Repo == "" {
-		w.Repo = scope.Repo
-	}
-	if w.Environment == "" {
-		w.Environment = string(scope.Env)
-	}
-	if w.VercelProject == nil && scope.ProjectRef != nil {
-		if vp, ok := scope.ProjectRef.ResourceHandle("vercel-project").(*ProjectResource); ok {
-			w.VercelProject = vp
-		}
-	}
-	if w.ProjectStackRef == "" && w.VercelProject == nil && w.VercelProjectID == nil {
-		w.ProjectStackRef = scope.ProjectStackName()
-	}
-	w.Brokers = append(append([]core.IdentityBroker{}, scope.Brokers...), w.Brokers...)
-	return w.Register(ctx, opts...)
+	return res, registerWebAppOutputs(ctx, meta, res)
 }
 
 // Private helpers ------------------------------------------------------------
+
+func normalizeWebAppArgs(args *WebAppArgs) (WebAppArgs, error) {
+	if args == nil || (args.VercelProject == nil && args.Shared == nil && args.ProjectStackRef == "" && args.VercelProjectID == nil) {
+		return WebAppArgs{}, ErrProjectSourceRequired
+	}
+	spec := *args
+	if spec.SourceDir != "" && spec.SourceDir != "." && spec.PathPrefix == "" {
+		spec.PathPrefix = spec.SourceDir
+	}
+	return spec, nil
+}
 
 type webAppRefs struct {
 	projectID   pulumi.StringOutput
@@ -158,8 +133,8 @@ func provisionWebApp(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec WebApp,
-	res *WebAppResource,
+	spec WebAppArgs,
+	res *WebApp,
 ) error {
 	refs, err := resolveWebAppRefs(ctx, name, meta, spec)
 	if err != nil {
@@ -179,21 +154,18 @@ func provisionWebApp(
 	return createOptionalDeploymentAndAliases(ctx, name, meta, spec, refs, resolved, aliasHost, res)
 }
 
-func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec WebApp) (webAppRefs, error) {
+func resolveWebAppRefs(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec WebAppArgs) (webAppRefs, error) {
 	refs := initExplicitWebRefs(meta, spec)
 	applyProjectStructWebRefs(&refs, spec.VercelProject)
-	if spec.ProjectStackRef == "" {
-		return refs, nil
-	}
-	sr, err := pulumi.NewStackReference(ctx, name+"-project-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(spec.ProjectStackRef)})
-	if err != nil {
-		return webAppRefs{}, err
+	sr, err := core.ResolveStackReference(ctx, name+"-project-ref", spec.Shared, spec.ProjectStackRef)
+	if err != nil || sr == nil {
+		return refs, err
 	}
 	applyProjectStackRefWebRefs(&refs, sr, spec)
 	return refs, nil
 }
 
-func applyProjectStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
+func applyProjectStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebAppArgs) {
 	if !isOutSet(refs.projectID) {
 		refs.projectID = preferVercelStackOutput(sr, "vercelProjectId", "projectId")
 	}
@@ -206,7 +178,7 @@ func applyProjectStackRefWebRefs(refs *webAppRefs, sr *pulumi.StackReference, sp
 	applyOptionalProjectNamingRefs(refs, sr, spec)
 }
 
-func applyOptionalProjectNamingRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebApp) {
+func applyOptionalProjectNamingRefs(refs *webAppRefs, sr *pulumi.StackReference, spec WebAppArgs) {
 	if spec.VercelProject != nil {
 		return
 	}
@@ -245,7 +217,7 @@ func optionalVercelStackOutput(sr *pulumi.StackReference, key string) pulumi.Str
 	}).(pulumi.StringOutput)
 }
 
-func initExplicitWebRefs(meta core.ResourceMeta, spec WebApp) webAppRefs {
+func initExplicitWebRefs(meta core.ResourceMeta, spec WebAppArgs) webAppRefs {
 	var refs webAppRefs
 	if spec.VercelProjectID != nil {
 		refs.projectID = spec.VercelProjectID.ToStringOutput()
@@ -263,7 +235,7 @@ func initExplicitWebRefs(meta core.ResourceMeta, spec WebApp) webAppRefs {
 	return refs
 }
 
-func applyProjectStructWebRefs(refs *webAppRefs, proj *ProjectResource) {
+func applyProjectStructWebRefs(refs *webAppRefs, proj *Project) {
 	if proj == nil {
 		return
 	}
@@ -289,7 +261,7 @@ type webAppEnvVars struct {
 func resolveWebAppLinks(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
 ) (webAppEnvVars, error) {
 	if _, err := core.ResolveLinks(core.LinkGrantContext{
@@ -326,10 +298,10 @@ func createScopedProjectEnvVars(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
 	resolved webAppEnvVars,
-	res *WebAppResource,
+	res *WebApp,
 ) error {
 	if shouldSkipProjectEnvVars(meta.Environment, spec, refs) {
 		return nil
@@ -342,7 +314,7 @@ func createScopedProjectEnvVars(
 	return registerProjectEnvMap(ctx, name, resolved.secrets, true, skipKeys, meta, spec, refs, res)
 }
 
-func shouldSkipProjectEnvVars(env core.Environment, spec WebApp, refs webAppRefs) bool {
+func shouldSkipProjectEnvVars(env core.Environment, spec WebAppArgs, refs webAppRefs) bool {
 	if env.IsPreview() {
 		return true
 	}
@@ -352,7 +324,7 @@ func shouldSkipProjectEnvVars(env core.Environment, spec WebApp, refs webAppRefs
 	return false
 }
 
-func usesDevCustomEnv(spec WebApp) bool {
+func usesDevCustomEnv(spec WebAppArgs) bool {
 	return spec.EnableDevEnvironment || spec.DevCustomEnvironmentID != nil || (spec.VercelProject != nil && spec.VercelProject.DevEnvironment != nil)
 }
 
@@ -363,9 +335,9 @@ func registerProjectEnvMap(
 	isSecret bool,
 	skipKeys map[string]bool,
 	meta core.ResourceMeta,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
-	res *WebAppResource,
+	res *WebApp,
 ) error {
 	for _, k := range sortedMapKeys(vars) {
 		if skipKeys[k] {
@@ -397,9 +369,9 @@ func createSingleProjectEnvVar(
 	val pulumi.StringOutput,
 	isSecret bool,
 	meta core.ResourceMeta,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
-	res *WebAppResource,
+	res *WebApp,
 ) error {
 	useDevCustom := usesDevCustomEnv(spec)
 	sensitive := isSecret
@@ -441,7 +413,7 @@ func applyEnvTarget(
 	}
 }
 
-func computeAliasHost(meta core.ResourceMeta, spec WebApp, refs webAppRefs) pulumi.StringOutput {
+func computeAliasHost(meta core.ResourceMeta, spec WebAppArgs, refs webAppRefs) pulumi.StringOutput {
 	if explicit := explicitAliasOverride(meta.Environment, spec); explicit != "" {
 		return pulumi.String(core.NormalizeDomain(explicit)).ToStringOutput()
 	}
@@ -458,7 +430,7 @@ func computeAliasHost(meta core.ResourceMeta, spec WebApp, refs webAppRefs) pulu
 	}).(pulumi.StringOutput)
 }
 
-func explicitAliasOverride(env core.Environment, spec WebApp) string {
+func explicitAliasOverride(env core.Environment, spec WebAppArgs) string {
 	switch {
 	case env.IsPreview():
 		return spec.PreviewAlias
@@ -503,11 +475,11 @@ func createOptionalDeploymentAndAliases(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
 	resolved webAppEnvVars,
 	aliasHost pulumi.StringOutput,
-	res *WebAppResource,
+	res *WebApp,
 ) error {
 	if spec.SourceDir == "" {
 		res.DeploymentID = pulumi.String("").ToStringOutput()
@@ -531,11 +503,11 @@ func bindWebAppAliases(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
 	dep *vercelprov.Deployment,
 	aliasHost pulumi.StringOutput,
-	res *WebAppResource,
+	res *WebApp,
 ) error {
 	primary, err := vercelprov.NewAlias(ctx, name+"-alias", &vercelprov.AliasArgs{
 		DeploymentId: dep.ID(),
@@ -554,10 +526,10 @@ func attachExtraDeploymentAliases(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
 	dep *vercelprov.Deployment,
-	res *WebAppResource,
+	res *WebApp,
 ) error {
 	attachProjDom, customEnvID := extraProjectDomainTarget(meta.Environment, spec, refs)
 	for idx, dom := range core.DedupeDomains(spec.ExtraDomains) {
@@ -589,7 +561,7 @@ func attachExtraDeploymentAliases(
 	return nil
 }
 
-func extraProjectDomainTarget(env core.Environment, spec WebApp, refs webAppRefs) (bool, pulumi.StringPtrInput) {
+func extraProjectDomainTarget(env core.Environment, spec WebAppArgs, refs webAppRefs) (bool, pulumi.StringPtrInput) {
 	switch {
 	case env == core.EnvProd:
 		return true, nil
@@ -604,7 +576,7 @@ func extraProjectDomainTarget(env core.Environment, spec WebApp, refs webAppRefs
 
 func buildDeploymentArgs(
 	meta core.ResourceMeta,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
 	resolved webAppEnvVars,
 	files map[string]string,
@@ -632,7 +604,7 @@ func buildDeploymentArgs(
 func applyDeploymentCustomEnv(
 	depArgs *vercelprov.DeploymentArgs,
 	env core.Environment,
-	spec WebApp,
+	spec WebAppArgs,
 	refs webAppRefs,
 ) {
 	if env == core.EnvStage && !spec.SkipStageEnvironment && isOutSet(refs.stageEnvID) {
@@ -652,7 +624,7 @@ func nonEmptyStringPtrOutput(out pulumi.StringOutput) pulumi.StringPtrOutput {
 	}).(pulumi.StringPtrOutput)
 }
 
-func registerWebAppOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *WebAppResource) error {
+func registerWebAppOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *WebApp) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName": pulumi.String(meta.CanonicalName),
 		"url":           res.URL,

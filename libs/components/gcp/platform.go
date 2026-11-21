@@ -15,14 +15,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.PlatformResource                      = (*PlatformResource)(nil)
-	_ core.PlatformSpecItemOf[*PlatformResource] = Platform{}
-)
+var _ core.PlatformResource = (*Platform)(nil)
 
-// Platform declares account-level GCP prerequisites (APIs, Workload Identity Pool, linked OIDC issuers, KMS, and wildcard Load Balancer).
-type Platform struct {
-	Name               string
+// PlatformArgs configures account-level GCP prerequisites (APIs, Workload Identity Pool, linked OIDC issuers, KMS, and wildcard Load Balancer).
+type PlatformArgs struct {
 	Org                string
 	GCPProject         pulumi.StringPtrInput
 	GCPProjectNumber   string
@@ -36,8 +32,8 @@ type Platform struct {
 	ExtraLabels        map[string]string
 }
 
-// PlatformResource holds account-level enabled GCP APIs, Workload Identity Pool, linked OIDC providers, KMS KeyRing, and optional LoadBalancer.
-type PlatformResource struct {
+// Platform holds account-level enabled GCP APIs, Workload Identity Pool, linked OIDC providers, KMS KeyRing, and optional LoadBalancer.
+type Platform struct {
 	pulumi.ResourceState
 	core.PlatformMeta
 
@@ -46,50 +42,40 @@ type PlatformResource struct {
 	OIDCProviders            map[string]*iam.WorkloadIdentityPoolProvider
 	OIDCProviderNames        map[string]pulumi.StringOutput
 	KeyRing                  *kms.KeyRing
-	LoadBalancer             *CloudLoadBalancerResource
+	LoadBalancer             *CloudLoadBalancer
 	BaseDomain               pulumi.StringOutput
 	Location                 pulumi.StringOutput
 	WorkloadIdentityPoolName pulumi.StringOutput
 	KeyRingID                pulumi.StringOutput
 }
 
-// Register provisions account-level GCP prerequisites and attaches any linked OIDC issuers.
-func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
-	p.Name = defaultStr(p.Name, "gcp-platform")
-	orgScope := core.OrgScope(p.Org, ctx.Organization())
-	res := &PlatformResource{
+// NewPlatform provisions account-level GCP prerequisites and attaches any linked OIDC issuers.
+func NewPlatform(ctx *pulumi.Context, name string, args *PlatformArgs, opts ...pulumi.ResourceOption) (*Platform, error) {
+	if args == nil {
+		args = &PlatformArgs{}
+	}
+	name = defaultStr(name, "gcp-platform")
+	orgScope := core.OrgScope(args.Org, ctx.Organization())
+	res := &Platform{
 		OIDCProviders:     map[string]*iam.WorkloadIdentityPoolProvider{},
 		OIDCProviderNames: map[string]pulumi.StringOutput{},
 	}
 	info, err := core.InitPlatform(ctx, "openbase:gcp:Platform", "gcp-platform", res, &res.PlatformMeta, core.PlatformSpec{
-		Name: p.Name,
+		Name: name,
 		Org:  orgScope,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionGCPPlatform(ctx, p.Name, orgScope, info, p, res); err != nil {
+	if err := provisionGCPPlatform(ctx, name, orgScope, info, *args, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildGCPPlatformLink(info, p, res))
-	return res, registerPlatformOutputs(ctx, p, res)
-}
-
-// RegisterPlatformInScope adapts gcp.Platform to openbase.Platform.
-func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.PlatformResource, error) {
-	return p.RegisterTypedPlatformInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedPlatformInScope registers gcp.Platform with inherited Org defaults and explicit ResourceOptions.
-func (p Platform) RegisterTypedPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
-	if p.Org == "" {
-		p.Org = scope.Org
-	}
-	return p.Register(ctx, opts...)
+	res.PublishLink(ctx, buildGCPPlatformLink(info, *args, res))
+	return res, registerPlatformOutputs(ctx, *args, res)
 }
 
 // OIDCProviderName returns the full GCP resource name of a linked OIDC provider by issuer ID (or "" when absent).
-func (r *PlatformResource) OIDCProviderName(id string) pulumi.StringOutput {
+func (r *Platform) OIDCProviderName(id string) pulumi.StringOutput {
 	if r == nil {
 		return pulumi.String("").ToStringOutput()
 	}
@@ -100,7 +86,7 @@ func (r *PlatformResource) OIDCProviderName(id string) pulumi.StringOutput {
 }
 
 // WIFBroker returns a core.IdentityBroker backed by this GCP Platform's Workload Identity Pool and linked OIDC providers.
-func (r *PlatformResource) WIFBroker(gcpProject pulumi.StringPtrInput) WIFBroker {
+func (r *Platform) WIFBroker(gcpProject pulumi.StringPtrInput) WIFBroker {
 	providers := map[string]pulumi.StringInput{}
 	for id, out := range r.OIDCProviderNames {
 		providers[id] = out
@@ -129,8 +115,8 @@ func provisionGCPPlatform(
 	ctx *pulumi.Context,
 	name, orgScope string,
 	info core.PlatformInfo,
-	spec Platform,
-	res *PlatformResource,
+	spec PlatformArgs,
+	res *Platform,
 ) error {
 	location := defaultStr(spec.Location, "us-central1")
 	res.Location = pulumi.String(location).ToStringOutput()
@@ -150,7 +136,7 @@ func provisionGCPPlatform(
 	return createOptionalPlatformLB(ctx, name, orgScope, location, spec, res)
 }
 
-func enableProjectServices(ctx *pulumi.Context, name string, spec Platform, parent pulumi.Resource) ([]*projects.Service, error) {
+func enableProjectServices(ctx *pulumi.Context, name string, spec PlatformArgs, parent pulumi.Resource) ([]*projects.Service, error) {
 	list := spec.Services
 	if len(list) == 0 {
 		list = defaultPlatformServices
@@ -175,8 +161,8 @@ func enableProjectServices(ctx *pulumi.Context, name string, spec Platform, pare
 func createIdentityFederation(
 	ctx *pulumi.Context,
 	name, orgScope string,
-	spec Platform,
-	res *PlatformResource,
+	spec PlatformArgs,
+	res *Platform,
 ) error {
 	rawPool := "ob-" + orgScope + "-pool"
 	if spec.PoolSuffix != "" {
@@ -207,7 +193,7 @@ func attachLinkedOIDCProvider(
 	gcpProject pulumi.StringPtrInput,
 	pool *iam.WorkloadIdentityPool,
 	src core.OIDCProviderSource,
-	res *PlatformResource,
+	res *Platform,
 ) error {
 	if src == nil {
 		return nil
@@ -261,8 +247,8 @@ func createOptionalKeyRing(
 	ctx *pulumi.Context,
 	name, location string,
 	info core.PlatformInfo,
-	spec Platform,
-	res *PlatformResource,
+	spec PlatformArgs,
+	res *Platform,
 ) error {
 	if spec.SkipKeyRing {
 		res.KeyRingID = pulumi.String("").ToStringOutput()
@@ -285,21 +271,20 @@ func createOptionalKeyRing(
 func createOptionalPlatformLB(
 	ctx *pulumi.Context,
 	name, orgScope, location string,
-	spec Platform,
-	res *PlatformResource,
+	spec PlatformArgs,
+	res *Platform,
 ) error {
 	if !spec.EnableLoadBalancer || core.NormalizeDomain(spec.BaseDomain) == "" {
 		return nil
 	}
-	lb, err := CloudLoadBalancer{
-		Name:        name + "-lb",
+	lb, err := NewCloudLoadBalancer(ctx, name+"-lb", &CloudLoadBalancerArgs{
 		Project:     orgScope,
 		Environment: string(core.EnvShared),
 		GCPProject:  spec.GCPProject,
 		Location:    location,
 		BaseDomain:  spec.BaseDomain,
 		ExtraLabels: spec.ExtraLabels,
-	}.Register(ctx, pulumi.Parent(res))
+	}, pulumi.Parent(res))
 	if err != nil {
 		return err
 	}
@@ -307,7 +292,7 @@ func createOptionalPlatformLB(
 	return nil
 }
 
-func buildGCPPlatformLink(info core.PlatformInfo, spec Platform, res *PlatformResource) core.LinkDescriptor {
+func buildGCPPlatformLink(info core.PlatformInfo, spec PlatformArgs, res *Platform) core.LinkDescriptor {
 	attrs := map[string]pulumi.StringOutput{
 		"gcpProjectNumber":         pulumi.String(spec.GCPProjectNumber).ToStringOutput(),
 		"location":                 res.Location,
@@ -337,7 +322,7 @@ func buildGCPPlatformLink(info core.PlatformInfo, spec Platform, res *PlatformRe
 	}
 }
 
-func collectGCPPlatformExports(spec Platform, res *PlatformResource) map[string]pulumi.Input {
+func collectGCPPlatformExports(spec PlatformArgs, res *Platform) map[string]pulumi.Input {
 	exports := map[string]pulumi.Input{
 		"location":                 res.Location,
 		"gcpBaseDomain":            res.BaseDomain,
@@ -358,7 +343,7 @@ func collectGCPPlatformExports(spec Platform, res *PlatformResource) map[string]
 	return exports
 }
 
-func registerPlatformOutputs(ctx *pulumi.Context, spec Platform, res *PlatformResource) error {
+func registerPlatformOutputs(ctx *pulumi.Context, spec PlatformArgs, res *Platform) error {
 	outs := pulumi.Map{
 		"gcpProjectNumber":         pulumi.String(spec.GCPProjectNumber),
 		"location":                 res.Location,

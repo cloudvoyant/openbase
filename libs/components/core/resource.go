@@ -1,6 +1,11 @@
 package core
 
-import "github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+import (
+	"fmt"
+	"strings"
+
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+)
 
 // Public API -----------------------------------------------------------------
 
@@ -72,8 +77,14 @@ func (b *StatelessMeta) OpenBaseMeta() ResourceMeta { return b.meta }
 // Link returns the LinkDescriptor exported by the stateless component.
 func (b *StatelessMeta) Link() LinkDescriptor { return b.link }
 
-// SetLink sets the LinkDescriptor exported by the stateless component.
+// SetLink sets the LinkDescriptor exported by the stateless component without stack exports.
 func (b *StatelessMeta) SetLink(desc LinkDescriptor) { b.link = desc }
+
+// PublishLink sets the LinkDescriptor and records stack exports and openbaseManifest entries on ctx.
+func (b *StatelessMeta) PublishLink(ctx *pulumi.Context, desc LinkDescriptor) {
+	b.link = desc
+	RecordStackExports(ctx, desc)
+}
 
 // StatefulMeta stores metadata, BranchSource, and Links on structs that directly embed pulumi.ResourceState.
 type StatefulMeta struct {
@@ -87,11 +98,40 @@ func (b *StatefulMeta) OpenBaseMeta() ResourceMeta { return b.meta }
 // Link returns the LinkDescriptor exported by the stateful component.
 func (b *StatefulMeta) Link() LinkDescriptor { return b.link }
 
-// SetLink sets the LinkDescriptor exported by the stateful component.
+// SetLink sets the LinkDescriptor exported by the stateful component without stack exports.
 func (b *StatefulMeta) SetLink(desc LinkDescriptor) { b.link = desc }
+
+// PublishLink sets the LinkDescriptor and records stack exports and openbaseManifest entries on ctx.
+func (b *StatefulMeta) PublishLink(ctx *pulumi.Context, desc LinkDescriptor) {
+	b.link = desc
+	RecordStackExports(ctx, desc)
+}
 
 // BranchSource returns the persistent source environment when branching, or "".
 func (b *StatefulMeta) BranchSource() string { return b.meta.BranchFrom.String() }
+
+// ResolveProject returns explicit when non-empty, otherwise ctx.Project() with any "-shared" suffix trimmed.
+func ResolveProject(ctx *pulumi.Context, explicit string) string {
+	if explicit != "" {
+		return explicit
+	}
+	if ctx == nil {
+		return ""
+	}
+	return strings.TrimSuffix(ctx.Project(), "-shared")
+}
+
+// RequireSharedStack validates that the active stack resolves to core.EnvShared for <provider>.NewProject constructors.
+func RequireSharedStack(ctx *pulumi.Context) error {
+	env, err := ResolveEnvironment(ctx, "")
+	if err != nil {
+		return err
+	}
+	if env != EnvShared {
+		return fmt.Errorf("%w: Project resources require the shared stack, got %q", ErrInvalidEnvironment, env)
+	}
+	return nil
+}
 
 // BuildStatelessMeta validates StatelessSpec and produces deterministic metadata.
 func BuildStatelessMeta(ctx *pulumi.Context, spec StatelessSpec, defaultKind string) (ResourceMeta, error) {
@@ -99,7 +139,8 @@ func BuildStatelessMeta(ctx *pulumi.Context, spec StatelessSpec, defaultKind str
 	if err != nil {
 		return ResourceMeta{}, err
 	}
-	canonical, err := CanonicalName(spec.Project, env, spec.Name)
+	project := ResolveProject(ctx, spec.Project)
+	canonical, err := CanonicalName(project, env, spec.Name)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
@@ -110,7 +151,7 @@ func BuildStatelessMeta(ctx *pulumi.Context, spec StatelessSpec, defaultKind str
 	meta := ResourceMeta{
 		Name:          spec.Name,
 		CanonicalName: canonical,
-		Project:       spec.Project,
+		Project:       project,
 		Repo:          spec.Repo,
 		Kind:          kind,
 		Environment:   env,
@@ -132,7 +173,8 @@ func BuildStatefulMeta(ctx *pulumi.Context, spec StatefulSpec, defaultKind strin
 	if err != nil {
 		return ResourceMeta{}, err
 	}
-	canonical, err := CanonicalName(spec.Project, env, spec.Name)
+	project := ResolveProject(ctx, spec.Project)
+	canonical, err := CanonicalName(project, env, spec.Name)
 	if err != nil {
 		return ResourceMeta{}, err
 	}
@@ -148,7 +190,7 @@ func BuildStatefulMeta(ctx *pulumi.Context, spec StatefulSpec, defaultKind strin
 	meta := ResourceMeta{
 		Name:          spec.Name,
 		CanonicalName: canonical,
-		Project:       spec.Project,
+		Project:       project,
 		Repo:          spec.Repo,
 		Kind:          kind,
 		Environment:   env,
@@ -211,9 +253,8 @@ func ChildOptions(parent pulumi.Resource, meta ResourceMeta, extra ...pulumi.Res
 	return append(opts, extra...)
 }
 
-// Stateless declares an escape-hatch stateless component wrapping custom Pulumi resources.
-type Stateless struct {
-	Name        string
+// StatelessArgs configures an escape-hatch StatelessResource component wrapping custom Pulumi resources.
+type StatelessArgs struct {
 	Project     string
 	Repo        string
 	Environment string
@@ -223,48 +264,39 @@ type Stateless struct {
 	GrantAccess func(LinkGrantContext) error
 }
 
-// CustomStatelessResource is the provisioned handle returned by Stateless.Register.
-type CustomStatelessResource struct {
+// Stateless is the provisioned handle returned by NewStateless.
+type Stateless struct {
 	pulumi.ResourceState
 	StatelessMeta
 }
 
-// Register validates and provisions an escape-hatch StatelessResource with canonical tags and access Links.
-func (s Stateless) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*CustomStatelessResource, error) {
-	res := &CustomStatelessResource{}
+// NewStateless registers an escape-hatch StatelessResource with canonical tags and access Links.
+func NewStateless(ctx *pulumi.Context, name string, args *StatelessArgs, opts ...pulumi.ResourceOption) (*Stateless, error) {
+	if args == nil {
+		args = &StatelessArgs{}
+	}
+	res := &Stateless{}
 	meta, err := InitStateless(ctx, "openbase:core:StatelessResource", "custom-stateless", res, &res.StatelessMeta, StatelessSpec{
-		Name:        s.Name,
-		Project:     s.Project,
-		Repo:        s.Repo,
-		Environment: s.Environment,
-		Kind:        s.Kind,
-		Links:       s.Links,
+		Name:        name,
+		Project:     args.Project,
+		Repo:        args.Repo,
+		Environment: args.Environment,
+		Kind:        args.Kind,
+		Links:       args.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	desc, err := buildEscapeHatchLink(ctx, meta, s.Links, s.Attributes, s.GrantAccess)
+	desc, err := buildEscapeHatchLink(ctx, meta, args.Links, args.Attributes, args.GrantAccess)
 	if err != nil {
 		return nil, err
 	}
-	res.SetLink(desc)
+	res.PublishLink(ctx, desc)
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{"canonicalName": pulumi.String(meta.CanonicalName)})
 }
 
-// RegisterInScope adapts core.Stateless to openbase.Project and openbase.Environment.
-func (s Stateless) RegisterInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (Resource, error) {
-	return s.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers core.Stateless using inherited Scope metadata.
-func (s Stateless) RegisterTypedInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (*CustomStatelessResource, error) {
-	applyStatelessScope(&s, scope)
-	return s.Register(ctx, opts...)
-}
-
-// Stateful declares an escape-hatch stateful component wrapping custom Pulumi resources.
-type Stateful struct {
-	Name        string
+// StatefulArgs configures an escape-hatch StatefulResource component wrapping custom Pulumi resources.
+type StatefulArgs struct {
 	Project     string
 	Repo        string
 	Environment string
@@ -276,75 +308,43 @@ type Stateful struct {
 	GrantAccess func(LinkGrantContext) error
 }
 
-// CustomStatefulResource is the provisioned handle returned by Stateful.Register.
-type CustomStatefulResource struct {
+// Stateful is the provisioned handle returned by NewStateful.
+type Stateful struct {
 	pulumi.ResourceState
 	StatefulMeta
 }
 
-// Register validates and provisions an escape-hatch StatefulResource with BranchFrom, tags, and access Links.
-func (s Stateful) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*CustomStatefulResource, error) {
-	res := &CustomStatefulResource{}
+// NewStateful registers an escape-hatch StatefulResource with BranchFrom, tags, and access Links.
+func NewStateful(ctx *pulumi.Context, name string, args *StatefulArgs, opts ...pulumi.ResourceOption) (*Stateful, error) {
+	if args == nil {
+		args = &StatefulArgs{}
+	}
+	res := &Stateful{}
 	meta, err := InitStateful(ctx, "openbase:core:StatefulResource", "custom-stateful", res, &res.StatefulMeta, StatefulSpec{
-		Name:        s.Name,
-		Project:     s.Project,
-		Repo:        s.Repo,
-		Environment: s.Environment,
-		Kind:        s.Kind,
-		BranchFrom:  s.BranchFrom,
-		Backup:      s.Backup,
-		Links:       s.Links,
+		Name:        name,
+		Project:     args.Project,
+		Repo:        args.Repo,
+		Environment: args.Environment,
+		Kind:        args.Kind,
+		BranchFrom:  args.BranchFrom,
+		Backup:      args.Backup,
+		Links:       args.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	desc, err := buildEscapeHatchLink(ctx, meta, s.Links, s.Attributes, s.GrantAccess)
+	desc, err := buildEscapeHatchLink(ctx, meta, args.Links, args.Attributes, args.GrantAccess)
 	if err != nil {
 		return nil, err
 	}
-	res.SetLink(desc)
+	res.PublishLink(ctx, desc)
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName": pulumi.String(meta.CanonicalName),
 		"branchFrom":    pulumi.String(meta.BranchFrom.String()),
 	})
 }
 
-// RegisterInScope adapts core.Stateful to openbase.Project and openbase.Environment.
-func (s Stateful) RegisterInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (Resource, error) {
-	return s.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers core.Stateful using inherited Scope metadata.
-func (s Stateful) RegisterTypedInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (*CustomStatefulResource, error) {
-	applyStatefulScope(&s, scope)
-	return s.Register(ctx, opts...)
-}
-
 // Private helpers ------------------------------------------------------------
-
-func applyStatelessScope(s *Stateless, scope Scope) {
-	if s.Project == "" {
-		s.Project = scope.Project
-	}
-	if s.Repo == "" {
-		s.Repo = scope.Repo
-	}
-	if s.Environment == "" && scope.Env != "" {
-		s.Environment = scope.Env.String()
-	}
-}
-
-func applyStatefulScope(s *Stateful, scope Scope) {
-	if s.Project == "" {
-		s.Project = scope.Project
-	}
-	if s.Repo == "" {
-		s.Repo = scope.Repo
-	}
-	if s.Environment == "" && scope.Env != "" {
-		s.Environment = scope.Env.String()
-	}
-}
 
 func buildEscapeHatchLink(
 	ctx *pulumi.Context,

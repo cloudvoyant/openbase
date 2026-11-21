@@ -13,15 +13,13 @@ import (
 // Public API -----------------------------------------------------------------
 
 var (
-	_ core.IdentityBroker                           = WIFBroker{}
-	_ core.IdentityBroker                           = (*FederatedIdentityResource)(nil)
-	_ core.StatelessResource                        = (*FederatedIdentityResource)(nil)
-	_ core.ScopedSpecOf[*FederatedIdentityResource] = FederatedIdentity{}
+	_ core.IdentityBroker    = WIFBroker{}
+	_ core.IdentityBroker    = (*FederatedIdentity)(nil)
+	_ core.StatelessResource = (*FederatedIdentity)(nil)
 )
 
-// FederatedIdentity declares an explicit federated GCP Service Account bound to an external OIDC workload claim.
-type FederatedIdentity struct {
-	Name           string
+// FederatedIdentityArgs configures an explicit federated GCP Service Account bound to an external OIDC workload claim.
+type FederatedIdentityArgs struct {
 	Project        string
 	Repo           string
 	Environment    string
@@ -33,8 +31,8 @@ type FederatedIdentity struct {
 	ClaimValue     pulumi.StringInput
 }
 
-// FederatedIdentityResource holds the provisioned federated GCP Service Account and WIF audience outputs.
-type FederatedIdentityResource struct {
+// FederatedIdentity holds the provisioned federated GCP Service Account and WIF audience outputs.
+type FederatedIdentity struct {
 	pulumi.ResourceState
 	core.StatelessMeta
 
@@ -44,23 +42,26 @@ type FederatedIdentityResource struct {
 	ProviderAudience    pulumi.StringOutput
 }
 
-// Register provisions a federated GCP Service Account and workloadIdentityUser binding.
-func (f FederatedIdentity) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*FederatedIdentityResource, error) {
-	f.Name = defaultStr(f.Name, "wif")
-	res := &FederatedIdentityResource{}
+// NewFederatedIdentity provisions a federated GCP Service Account and workloadIdentityUser binding.
+func NewFederatedIdentity(ctx *pulumi.Context, name string, args *FederatedIdentityArgs, opts ...pulumi.ResourceOption) (*FederatedIdentity, error) {
+	if args == nil {
+		args = &FederatedIdentityArgs{}
+	}
+	name = defaultStr(name, "wif")
+	res := &FederatedIdentity{}
 	meta, err := core.InitStateless(ctx, "openbase:gcp:FederatedIdentity", "gcp-federated-identity", res, &res.StatelessMeta, core.StatelessSpec{
-		Name:        f.Name,
-		Project:     f.Project,
-		Repo:        f.Repo,
-		Environment: f.Environment,
+		Name:        name,
+		Project:     args.Project,
+		Repo:        args.Repo,
+		Environment: args.Environment,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionFederatedIdentity(ctx, meta, f, res); err != nil {
+	if err := provisionFederatedIdentity(ctx, meta, *args, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
+	res.PublishLink(ctx, core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
 		Attributes: map[string]pulumi.StringOutput{
@@ -76,24 +77,11 @@ func (f FederatedIdentity) Register(ctx *pulumi.Context, opts ...pulumi.Resource
 	})
 }
 
-// RegisterInScope adapts gcp.FederatedIdentity to openbase.Project and openbase.Environment.
-func (f FederatedIdentity) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return f.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers gcp.FederatedIdentity with inherited Scope metadata.
-func (f FederatedIdentity) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*FederatedIdentityResource, error) {
-	f.Project = defaultStr(f.Project, scope.Project)
-	f.Repo = defaultStr(f.Repo, scope.Repo)
-	f.Environment = defaultStr(f.Environment, string(scope.Env))
-	return f.Register(ctx, opts...)
-}
-
-// BrokerProvider identifies FederatedIdentityResource as resolving GCP IAM principals.
-func (*FederatedIdentityResource) BrokerProvider() string { return "gcp" }
+// BrokerProvider identifies FederatedIdentity as resolving GCP IAM principals.
+func (*FederatedIdentity) BrokerProvider() string { return "gcp" }
 
 // ResolvePrincipal returns the pre-created federated GCP Service Account member for Link access grants.
-func (r *FederatedIdentityResource) ResolvePrincipal(_ *pulumi.Context, _ core.ResourceMeta, _ core.Subject) (core.PrincipalGrant, error) {
+func (r *FederatedIdentity) ResolvePrincipal(_ *pulumi.Context, _ core.ResourceMeta, _ core.Subject) (core.PrincipalGrant, error) {
 	if r == nil {
 		return core.PrincipalGrant{Provider: "gcp"}, nil
 	}
@@ -182,8 +170,8 @@ func selectPrincipalClaim(explicit string, claims map[string]pulumi.StringOutput
 func provisionFederatedIdentity(
 	ctx *pulumi.Context,
 	meta core.ResourceMeta,
-	spec FederatedIdentity,
-	res *FederatedIdentityResource,
+	spec FederatedIdentityArgs,
+	res *FederatedIdentity,
 ) error {
 	srcProv := defaultStr(spec.SourceProvider, "external")
 	claimKey := defaultStr(spec.ClaimKey, "project_id")

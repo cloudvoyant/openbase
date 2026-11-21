@@ -14,10 +14,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.PlatformResource                      = (*PlatformResource)(nil)
-	_ core.PlatformSpecItemOf[*PlatformResource] = Platform{}
-)
+var _ core.PlatformResource = (*Platform)(nil)
 
 // ErrTenantCredentialsRequired reports missing nonProd or prod Kinde tenant M2M credentials.
 var ErrTenantCredentialsRequired = errors.New("kinde: both nonProd and prod tenant domain, clientId, and clientSecret are required")
@@ -30,9 +27,8 @@ type TenantCredentials struct {
 	Audience     string
 }
 
-// Platform declares organization-level Kinde nonProd and prod tenant connections provisioned once per organization.
-type Platform struct {
-	Name                  string
+// PlatformArgs configures organization-level Kinde nonProd and prod tenant connections provisioned once per organization.
+type PlatformArgs struct {
 	Org                   string
 	NonProd               TenantCredentials
 	Prod                  TenantCredentials
@@ -40,8 +36,8 @@ type Platform struct {
 	SkipEmailPasswordConn bool
 }
 
-// PlatformResource holds organization-level Kinde tenant providers, issuer URLs, and discovered connection IDs.
-type PlatformResource struct {
+// Platform holds organization-level Kinde tenant providers, issuer URLs, and discovered connection IDs.
+type Platform struct {
 	pulumi.ResourceState
 	core.PlatformMeta
 
@@ -53,24 +49,24 @@ type PlatformResource struct {
 	EmailPasswordConn string
 }
 
-// Register validates nonProd/prod Kinde tenants, discovers shared connections, and exports tenant metadata.
-func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
-	if !hasTenantCreds(p.NonProd) || !hasTenantCreds(p.Prod) {
+// NewPlatform validates nonProd/prod Kinde tenants, discovers shared connections, and exports tenant metadata.
+func NewPlatform(ctx *pulumi.Context, name string, args *PlatformArgs, opts ...pulumi.ResourceOption) (*Platform, error) {
+	if args == nil || !hasTenantCreds(args.NonProd) || !hasTenantCreds(args.Prod) {
 		return nil, ErrTenantCredentialsRequired
 	}
-	p.Name = defaultKindeStr(p.Name, "kinde-platform")
-	res := &PlatformResource{}
+	name = defaultKindeStr(name, "kinde-platform")
+	res := &Platform{}
 	info, err := core.InitPlatform(ctx, "openbase:kinde:Platform", "kinde-platform", res, &res.PlatformMeta, core.PlatformSpec{
-		Name: p.Name,
-		Org:  p.Org,
+		Name: name,
+		Org:  args.Org,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionKindePlatform(ctx, p.Name, p, res); err != nil {
+	if err := provisionKindePlatform(ctx, name, args, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(core.LinkDescriptor{
+	res.PublishLink(ctx, core.LinkDescriptor{
 		Name: info.Name,
 		Kind: info.Kind,
 		Attributes: map[string]pulumi.StringOutput{
@@ -83,10 +79,10 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 			"nonProdIssuerUrl":            res.NonProdIssuerURL,
 			"prodIssuerUrl":               res.ProdIssuerURL,
 			"emailPasswordConn":           pulumi.String(res.EmailPasswordConn),
-			"kindeNonProdM2mClientId":     p.NonProd.ClientID,
-			"kindeNonProdM2mClientSecret": pulumi.ToSecret(p.NonProd.ClientSecret.ToStringOutput()),
-			"kindeProdM2mClientId":        p.Prod.ClientID,
-			"kindeProdM2mClientSecret":    pulumi.ToSecret(p.Prod.ClientSecret.ToStringOutput()),
+			"kindeNonProdM2mClientId":     args.NonProd.ClientID,
+			"kindeNonProdM2mClientSecret": pulumi.ToSecret(args.NonProd.ClientSecret.ToStringOutput()),
+			"kindeProdM2mClientId":        args.Prod.ClientID,
+			"kindeProdM2mClientSecret":    pulumi.ToSecret(args.Prod.ClientSecret.ToStringOutput()),
 		},
 	})
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{
@@ -95,19 +91,6 @@ func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (
 		"baseDomain":        res.BaseDomain,
 		"emailPasswordConn": pulumi.String(res.EmailPasswordConn),
 	})
-}
-
-// RegisterPlatformInScope adapts kinde.Platform to openbase.Platform.
-func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.PlatformResource, error) {
-	return p.RegisterTypedPlatformInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedPlatformInScope registers kinde.Platform with inherited Org defaults and explicit ResourceOptions.
-func (p Platform) RegisterTypedPlatformInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*PlatformResource, error) {
-	if p.Org == "" {
-		p.Org = scope.Org
-	}
-	return p.Register(ctx, opts...)
 }
 
 // NormalizeIssuerURL ensures a Kinde tenant domain starts with https:// and has no trailing slash.
@@ -128,14 +111,14 @@ func hasTenantCreds(c TenantCredentials) bool {
 	return strings.TrimSpace(c.Domain) != "" && c.ClientID != nil && c.ClientSecret != nil
 }
 
-func provisionKindePlatform(ctx *pulumi.Context, name string, spec Platform, res *PlatformResource) error {
-	nonProdIssuer := NormalizeIssuerURL(spec.NonProd.Domain)
-	prodIssuer := NormalizeIssuerURL(spec.Prod.Domain)
-	nonProdProv, err := createTenantProvider(ctx, name+"-nonprod-prov", nonProdIssuer, spec.NonProd, res)
+func provisionKindePlatform(ctx *pulumi.Context, name string, args *PlatformArgs, res *Platform) error {
+	nonProdIssuer := NormalizeIssuerURL(args.NonProd.Domain)
+	prodIssuer := NormalizeIssuerURL(args.Prod.Domain)
+	nonProdProv, err := createTenantProvider(ctx, name+"-nonprod-prov", nonProdIssuer, args.NonProd, res)
 	if err != nil {
 		return err
 	}
-	prodProv, err := createTenantProvider(ctx, name+"-prod-prov", prodIssuer, spec.Prod, res)
+	prodProv, err := createTenantProvider(ctx, name+"-prod-prov", prodIssuer, args.Prod, res)
 	if err != nil {
 		return err
 	}
@@ -143,8 +126,8 @@ func provisionKindePlatform(ctx *pulumi.Context, name string, spec Platform, res
 	res.ProdProvider = prodProv
 	res.NonProdIssuerURL = pulumi.String(nonProdIssuer).ToStringOutput()
 	res.ProdIssuerURL = pulumi.String(prodIssuer).ToStringOutput()
-	res.BaseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
-	if spec.SkipEmailPasswordConn {
+	res.BaseDomain = pulumi.String(core.NormalizeDomain(args.BaseDomain)).ToStringOutput()
+	if args.SkipEmailPasswordConn {
 		return nil
 	}
 	conns, err := kindeprov.GetConnections(ctx, nil, pulumi.Provider(nonProdProv))
@@ -187,8 +170,11 @@ func defaultKindeStr(val, fallback string) string {
 }
 
 func ensureLeadingSlash(p string) string {
-	if strings.HasPrefix(p, "/") {
-		return p
+	if p == "" {
+		return "/"
 	}
-	return "/" + p
+	if !strings.HasPrefix(p, "/") {
+		return "/" + p
+	}
+	return p
 }

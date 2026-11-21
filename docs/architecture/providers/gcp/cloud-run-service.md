@@ -61,16 +61,16 @@ sequenceDiagram
     Caller->>GCS: 5. Fetch object via signed URL
 ```
 
-During `Register`, `CloudRunService` resolves `Links`, writes secrets to Secret Manager, and waits for IAM bindings before creating `cloudrunv2.Service`. At runtime, containers sign GCS URLs through the IAM Credentials API without static JSON keys.
+During `NewCloudRunService`, the component resolves `Links`, writes secrets to Secret Manager, and waits for IAM bindings before creating `cloudrunv2.Service`. At runtime, containers sign GCS URLs through the IAM Credentials API without static JSON keys.
 
 ### Interfaces and Contracts
 
 ```go
-api, err := gcp.CloudRunService{
-	Name:        "web",
-	Project:     "storefront",
-	Environment: "stage",
-	Links:       []core.Resource{uploads},
+api, err := gcp.NewCloudRunService(ctx, "web", &gcp.CloudRunServiceArgs{
+	Project:    "storefront",
+	Shared:     shared,
+	GCPProject: pulumi.String("cloudvoyant-openbase"),
+	Links:      []core.Resource{uploads},
 	Env: map[string]pulumi.StringInput{
 		"STORAGE_BUCKET":   uploads.BucketName,
 		"KINDE_ISSUER_URL": auth.IssuerURL,
@@ -79,12 +79,11 @@ api, err := gcp.CloudRunService{
 		"DATABASE_URL":        db.DatabaseURL,
 		"KINDE_CLIENT_SECRET": auth.ClientSecret,
 	},
-	ProjectStackRef: "cloudvoyant/storefront-shared/shared",
-	BaseDomain:      "gcp.cloudvoyant.io",
-	Domains:         []string{"stage.storefront.io"},
-	Visibility:      gcp.VisibilityPublic,
-	Image:           pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/storefront-gcp/web:sha"),
-}.Register(ctx)
+	BaseDomain: "gcp.cloudvoyant.io",
+	Domains:    []string{"stage.storefront.io"},
+	Visibility: gcp.VisibilityPublic,
+	Image:      pulumi.String("us-central1-docker.pkg.dev/cloudvoyant-openbase/storefront-gcp/web:sha"),
+})
 ```
 
 | Field / Output | Direction | Description |

@@ -15,8 +15,7 @@ func main() {
 		if branchFrom == "" {
 			branchFrom = "dev"
 		}
-		ledger, err := core.Stateful{
-			Name:        "ledger",
+		ledger, err := core.NewStateful(ctx, "ledger", &core.StatefulArgs{
 			Project:     "storefront",
 			Repo:        "cloudvoyant/openbase",
 			Environment: explicitEnv,
@@ -25,18 +24,17 @@ func main() {
 			Attributes: map[string]pulumi.StringInput{
 				"endpoint": pulumi.String("https://ledger.storefront.internal"),
 			},
-		}.Register(ctx)
+		})
 		if err != nil {
 			return err
 		}
-		worker, err := core.Stateless{
-			Name:        "worker",
+		worker, err := core.NewStateless(ctx, "worker", &core.StatelessArgs{
 			Project:     "storefront",
 			Repo:        "cloudvoyant/openbase",
 			Environment: explicitEnv,
 			Kind:        "background-worker",
 			Links:       []core.Resource{ledger},
-		}.Register(ctx)
+		})
 		if err != nil {
 			return err
 		}

@@ -11,14 +11,10 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.StatefulResource                 = (*BlobStoreResource)(nil)
-	_ core.ScopedSpecOf[*BlobStoreResource] = BlobStore{}
-)
+var _ core.StatefulResource = (*BlobStore)(nil)
 
-// BlobStore declares a Vercel BlobStore component with custom-env token propagation and prefix overlays.
-type BlobStore struct {
-	Name                     string
+// BlobStoreArgs configures a Vercel BlobStore component with custom-env token propagation and prefix overlays.
+type BlobStoreArgs struct {
 	Project                  string
 	Repo                     string
 	Environment              string
@@ -26,7 +22,8 @@ type BlobStore struct {
 	BranchFrom               string
 	Backup                   *bool
 	Links                    []core.Resource
-	VercelProject            *ProjectResource
+	VercelProject            *Project
+	Shared                   *core.ScopeRef
 	ProjectStackRef          string
 	StoreID                  pulumi.StringInput
 	VercelProjectID          pulumi.StringInput
@@ -40,8 +37,8 @@ type BlobStore struct {
 	BlobReadWriteToken       pulumi.StringInput
 }
 
-// BlobStoreResource is the provisioned Vercel Blob store handle with tier-scoped BLOB_PREFIX and BLOB_FALLBACK_PREFIX.
-type BlobStoreResource struct {
+// BlobStore is the provisioned Vercel Blob store handle with tier-scoped BLOB_PREFIX and BLOB_FALLBACK_PREFIX.
+type BlobStore struct {
 	pulumi.ResourceState
 	core.StatefulMeta
 
@@ -57,52 +54,34 @@ type BlobStoreResource struct {
 	BlobFallbackPrefix string
 }
 
-// Register provisions or attaches a Vercel BlobStore satisfying core.StatefulResource.
-func (b BlobStore) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*BlobStoreResource, error) {
-	res := &BlobStoreResource{}
+// NewBlobStore provisions or attaches a Vercel BlobStore satisfying core.StatefulResource.
+func NewBlobStore(ctx *pulumi.Context, name string, args *BlobStoreArgs, opts ...pulumi.ResourceOption) (*BlobStore, error) {
+	if args == nil {
+		args = &BlobStoreArgs{}
+	}
+	spec := *args
+	if env, err := core.ResolveEnvironment(ctx, spec.Environment); err == nil {
+		spec.BranchFrom = core.DefaultBranchFrom(env, spec.BranchFrom, false)
+	}
+	res := &BlobStore{}
 	meta, err := core.InitStateful(ctx, "openbase:vercel:BlobStore", "vercel-blob", res, &res.StatefulMeta, core.StatefulSpec{
-		Name:        b.Name,
-		Project:     b.Project,
-		Repo:        b.Repo,
-		Environment: b.Environment,
-		Kind:        b.Kind,
-		BranchFrom:  b.BranchFrom,
-		Backup:      b.Backup,
-		Links:       b.Links,
+		Name:        name,
+		Project:     spec.Project,
+		Repo:        spec.Repo,
+		Environment: spec.Environment,
+		Kind:        spec.Kind,
+		BranchFrom:  spec.BranchFrom,
+		Backup:      spec.Backup,
+		Links:       spec.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	if err := provisionBlobStore(ctx, b.Name, meta, b, res); err != nil {
+	if err := provisionBlobStore(ctx, name, meta, spec, res); err != nil {
 		return nil, err
 	}
-	res.SetLink(buildBlobStoreLink(meta, res))
-	if err := registerBlobOutputs(ctx, meta, res); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-
-// RegisterInScope adapts vercel.BlobStore to openbase.Project and openbase.Environment.
-func (b BlobStore) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return b.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers vercel.BlobStore with inherited Scope metadata, BranchFrom, and ProjectStackRef.
-func (b BlobStore) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*BlobStoreResource, error) {
-	b.Project = defaultVercelStr(b.Project, scope.Project)
-	b.Repo = defaultVercelStr(b.Repo, scope.Repo)
-	b.Environment = defaultVercelStr(b.Environment, string(scope.Env))
-	b.BranchFrom = defaultVercelStr(b.BranchFrom, scope.DefaultStorageBranchFrom())
-	if b.VercelProject == nil && scope.ProjectRef != nil {
-		if vp, ok := scope.ProjectRef.ResourceHandle("vercel-project").(*ProjectResource); ok {
-			b.VercelProject = vp
-		}
-	}
-	if b.ProjectStackRef == "" && b.VercelProject == nil && b.StoreID == nil {
-		b.ProjectStackRef = scope.ProjectStackName()
-	}
-	return b.Register(ctx, opts...)
+	res.PublishLink(ctx, buildBlobStoreLink(meta, res))
+	return res, registerBlobOutputs(ctx, meta, res)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -118,8 +97,8 @@ func provisionBlobStore(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec BlobStore,
-	res *BlobStoreResource,
+	spec BlobStoreArgs,
+	res *BlobStore,
 ) error {
 	refs, err := resolveBlobRefs(ctx, name, spec)
 	if err != nil {
@@ -140,7 +119,7 @@ func provisionBlobStore(
 	return propagateStageBlobEnv(ctx, name, meta, spec, refs, res)
 }
 
-func resolveBlobRefs(ctx *pulumi.Context, name string, spec BlobStore) (resolvedBlobRefs, error) {
+func resolveBlobRefs(ctx *pulumi.Context, name string, spec BlobStoreArgs) (resolvedBlobRefs, error) {
 	var refs resolvedBlobRefs
 	if spec.StoreID != nil {
 		refs.storeID = spec.StoreID.ToStringOutput()
@@ -155,13 +134,14 @@ func resolveBlobRefs(ctx *pulumi.Context, name string, spec BlobStore) (resolved
 		refs.stageEnvID = spec.StageCustomEnvironmentID.ToStringOutput()
 	}
 	applyVercelProjectBlobStruct(&refs, spec.VercelProject)
-	if spec.ProjectStackRef == "" {
-		return refs, nil
+	sr, err := core.ResolveStackReference(ctx, name+"-project-ref", spec.Shared, spec.ProjectStackRef)
+	if err != nil || sr == nil {
+		return refs, err
 	}
-	return loadProjectBlobStackRef(ctx, name, spec.ProjectStackRef, refs)
+	return populateBlobStackOutputs(sr, refs), nil
 }
 
-func applyVercelProjectBlobStruct(refs *resolvedBlobRefs, proj *ProjectResource) {
+func applyVercelProjectBlobStruct(refs *resolvedBlobRefs, proj *Project) {
 	if proj == nil {
 		return
 	}
@@ -179,15 +159,7 @@ func applyVercelProjectBlobStruct(refs *resolvedBlobRefs, proj *ProjectResource)
 	}
 }
 
-func loadProjectBlobStackRef(
-	ctx *pulumi.Context,
-	name, refName string,
-	refs resolvedBlobRefs,
-) (resolvedBlobRefs, error) {
-	sr, err := pulumi.NewStackReference(ctx, name+"-project-ref", &pulumi.StackReferenceArgs{Name: pulumi.String(refName)})
-	if err != nil {
-		return resolvedBlobRefs{}, err
-	}
+func populateBlobStackOutputs(sr *pulumi.StackReference, refs resolvedBlobRefs) resolvedBlobRefs {
 	if !isOutSet(refs.storeID) {
 		refs.storeID = optionalVercelStackOutput(sr, "blobStoreId")
 	}
@@ -200,16 +172,16 @@ func loadProjectBlobStackRef(
 	if !isOutSet(refs.stageEnvID) {
 		refs.stageEnvID = optionalVercelStackOutput(sr, "stageCustomEnvironmentId")
 	}
-	return refs, nil
+	return refs
 }
 
 func ensureUnderlyingBlobStore(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec BlobStore,
+	spec BlobStoreArgs,
 	refs *resolvedBlobRefs,
-	res *BlobStoreResource,
+	res *BlobStore,
 ) error {
 	if isOutSet(refs.storeID) {
 		return nil
@@ -245,9 +217,9 @@ func propagateDevBlobEnv(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec BlobStore,
+	spec BlobStoreArgs,
 	refs resolvedBlobRefs,
-	res *BlobStoreResource,
+	res *BlobStore,
 ) error {
 	hasDevCustom := spec.EnableDevEnvironment || (spec.VercelProject != nil && spec.VercelProject.DevEnvironment != nil)
 	if meta.Environment != core.EnvDev || !hasDevCustom || !isOutSet(refs.projectID) || !isOutSet(refs.devEnvID) {
@@ -266,9 +238,9 @@ func propagateStageBlobEnv(
 	ctx *pulumi.Context,
 	name string,
 	meta core.ResourceMeta,
-	spec BlobStore,
+	spec BlobStoreArgs,
 	refs resolvedBlobRefs,
-	res *BlobStoreResource,
+	res *BlobStore,
 ) error {
 	if meta.Environment != core.EnvStage || spec.SkipStageEnvironment || !isOutSet(refs.projectID) || !isOutSet(refs.stageEnvID) {
 		return nil
@@ -286,8 +258,8 @@ func createCustomEnvBlobVars(
 	ctx *pulumi.Context,
 	prefix string,
 	projectID, customEnvID pulumi.StringOutput,
-	spec BlobStore,
-	res *BlobStoreResource,
+	spec BlobStoreArgs,
+	res *BlobStore,
 ) (*vercelprov.ProjectEnvironmentVariable, *vercelprov.ProjectEnvironmentVariable, error) {
 	baseVar, err := vercelprov.NewProjectEnvironmentVariable(ctx, prefix+"-base-url", &vercelprov.ProjectEnvironmentVariableArgs{
 		ProjectId:            projectID,
@@ -311,7 +283,7 @@ func createCustomEnvBlobVars(
 	return baseVar, tokVar, err
 }
 
-func buildBlobStoreLink(meta core.ResourceMeta, res *BlobStoreResource) core.LinkDescriptor {
+func buildBlobStoreLink(meta core.ResourceMeta, res *BlobStore) core.LinkDescriptor {
 	return core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
@@ -329,7 +301,7 @@ func buildBlobStoreLink(meta core.ResourceMeta, res *BlobStoreResource) core.Lin
 	}
 }
 
-func registerBlobOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *BlobStoreResource) error {
+func registerBlobOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *BlobStore) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName":      pulumi.String(meta.CanonicalName),
 		"storeId":            res.StoreID,

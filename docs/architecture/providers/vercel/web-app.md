@@ -63,12 +63,11 @@ When a `vercel.WebApp` links an internal `gcp.CloudRunService` or private `gcp.B
 ### Interfaces and Contracts
 
 ```go
-web, err := vercel.WebApp{
-	Name:            "web",
-	Project:         "storefront",
-	Environment:     "preview-pr-20",
-	Links:           []core.Resource{api, blobs},
-	Brokers:         []core.IdentityBroker{fed},
+web, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
+	Project: "storefront",
+	Shared:  shared,
+	Links:   []core.Resource{api, blobs},
+	Brokers: []core.IdentityBroker{fed},
 	Env: map[string]pulumi.StringInput{
 		"GCP_SERVICE_ACCOUNT_EMAIL":      fed.ServiceAccountEmail,
 		"GCP_WORKLOAD_IDENTITY_PROVIDER": fed.ProviderAudience,
@@ -80,11 +79,10 @@ web, err := vercel.WebApp{
 		"DATABASE_URL":        db.DatabaseURL,
 		"KINDE_CLIENT_SECRET": auth.ClientSecret,
 	},
-	ProjectStackRef: "cloudvoyant/storefront-shared/shared",
-	BaseDomain:      "vercel.cloudvoyant.io",
-	ExtraDomains:    []string{"pr20.storefront.io"},
-	SourceDir:       "../../apps/web",
-}.Register(ctx)
+	BaseDomain:   "vercel.cloudvoyant.io",
+	ExtraDomains: []string{"pr20.storefront.io"},
+	SourceDir:    "../../apps/web",
+})
 ```
 
 | Stack | `Deployment.Production` | `Deployment.CustomEnvironmentId` | Alias Formula (`BaseDomain` set) |

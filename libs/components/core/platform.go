@@ -9,7 +9,7 @@ import (
 // Public API -----------------------------------------------------------------
 
 const (
-	// TierPlatform marks organization-wide foundations (<provider>.Platform and openbase.Platform).
+	// TierPlatform marks organization-wide foundations (<provider>.Platform).
 	TierPlatform = "platform"
 	// TierResource marks project-shared and per-environment resources (StatelessResource and StatefulResource).
 	TierResource = "resource"
@@ -50,7 +50,7 @@ type OIDCIssuer struct {
 	PrincipalClaim     string
 }
 
-// OIDCProviderSource is implemented by account providers (such as vercel.Platform or OIDCIssuer) that publish an OIDC trust spec.
+// OIDCProviderSource is implemented by account providers (such as *vercel.Platform or OIDCIssuer) that publish an OIDC trust spec.
 type OIDCProviderSource interface {
 	OIDCIssuerSpec() (OIDCIssuer, bool)
 }
@@ -92,8 +92,14 @@ func (b *PlatformMeta) OpenBasePlatform() PlatformInfo { return b.info }
 // Link returns the LinkDescriptor exported by the platform component.
 func (b *PlatformMeta) Link() LinkDescriptor { return b.link }
 
-// SetLink sets the LinkDescriptor exported by the platform component.
+// SetLink sets the LinkDescriptor exported by the platform component without stack exports.
 func (b *PlatformMeta) SetLink(desc LinkDescriptor) { b.link = desc }
+
+// PublishLink sets the LinkDescriptor and records stack exports and openbaseManifest entries on ctx.
+func (b *PlatformMeta) PublishLink(ctx *pulumi.Context, desc LinkDescriptor) {
+	b.link = desc
+	RecordStackExports(ctx, desc)
+}
 
 // InitPlatform validates spec and registers an organization-level PlatformResource component.
 func InitPlatform(
@@ -139,47 +145,41 @@ func GCPPlatformLabels(info PlatformInfo, extra map[string]string) pulumi.String
 	return labels
 }
 
-// Platform declares an escape-hatch organization platform component wrapping custom Pulumi resources.
-type Platform struct {
-	Name       string
+// CustomPlatformArgs configures an escape-hatch organization PlatformResource component.
+type CustomPlatformArgs struct {
 	Org        string
 	Kind       string
 	Attributes map[string]pulumi.StringInput
 }
 
-// CustomPlatformResource is the provisioned handle returned by Platform.Register.
-type CustomPlatformResource struct {
+// CustomPlatform is an escape-hatch organization PlatformResource handle.
+type CustomPlatform struct {
 	pulumi.ResourceState
 	PlatformMeta
 }
 
-// Register validates and provisions an escape-hatch PlatformResource with canonical org tags and attributes.
-func (p Platform) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*CustomPlatformResource, error) {
-	res := &CustomPlatformResource{}
+// NewCustomPlatform registers an escape-hatch PlatformResource with canonical org tags and attributes.
+func NewCustomPlatform(ctx *pulumi.Context, name string, args *CustomPlatformArgs, opts ...pulumi.ResourceOption) (*CustomPlatform, error) {
+	if args == nil {
+		args = &CustomPlatformArgs{}
+	}
+	res := &CustomPlatform{}
 	info, err := InitPlatform(ctx, "openbase:core:PlatformResource", "custom-platform", res, &res.PlatformMeta, PlatformSpec{
-		Name: p.Name,
-		Org:  p.Org,
-		Kind: p.Kind,
+		Name: name,
+		Org:  args.Org,
+		Kind: args.Kind,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
 	attrs := map[string]pulumi.StringOutput{}
-	for k, v := range p.Attributes {
+	for k, v := range args.Attributes {
 		attrs[k] = v.ToStringOutput()
 	}
-	res.SetLink(LinkDescriptor{
+	res.PublishLink(ctx, LinkDescriptor{
 		Name:       info.Name,
 		Kind:       info.Kind,
 		Attributes: attrs,
 	})
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{"canonicalName": pulumi.String(info.CanonicalName)})
-}
-
-// RegisterPlatformInScope adapts core.Platform to openbase.Platform.
-func (p Platform) RegisterPlatformInScope(ctx *pulumi.Context, scope Scope, opts ...pulumi.ResourceOption) (PlatformResource, error) {
-	if p.Org == "" {
-		p.Org = scope.Org
-	}
-	return p.Register(ctx, opts...)
 }

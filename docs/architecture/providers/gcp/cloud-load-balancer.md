@@ -57,13 +57,13 @@ DNS points `*.{baseDomain}` to `ipAddress` once. When `gcp.CloudRunService` depl
 ### Interfaces and Contracts
 
 ```go
-lb, err := gcp.CloudLoadBalancer{
+lb, err := gcp.NewCloudLoadBalancer(ctx, "lb", &gcp.CloudLoadBalancerArgs{
 	Project:     "storefront",
 	Environment: "shared",
 	GCPProject:  pulumi.String("cloudvoyant-openbase"),
 	Location:    "us-central1",
 	BaseDomain:  "gcp.cloudvoyant.io",
-}.Register(ctx)
+})
 ```
 
 | Output | Type | Purpose |

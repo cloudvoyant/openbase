@@ -2,14 +2,14 @@
 
 ## Overview
 
-OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi component library across Google Cloud Platform, Vercel, Neon, and Kinde. It separates infrastructure into three scopes: organization `Platform` foundations in `infra/platform`, repository `Project` assets in `infra/shared`, and per-stack `Environment` deployments in `infra/env`. It does not generate multi-language SDKs, run SQL migrations inside Pulumi state, or target AWS, Azure, or Kubernetes.
+OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi component library across Google Cloud Platform, Vercel, Neon, and Kinde. Every component follows the standard Pulumi Go constructor convention `New<Resource>(ctx, name, &<Resource>Args{...}, opts...) (*<Resource>, error)` across three Premise root programs: organization foundations in `infra/platform`, shared project assets in `infra/shared`, and per-stack deployments in `infra/env`. It does not generate multi-language SDKs, run SQL migrations inside Pulumi state, or target AWS, Azure, or Kubernetes.
 
 ## Requirement
 
 ### Functional
 
-- Provision organization cloud foundations once per organization and share their outputs across repositories.
-- Provision shared project assets once per repository (`shared`) and deploy isolated application stacks across `dev`, `stage`, `prod`, and `preview-<slug>`.
+- Provision organization cloud foundations once per organization and share their outputs across repositories through `openbase.LookupPlatform`.
+- Provision shared project assets once per repository (`shared`) and deploy isolated application stacks across `dev`, `stage`, `prod`, and `preview-<slug>` through `openbase.LookupShared`.
 - Branch `stage` stateful data from `prod` and `preview-<slug>` stateful data from `dev`.
 - Grant least-privilege IAM and OIDC permissions between linked resources (`Links`) while letting applications wire explicit `Env` and `Secrets` maps from typed resource outputs.
 
@@ -27,65 +27,65 @@ OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi comp
 ```mermaid
 flowchart TD
     subgraph Tier1["Tier 1: Organization Platform (infra/platform once per org)"]
-        OrgScope["openbase.Platform"] --> GCPPlat["gcp.Platform + CloudLoadBalancer"]
-        OrgScope --> VerPlat["vercel.Platform"]
-        OrgScope --> NeonPlat["neon.Platform"]
-        OrgScope --> KindePlat["kinde.Platform"]
+        GCPPlat["gcp.NewPlatform + NewCloudLoadBalancer"]
+        VerPlat["vercel.NewPlatform"]
+        NeonPlat["neon.NewPlatform"]
+        KindePlat["kinde.NewPlatform"]
     end
 
     subgraph Tier2["Tier 2: Application Project (infra/shared per repo)"]
-        ProjScope["openbase.Project + openbase.Add"] --> GCPProj["gcp.Project"]
-        ProjScope --> VerProj["vercel.Project"]
-        ProjScope --> NeonProj["neon.Project"]
-        ProjScope --> KindeProj["kinde.Project"]
+        GCPProj["gcp.NewProject"]
+        VerProj["vercel.NewProject"]
+        NeonProj["neon.NewProject"]
+        KindeProj["kinde.NewProject"]
     end
 
     subgraph Tier3["Tier 3: Environment Stack (infra/env per dev, stage, prod, preview-*)"]
-        EnvScope["openbase.Environment + openbase.Add"] --> CR["gcp.CloudRunService"]
-        EnvScope --> Bkt["gcp.Bucket"]
-        EnvScope --> Web["vercel.WebApp"]
-        EnvScope --> Blob["vercel.BlobStore"]
-        EnvScope --> DB["neon.Database"]
-        EnvScope --> OIDC["kinde.OidcApp"]
+        CR["gcp.NewCloudRunService"]
+        Bkt["gcp.NewBucket"]
+        Web["vercel.NewWebApp"]
+        Blob["vercel.NewBlobStore"]
+        DB["neon.NewDatabase"]
+        OIDC["kinde.NewOidcApp"]
     end
 
-    Tier1 -->|"LookupPlatform / openbaseManifest"| Tier2
-    Tier2 -->|"LookupProject / openbaseManifest"| Tier3
+    Tier1 -->|"openbase.LookupPlatform + openbaseManifest"| Tier2
+    Tier2 -->|"openbase.LookupShared + openbaseManifest"| Tier3
 ```
 
-- `libs/components` (`package components`) implements `Platform`, `Project`, `Environment`, `Add`, `LookupPlatform`, and `LookupProject`.
-- `libs/components/core` owns tier contracts, naming bounds, `openbase.io/*` tags, domain formatting, `ScopeRef` manifests, `IdentityBroker`, and `Links`.
-- `libs/components/gcp`, `vercel`, `neon`, and `kinde` implement `Platform`, `Project`, and environment product components over upstream or bridged Pulumi providers.
-- `libs/components/synthetic` supplies deterministic offline doubles for unit tests.
+- `libs/components` (`package components`) implements `LookupPlatform`, `LookupShared`, and `SupportedEnvironments`.
+- `libs/components/core` owns tier contracts, naming bounds, `openbase.io/*` tags, domain formatting, `ScopeRef` manifests, `RecordStackExports`, `IdentityBroker`, and `Links`.
+- `libs/components/gcp`, `vercel`, `neon`, and `kinde` implement `NewPlatform`, `NewProject`, and environment product constructors over upstream or bridged Pulumi providers.
+- `libs/components/synthetic` supplies deterministic offline doubles (`NewService` and `NewStorage`) for unit tests.
 
 ### Data and Control Flow
 
 ```mermaid
 sequenceDiagram
-    participant Org as "Org infra/platform (openbase.Platform)"
-    participant Shared as "App infra/shared (openbase.Project)"
-    participant Env as "App infra/env (openbase.Environment on preview-pr-42)"
+    participant Org as "Org infra/platform"
+    participant Shared as "App infra/shared"
+    participant Env as "App infra/env (preview-pr-42)"
     participant State as "Shared Pulumi State Backend"
     participant Cloud as "GCP / Vercel / Neon / Kinde"
 
     Org->>Cloud: 1. Create WIF pool, wildcard LB, team defaults, Kinde tenants
     Org-->>State: 2. Export org outputs + openbaseManifest
-    Shared->>State: 3. Read LookupPlatform / PlatformStackRef
+    Shared->>State: 3. Read openbase.LookupPlatform(ctx)
     Shared->>Cloud: 4. Create Artifact Registry, Vercel Project, Neon Project, Kinde Apps
     Shared-->>State: 5. Export project outputs + openbaseManifest (<project>-shared/shared)
-    Env->>State: 6. Read LookupProject + dev parent stack
+    Env->>State: 6. Read openbase.LookupShared(ctx) + dev parent stack
     Env->>Cloud: 7. Create CoW Neon branch, storage overlay, and compute deployment
 ```
 
-An organization deploys `openbase.Platform` once into its shared Pulumi backend bucket and exports identity and domain roots. Each repository deploys `openbase.Project` once in `infra/shared` and exports application identifiers and `openbaseManifest`. Each `dev`, `stage`, `prod`, or `preview-<slug>` stack deploys `openbase.Environment`, branches stateful data automatically, grants IAM access through `Links`, and binds explicit `Env` and `Secrets` from typed resource outputs.
+An organization deploys `infra/platform` once into its shared Pulumi backend bucket and exports identity and domain roots. Each repository deploys `infra/shared` once and exports application identifiers and `openbaseManifest`. Each `dev`, `stage`, `prod`, or `preview-<slug>` stack runs `infra/env`, branches stateful data automatically, grants IAM access through `Links`, and binds explicit `Env` and `Secrets` from typed resource outputs.
 
 ### Interfaces and Contracts
 
-| Scope | Go Interface | Scope Fields | Canonical Name | Allowed Stacks |
+| Tier | Go Interface | Constructor Pattern | Canonical Name | Allowed Stacks |
 | :--- | :--- | :--- | :--- | :--- |
-| Organization Platform | `core.PlatformResource` | `Name`, `Org` | `<org>-<name>` | `platform` (`infra/platform`) |
-| Shared Resource | `core.StatelessResource` / `core.StatefulResource` | `Name`, `Project`, `Repo`, `Environment: "shared"` | `<project>-<name>` | `shared` (`infra/shared`) |
-| Environment Resource | `core.StatelessResource` / `core.StatefulResource` | `Name`, `Project`, `Repo`, `Environment`, `BranchFrom`, `Links` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` (`infra/env`) |
+| Organization Platform | `core.PlatformResource` | `<pkg>.NewPlatform(ctx, name, &<pkg>.PlatformArgs{...}, opts...)` | `<org>-<name>` | `platform` (`infra/platform`) |
+| Shared Resource | `core.StatelessResource` / `core.StatefulResource` | `<pkg>.NewProject(ctx, name, &<pkg>.ProjectArgs{...}, opts...)` | `<project>-<name>` | `shared` (`infra/shared`) |
+| Environment Resource | `core.StatelessResource` / `core.StatefulResource` | `<pkg>.New<Resource>(ctx, name, &<pkg>.<Resource>Args{...}, opts...)` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` (`infra/env`) |
 
 ## Implementation
 
@@ -100,7 +100,7 @@ Every non-platform component satisfies `core.Resource` (`StatelessResource` or `
 ## References
 
 - [User Guide](../user-guide.md)
-- [Unified Scopes and Manifests](./scopes.md)
+- [Cross-Stack Lookups and Manifests](./scopes.md)
 - [Core Resources and Tier Contracts](./resources.md)
 - [GCP Provider](./providers/gcp/index.md)
 - [Vercel Provider](./providers/vercel/index.md)

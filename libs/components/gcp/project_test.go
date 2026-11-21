@@ -22,7 +22,7 @@ func TestPlatformAndProject(t *testing.T) {
 
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := gcp.Platform{
+				_, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
 					Org:        "cloudvoyant",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
 					Links: []core.OIDCProviderSource{
@@ -36,24 +36,22 @@ func TestPlatformAndProject(t *testing.T) {
 							Claims:             map[string]string{"project_id": "assertion.project_id"},
 						},
 					},
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("platform", "platform", platMocks))
 
 			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				appA, err := gcp.Project{
-					Name:             "gcp-a",
+				appA, err := gcp.NewProject(ctx, "gcp-a", &gcp.ProjectArgs{
 					Project:          "storefront",
 					PlatformStackRef: "organization/platform/platform",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
-				appB, err := gcp.Project{
-					Name:             "gcp-b",
+				appB, err := gcp.NewProject(ctx, "gcp-b", &gcp.ProjectArgs{
 					Project:          "billing",
 					PlatformStackRef: "organization/platform/platform",
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -79,7 +77,7 @@ func TestPlatformAndProject(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := gcp.Platform{
+				_, err := gcp.NewPlatform(ctx, "gcp-platform", &gcp.PlatformArgs{
 					Org:        "cloudvoyant",
 					GCPProject: pulumi.String("cloudvoyant-openbase"),
 					Links: []core.OIDCProviderSource{
@@ -91,7 +89,7 @@ func TestPlatformAndProject(t *testing.T) {
 					},
 					SkipKeyRing: true,
 					Services:    []string{"run.googleapis.com", "storage.googleapis.com"},
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("platform", "platform", mocks))
 
@@ -183,10 +181,10 @@ func (m *gcpMocks) findFirst(typeToken string) (gcpMockRecord, bool) {
 	return gcpMockRecord{}, false
 }
 
-func assertProjectNotNil(t *testing.T, s *gcp.ProjectResource) {
+func assertProjectNotNil(t *testing.T, s *gcp.Project) {
 	t.Helper()
 	if s.Repository == nil {
-		t.Fatal("expected Artifact Registry Repository to be non-nil on gcp.ProjectResource")
+		t.Fatal("expected Artifact Registry Repository to be non-nil on gcp.Project")
 	}
 }
 

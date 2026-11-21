@@ -11,10 +11,7 @@ import (
 
 // Public API -----------------------------------------------------------------
 
-var (
-	_ core.StatefulResource              = (*BucketResource)(nil)
-	_ core.ScopedSpecOf[*BucketResource] = Bucket{}
-)
+var _ core.StatefulResource = (*Bucket)(nil)
 
 func init() {
 	core.RegisterRemoteGrantHandler("gcp-bucket", grantRemoteBucketAccess)
@@ -28,9 +25,8 @@ type BucketCORSRule struct {
 	MaxAgeSeconds   int
 }
 
-// Bucket declares a Google Cloud Storage Bucket component spec.
-type Bucket struct {
-	Name               string
+// BucketArgs configures a Google Cloud Storage Bucket component.
+type BucketArgs struct {
 	Project            string
 	Repo               string
 	Environment        string
@@ -49,8 +45,8 @@ type Bucket struct {
 	ForceDestroy       *bool
 }
 
-// BucketResource is the provisioned GCS bucket handle with tier-aware backups, protection, and BranchFrom overlays.
-type BucketResource struct {
+// Bucket is the provisioned GCS bucket handle with tier-aware backups, protection, and BranchFrom overlays.
+type Bucket struct {
 	pulumi.ResourceState
 	core.StatefulMeta
 
@@ -60,31 +56,39 @@ type BucketResource struct {
 	FallbackBucketName pulumi.StringOutput
 }
 
-// Register provisions a Google Cloud Storage Bucket satisfying core.StatefulResource.
-func (b Bucket) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*BucketResource, error) {
-	res := &BucketResource{}
+// NewBucket provisions a Google Cloud Storage Bucket satisfying core.StatefulResource.
+func NewBucket(ctx *pulumi.Context, name string, args *BucketArgs, opts ...pulumi.ResourceOption) (*Bucket, error) {
+	if args == nil {
+		args = &BucketArgs{}
+	}
+	spec := *args
+	if env, err := core.ResolveEnvironment(ctx, spec.Environment); err == nil {
+		spec.BranchFrom = core.DefaultBranchFrom(env, spec.BranchFrom, false)
+	}
+	res := &Bucket{}
 	meta, err := core.InitStateful(ctx, "openbase:gcp:Bucket", "gcp-bucket", res, &res.StatefulMeta, core.StatefulSpec{
-		Name:        b.Name,
-		Project:     b.Project,
-		Repo:        b.Repo,
-		Environment: b.Environment,
-		Kind:        b.Kind,
-		BranchFrom:  b.BranchFrom,
-		Backup:      b.Backup,
-		Links:       b.Links,
+		Name:        name,
+		Project:     spec.Project,
+		Repo:        spec.Repo,
+		Environment: spec.Environment,
+		Kind:        spec.Kind,
+		BranchFrom:  spec.BranchFrom,
+		Backup:      spec.Backup,
+		Links:       spec.Links,
 	}, opts...)
 	if err != nil {
 		return nil, err
 	}
-	bucketName, err := core.BucketName(meta.Project, meta.Environment, b.Name, b.BucketNamespace)
+	spec.BranchStackRef = core.DefaultBranchStackRef(ctx, meta.Project, meta.BranchFrom.String(), spec.BranchStackRef)
+	bucketName, err := core.BucketName(meta.Project, meta.Environment, name, spec.BucketNamespace)
 	if err != nil {
 		return nil, err
 	}
-	bkt, err := createGCSBucket(ctx, b.Name, bucketName, meta, b, res)
+	bkt, err := createGCSBucket(ctx, name, bucketName, meta, spec, res)
 	if err != nil {
 		return nil, err
 	}
-	fallback, err := resolveFallbackBucket(ctx, b.Name, meta, b)
+	fallback, err := resolveFallbackBucket(ctx, name, meta, spec)
 	if err != nil {
 		return nil, err
 	}
@@ -92,22 +96,8 @@ func (b Bucket) Register(ctx *pulumi.Context, opts ...pulumi.ResourceOption) (*B
 	res.BucketName = bkt.Name
 	res.BucketURL = bkt.Url
 	res.FallbackBucketName = fallback
-	res.SetLink(buildBucketLink(b.Name, meta, res))
-	if err := registerBucketOutputs(ctx, meta, res); err != nil {
-		return nil, err
-	}
-	return res, nil
-}
-
-// RegisterInScope adapts gcp.Bucket to openbase.Project and openbase.Environment.
-func (b Bucket) RegisterInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (core.Resource, error) {
-	return b.RegisterTypedInScope(ctx, scope, opts...)
-}
-
-// RegisterTypedInScope registers gcp.Bucket with inherited Scope defaults.
-func (b Bucket) RegisterTypedInScope(ctx *pulumi.Context, scope core.Scope, opts ...pulumi.ResourceOption) (*BucketResource, error) {
-	applyBucketScope(ctx, &b, scope)
-	return b.Register(ctx, opts...)
+	res.PublishLink(ctx, buildBucketLink(name, meta, res))
+	return res, registerBucketOutputs(ctx, meta, res)
 }
 
 // Private helpers ------------------------------------------------------------
@@ -118,7 +108,7 @@ func createGCSBucket(
 	ctx *pulumi.Context,
 	name, bucketName string,
 	meta core.ResourceMeta,
-	spec Bucket,
+	spec BucketArgs,
 	parent pulumi.Resource,
 ) (*storage.Bucket, error) {
 	forceDestroy := !meta.Protected
@@ -165,7 +155,7 @@ func buildBucketCORS(rules []BucketCORSRule) storage.BucketCorArray {
 	return out
 }
 
-func resolveFallbackBucket(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec Bucket) (pulumi.StringOutput, error) {
+func resolveFallbackBucket(ctx *pulumi.Context, name string, meta core.ResourceMeta, spec BucketArgs) (pulumi.StringOutput, error) {
 	if meta.BranchFrom == "" {
 		return pulumi.String("").ToStringOutput(), nil
 	}
@@ -188,7 +178,7 @@ func resolveFallbackBucket(ctx *pulumi.Context, name string, meta core.ResourceM
 	return pulumi.String(derived).ToStringOutput(), nil
 }
 
-func buildBucketLink(name string, meta core.ResourceMeta, res *BucketResource) core.LinkDescriptor {
+func buildBucketLink(name string, meta core.ResourceMeta, res *Bucket) core.LinkDescriptor {
 	return core.LinkDescriptor{
 		Name: meta.Name,
 		Kind: meta.Kind,
@@ -207,17 +197,7 @@ func buildBucketLink(name string, meta core.ResourceMeta, res *BucketResource) c
 	}
 }
 
-func applyBucketScope(ctx *pulumi.Context, b *Bucket, scope core.Scope) {
-	b.Project = defaultStr(b.Project, scope.Project)
-	b.Repo = defaultStr(b.Repo, scope.Repo)
-	b.Environment = defaultStr(b.Environment, string(scope.Env))
-	b.BranchFrom = defaultStr(b.BranchFrom, scope.DefaultStorageBranchFrom())
-	if b.BranchStackRef == "" && b.BranchFrom != "" {
-		b.BranchStackRef = scope.BranchStackRef(ctx, b.BranchFrom)
-	}
-}
-
-func grantBucketAccess(name string, meta core.ResourceMeta, res *BucketResource, g core.LinkGrantContext) error {
+func grantBucketAccess(name string, meta core.ResourceMeta, res *Bucket, g core.LinkGrantContext) error {
 	member, ok := g.Principals["gcp"]
 	if !ok || !isOutputSet(member) {
 		return nil
@@ -248,7 +228,7 @@ func bindBucketMember(
 	ctx *pulumi.Context,
 	prefix string,
 	meta core.ResourceMeta,
-	res *BucketResource,
+	res *Bucket,
 	member pulumi.StringInput,
 ) error {
 	_, err := storage.NewBucketIAMMember(ctx, prefix+"-admin", &storage.BucketIAMMemberArgs{
@@ -270,7 +250,7 @@ func bindBucketMember(
 	return err
 }
 
-func registerBucketOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *BucketResource) error {
+func registerBucketOutputs(ctx *pulumi.Context, meta core.ResourceMeta, res *Bucket) error {
 	return ctx.RegisterResourceOutputs(res, pulumi.Map{
 		"canonicalName":      pulumi.String(meta.CanonicalName),
 		"bucketName":         res.BucketName,

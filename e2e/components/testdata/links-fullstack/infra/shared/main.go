@@ -6,7 +6,6 @@ import (
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
 	openbase "github.com/cloudvoyant/openbase/libs/components"
-	"github.com/cloudvoyant/openbase/libs/components/core"
 	"github.com/cloudvoyant/openbase/libs/components/gcp"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
 )
@@ -17,23 +16,30 @@ func main() {
 		gcpProject := os.Getenv("OPENBASE_TEST_GCP_PROJECT")
 		forceDestroy := true
 
-		_, err := openbase.Project{
-			Project:          appProject,
-			PlatformStackRef: "organization/platform/platform",
-			Resources: []core.ScopedSpec{
-				gcp.Project{},
-				vercel.Project{
-					VercelProjectName:    "openbase-e2e-" + appProject,
-					SkipStageEnvironment: true,
-				},
-				gcp.Bucket{
-					Name:            "shared-assets",
-					GCPProject:      pulumi.String(gcpProject),
-					BucketNamespace: gcpProject,
-					ForceDestroy:    &forceDestroy,
-				},
-			},
-		}.Register(ctx)
+		plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
+		if err != nil {
+			return err
+		}
+		if _, err := gcp.NewProject(ctx, "gcp-project", &gcp.ProjectArgs{
+			Project:       appProject,
+			PlatformStack: plat,
+		}); err != nil {
+			return err
+		}
+		if _, err := vercel.NewProject(ctx, "vercel-project", &vercel.ProjectArgs{
+			Project:              appProject,
+			PlatformStack:        plat,
+			VercelProjectName:    "openbase-e2e-" + appProject,
+			SkipStageEnvironment: true,
+		}); err != nil {
+			return err
+		}
+		_, err = gcp.NewBucket(ctx, "shared-assets", &gcp.BucketArgs{
+			Project:         appProject,
+			GCPProject:      pulumi.String(gcpProject),
+			BucketNamespace: gcpProject,
+			ForceDestroy:    &forceDestroy,
+		})
 		return err
 	})
 }

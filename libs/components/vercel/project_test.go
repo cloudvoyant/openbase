@@ -22,20 +22,20 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 
 			// Act.
 			errPlat := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := vercel.Platform{
+				_, err := vercel.NewPlatform(ctx, "vercel-platform", &vercel.PlatformArgs{
 					TeamID:     "team_123",
 					TeamSlug:   "cloudvoyant",
 					BaseDomain: "vercel.cloudvoyant.io",
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("platform", "platform", platMocks))
 
 			errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				proj, err := vercel.Project{
+				proj, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
 					Project:          "storefront",
 					PlatformStackRef: "organization/platform/platform",
 					EnableBlobStore:  true,
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -63,14 +63,14 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				proj, err := vercel.Project{
+				proj, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
 					Project:              "storefront",
 					TeamID:               "team_123",
 					TeamSlug:             "cloudvoyant",
 					BaseDomain:           "vercel.cloudvoyant.io",
 					EnableDevEnvironment: true,
 					ExtraProdDomains:     []string{"storefront.io"},
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -93,12 +93,12 @@ func TestVercelProjectAndPlatform(t *testing.T) {
 
 			// Act.
 			err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-				_, err := vercel.Project{
+				_, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
 					Project:              "storefront",
 					TeamID:               "team_123",
 					TeamSlug:             "cloudvoyant",
 					SkipStageEnvironment: true,
-				}.Register(ctx)
+				})
 				return err
 			}, pulumi.WithMocks("storefront", "shared", mocks))
 

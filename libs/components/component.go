@@ -1,7 +1,9 @@
-// Package components provides the unified OpenBase Platform, Project, and Environment scopes plus typed cross-stack lookup and resource registration.
+// Package components provides shared cross-stack lookup helpers and environment conventions for OpenBase Pulumi Go components.
 package components
 
 import (
+	"fmt"
+
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
@@ -12,70 +14,37 @@ import (
 // LibraryName identifies the OpenBase Go Pulumi component package.
 const LibraryName = "openbase-components"
 
-// ScopedAdder is implemented by *ProjectResource and *EnvironmentResource to support typed openbase.Add registrations.
-type ScopedAdder interface {
-	pulumi.Resource
-	pulumiContext() *pulumi.Context
-	registrationScope() core.Scope
-	recordResource(res core.Resource)
-}
-
-// Add registers a typed ScopedSpec inside a ProjectResource or EnvironmentResource, returning the concrete handle R.
-func Add[S core.ScopedSpecOf[R], R core.Resource](
-	target ScopedAdder,
-	spec S,
-	opts ...pulumi.ResourceOption,
-) (R, error) {
-	ctx := target.pulumiContext()
-	childOpts := append([]pulumi.ResourceOption{pulumi.Parent(target)}, opts...)
-	res, err := spec.RegisterTypedInScope(ctx, target.registrationScope(), childOpts...)
+// LookupPlatform creates a Pulumi StackReference to an organization platform stack (defaulting to "<org>/platform/platform").
+func LookupPlatform(ctx *pulumi.Context, stackRef ...string) (*core.ScopeRef, error) {
+	stackOrg := defaultStr(ctx.Organization(), "organization")
+	ref := fmt.Sprintf("%s/platform/platform", stackOrg)
+	if len(stackRef) > 0 && stackRef[0] != "" {
+		ref = stackRef[0]
+	}
+	sr, err := pulumi.NewStackReference(ctx, "openbase-platform-ref", &pulumi.StackReferenceArgs{
+		Name: pulumi.String(ref),
+	})
 	if err != nil {
-		var zero R
-		return zero, err
+		return nil, err
 	}
-	target.recordResource(res)
-	return res, nil
+	return core.NewStackScopeRef(ref, sr), nil
 }
 
-// AddPlatform registers a typed PlatformSpecItem inside a PlatformResource, forwarding per-account ResourceOptions (such as pulumi.Provider).
-func AddPlatform[S core.PlatformSpecItemOf[R], R core.PlatformResource](
-	plat *PlatformResource,
-	spec S,
-	opts ...pulumi.ResourceOption,
-) (R, error) {
-	childOpts := append([]pulumi.ResourceOption{pulumi.Parent(plat)}, opts...)
-	res, err := spec.RegisterTypedPlatformInScope(plat.ctx, core.Scope{Org: plat.Org}, childOpts...)
+// LookupShared creates a Pulumi StackReference to a project's shared stack (defaulting to "<org>/<project>-shared/shared").
+func LookupShared(ctx *pulumi.Context, stackRef ...string) (*core.ScopeRef, error) {
+	stackOrg := defaultStr(ctx.Organization(), "organization")
+	proj := core.ResolveProject(ctx, "")
+	ref := fmt.Sprintf("%s/%s-shared/shared", stackOrg, proj)
+	if len(stackRef) > 0 && stackRef[0] != "" {
+		ref = stackRef[0]
+	}
+	sr, err := pulumi.NewStackReference(ctx, "openbase-shared-ref", &pulumi.StackReferenceArgs{
+		Name: pulumi.String(ref),
+	})
 	if err != nil {
-		var zero R
-		return zero, err
+		return nil, err
 	}
-	plat.recordPlatformResource(res)
-	return res, nil
-}
-
-// FindPlatform returns the first registered PlatformResource matching type R inside plat, or the zero value when absent.
-func FindPlatform[R core.PlatformResource](plat *PlatformResource) R {
-	var zero R
-	if plat == nil {
-		return zero
-	}
-	for _, item := range plat.Items {
-		if typed, ok := item.(R); ok {
-			return typed
-		}
-	}
-	return zero
-}
-
-// FindResource returns the first registered Resource matching type R inside a ProjectResource or EnvironmentResource.
-func FindResource[R core.Resource](items []core.Resource) R {
-	var zero R
-	for _, item := range items {
-		if typed, ok := item.(R); ok {
-			return typed
-		}
-	}
-	return zero
+	return core.NewStackScopeRef(ref, sr), nil
 }
 
 // SupportedEnvironments returns the fixed environment tiers plus the preview prefix.
@@ -96,29 +65,4 @@ func defaultStr(val, fallback string) string {
 		return val
 	}
 	return fallback
-}
-
-func exportDescriptorOutputs(ctx *pulumi.Context, skip bool, exported map[string]bool, desc core.LinkDescriptor) {
-	if skip {
-		return
-	}
-	for k, v := range desc.StackExports {
-		if exported[k] {
-			continue
-		}
-		exported[k] = true
-		ctx.Export(k, v)
-	}
-}
-
-func exportScopeManifest(
-	ctx *pulumi.Context,
-	skip bool,
-	org, project, platformStack string,
-	descriptors []core.LinkDescriptor,
-) {
-	if skip {
-		return
-	}
-	ctx.Export(core.ManifestOutputKey, core.BuildManifestMap(org, project, platformStack, descriptors))
 }

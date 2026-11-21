@@ -110,7 +110,7 @@ func TestNamingAndBranchValidation(t *testing.T) {
 			}
 		})
 
-		t.Run("when BranchFrom references an ephemeral, self, shared, or unknown tier, then Stateful.Register rejects with ErrInvalidBranchSource", func(t *testing.T) {
+		t.Run("when BranchFrom references an ephemeral, self, shared, or unknown tier, then NewStateful rejects with ErrInvalidBranchSource", func(t *testing.T) {
 			// Arrange.
 			cases := []struct{ target, source string }{
 				{"preview-pr-1", "preview-other"},
@@ -122,12 +122,11 @@ func TestNamingAndBranchValidation(t *testing.T) {
 			// Act / Assert.
 			for _, tc := range cases {
 				err := pulumi.RunErr(func(ctx *pulumi.Context) error {
-					_, e := core.Stateful{
-						Name:        "db",
+					_, e := core.NewStateful(ctx, "db", &core.StatefulArgs{
 						Project:     "orders",
 						Environment: tc.target,
 						BranchFrom:  tc.source,
-					}.Register(ctx)
+					})
 					return e
 				}, pulumi.WithMocks("orders", tc.target, &noopMocks{}))
 				if !errors.Is(err, core.ErrInvalidBranchSource) {
@@ -159,12 +158,11 @@ func TestLinksAndTags(t *testing.T) {
 				}
 				stateMeta = dbA.OpenBaseMeta()
 				gcpLabels = core.GCPLabels(stateMeta, map[string]string{"openbase.io/custom": "v1"})
-				api, err := core.Stateless{
-					Name:        "api",
+				api, err := core.NewStateless(ctx, "api", &core.StatelessArgs{
 					Project:     "orders",
 					Environment: "preview-pr-7",
 					Links:       []core.Resource{dbA, dbB},
-				}.Register(ctx)
+				})
 				if err != nil {
 					return err
 				}
@@ -228,9 +226,8 @@ func (*noopMocks) NewResource(a pulumi.MockResourceArgs) (string, resource.Prope
 
 func (*noopMocks) Call(a pulumi.MockCallArgs) (resource.PropertyMap, error) { return a.Args, nil }
 
-func newLinkedTestStateful(ctx *pulumi.Context, name string, grantedCh chan<- string) (*core.CustomStatefulResource, error) {
-	return core.Stateful{
-		Name:        name,
+func newLinkedTestStateful(ctx *pulumi.Context, name string, grantedCh chan<- string) (*core.Stateful, error) {
+	return core.NewStateful(ctx, name, &core.StatefulArgs{
 		Project:     "orders",
 		Repo:        "cloudvoyant/orders",
 		Environment: "preview-pr-7",
@@ -241,7 +238,7 @@ func newLinkedTestStateful(ctx *pulumi.Context, name string, grantedCh chan<- st
 			grantedCh <- g.ConsumerName
 			return nil
 		},
-	}.Register(ctx)
+	})
 }
 
 func requireNoErr(t *testing.T, err error) {
