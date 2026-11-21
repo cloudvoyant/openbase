@@ -83,7 +83,7 @@ web, err := vercel.WebApp{
 	ProjectStackRef: "cloudvoyant/storefront-shared/shared",
 	BaseDomain:      "vercel.cloudvoyant.io",
 	ExtraDomains:    []string{"pr20.storefront.io"},
-	SourceDir:       "../apps/web",
+	SourceDir:       "../../apps/web",
 }.Register(ctx)
 ```
 

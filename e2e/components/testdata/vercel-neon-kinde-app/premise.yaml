@@ -11,7 +11,7 @@ workspace:
     infra: pulumi
     versioning: svu
   infra:
-    directory: infra
+    directory: infra/env
     shared_directory: infra/shared
     backend: sandbox
     backends:

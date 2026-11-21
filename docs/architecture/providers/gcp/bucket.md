@@ -56,7 +56,7 @@ Reads try the primary bucket first and fall back to the parent bucket only on `s
 ### Interfaces and Contracts
 
 ```go
-// Infrastructure (infra/main.go)
+// Infrastructure (infra/env/main.go)
 uploads, err := gcp.Bucket{
 	Name:            "uploads",
 	Project:         "storefront",

@@ -15,7 +15,7 @@ var (
 	_ ScopedAdder            = (*EnvironmentResource)(nil)
 )
 
-// Environment declares a deployable application environment (dev, stage, prod, or preview-*) in Premise's infra/ stack.
+// Environment declares a deployable application environment (dev, stage, prod, or preview-*) in Premise's infra/env stack.
 type Environment struct {
 	Name                   string
 	Project                string

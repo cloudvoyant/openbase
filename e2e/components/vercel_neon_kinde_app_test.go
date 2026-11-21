@@ -53,7 +53,7 @@ func TestVercelNeonKindeApp(t *testing.T) {
 		assertVercelNeonKindeCleanup(t, teamID, vercelProjectID, blobStoreID, neonProjectID)
 	})
 
-	t.Run("given separate openbase.Platform (platform), openbase.Project (infra/shared), and openbase.Environment (infra) Vercel programs", func(t *testing.T) {
+	t.Run("given separate openbase.Platform (infra/platform), openbase.Project (infra/shared), and openbase.Environment (infra/env) Vercel programs", func(t *testing.T) {
 		for _, stack := range []string{"platform", "shared", "dev", "prod", "stage", "preview-pr-11"} {
 			h.InitStack(t, stack)
 		}

@@ -1,12 +1,12 @@
 # OpenBase
 
-OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs/components`) that declares stateless and stateful cloud infrastructure across Google Cloud Platform, Vercel, Neon, and Kinde. It models infrastructure as three scopes (`openbase.Platform`, `openbase.Project`, and `openbase.Environment`) aligned with Premise (`infra/shared` and `infra`).
+OpenBase is a Go Pulumi component library (`github.com/cloudvoyant/openbase/libs/components`) that declares stateless and stateful cloud infrastructure across Google Cloud Platform, Vercel, Neon, and Kinde. It models infrastructure as three scopes (`openbase.Platform`, `openbase.Project`, and `openbase.Environment`) aligned with Premise (`infra/platform`, `infra/shared`, and `infra/env`).
 
 ```mermaid
 flowchart TD
-    OrgProg["Org Platform Repo (openbase.Platform)"] --> OrgBlocks["gcp.Platform, vercel.Platform, neon.Platform, kinde.Platform"]
+    OrgProg["Org Platform Program (infra/platform/main.go)"] --> OrgBlocks["gcp.Platform, vercel.Platform, neon.Platform, kinde.Platform"]
     ProjProg["App Shared Program (infra/shared/main.go)"] --> ProjScope["openbase.Project"]
-    EnvProg["App Environment Program (infra/main.go)"] --> EnvScope["openbase.Environment"]
+    EnvProg["App Environment Program (infra/env/main.go)"] --> EnvScope["openbase.Environment"]
     OrgBlocks -->|"LookupPlatform / PlatformStackRef"| ProjScope
     ProjScope -->|"LookupProject / openbaseManifest"| EnvScope
     ProjScope --> Core["libs/components/core (PlatformResource, StatelessResource, StatefulResource)"]

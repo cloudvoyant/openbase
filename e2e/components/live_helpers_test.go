@@ -382,23 +382,27 @@ func (h *LiveStackHarness) writeWorkspaceMiseFile(t *testing.T) {
 }
 
 func (h *LiveStackHarness) dirForStack(stack string) string {
-	if stack == "platform" {
-		platDir := filepath.Join(h.Dir, "platform")
-		if _, err := os.Stat(filepath.Join(platDir, "Pulumi.yaml")); err == nil {
-			return platDir
+	switch stack {
+	case "platform":
+		if dir := existingPulumiDir(filepath.Join(h.Dir, "infra", "platform")); dir != "" {
+			return dir
+		}
+	case "shared":
+		if dir := existingPulumiDir(filepath.Join(h.Dir, "infra", "shared")); dir != "" {
+			return dir
 		}
 	}
-	if stack == "shared" {
-		sharedDir := filepath.Join(h.Dir, "infra", "shared")
-		if _, err := os.Stat(filepath.Join(sharedDir, "Pulumi.yaml")); err == nil {
-			return sharedDir
-		}
-	}
-	infraDir := filepath.Join(h.Dir, "infra")
-	if _, err := os.Stat(filepath.Join(infraDir, "Pulumi.yaml")); err == nil {
-		return infraDir
+	if dir := existingPulumiDir(filepath.Join(h.Dir, "infra", "env")); dir != "" {
+		return dir
 	}
 	return h.Dir
+}
+
+func existingPulumiDir(dir string) string {
+	if _, err := os.Stat(filepath.Join(dir, "Pulumi.yaml")); err == nil {
+		return dir
+	}
+	return ""
 }
 
 func stackFromArgs(args []string) string {

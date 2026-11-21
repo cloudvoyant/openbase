@@ -53,7 +53,7 @@ flowchart TD
 sequenceDiagram
     participant Shared as "openbase.Project (infra/shared)"
     participant State as "Pulumi Backend (openbaseManifest)"
-    participant Env as "openbase.Environment (infra/)"
+    participant Env as "openbase.Environment (infra/env)"
     participant Broker as "core.IdentityBroker (gcp.WIFBroker)"
 
     Shared->>State: 1. Export flat outputs + openbaseManifest.resources
@@ -83,9 +83,9 @@ db, err := openbase.Add(env, neon.Database{Name: "db", APIKey: cfg.RequireSecret
 
 | Scope | Program Convention | Allowed Stack(s) | Default Parent Lookup | Default `Database` `BranchFrom` | Default Storage `BranchFrom` |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `openbase.Platform` | Dedicated platform repo (`platform/main.go`) | `platform` | None | None | None |
+| `openbase.Platform` | Dedicated platform repo (`infra/platform/main.go`) | `platform` | None | None | None |
 | `openbase.Project` | `infra/shared/main.go` | `shared` | `<org>/platform/platform` (when `LookupPlatform` used) | `""` | `""` |
-| `openbase.Environment` | `infra/main.go` | `dev`, `stage`, `prod`, `preview-<slug>` | `<org>/<project>-shared/shared` | `"prod"` on `stage`, `"dev"` on `preview-*`, `""` on `dev`/`prod` | `"dev"` on `preview-*`, `""` on `dev`/`stage`/`prod` |
+| `openbase.Environment` | `infra/env/main.go` | `dev`, `stage`, `prod`, `preview-<slug>` | `<org>/<project>-shared/shared` | `"prod"` on `stage`, `"dev"` on `preview-*`, `""` on `dev`/`prod` | `"dev"` on `preview-*`, `""` on `dev`/`stage`/`prod` |
 
 ## Implementation
 

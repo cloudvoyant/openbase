@@ -23,7 +23,7 @@
 
 ### Go
 
-- Separate organization `Platform` specs (`core.PlatformResource`: `openbase.Platform` and `<provider>.Platform` on a dedicated `platform` stack/program) from shared `Project` specs (`openbase.Project` and `<provider>.Project` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming) and environment `Resource` specs (`openbase.Environment` and concrete products in `infra/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
+- Separate organization `Platform` specs (`core.PlatformResource`: `openbase.Platform` and `<provider>.Platform` in `infra/platform/main.go` on a dedicated `platform` stack) from shared `Project` specs (`openbase.Project` and `<provider>.Project` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming) and environment `Resource` specs (`openbase.Environment` and concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
 - [Proposed] Keep every handwritten function at or below cyclomatic complexity `10` as enforced by [.golangci.yml](./.golangci.yml).
 
 ### Pulumi

@@ -32,7 +32,7 @@ flowchart TD
         Cluster["neon.Project (RegionID + PG Version + PITR Window + main branch)"]
     end
 
-    subgraph Env["App infra/ Stacks"]
+    subgraph Env["App infra/env Stacks"]
         DB["neon.Database (dev, prod, stage<-prod, preview<-dev)"]
     end
 
@@ -50,7 +50,7 @@ flowchart TD
 sequenceDiagram
     participant Plat as "neon.Platform (org)"
     participant Proj as "neon.Project (infra/shared)"
-    participant DB as "neon.Database (infra/)"
+    participant DB as "neon.Database (infra/env)"
     participant Neon as "Neon API"
 
     Plat-->>Proj: 1. Export neonOrgId + neonDefaultRegionId
@@ -60,7 +60,7 @@ sequenceDiagram
     DB->>Neon: 5. Create environment branch + compute endpoint
 ```
 
-`neon.Platform` defines account defaults once. `neon.Project` provisions the root cluster in `infra/shared`. Environment stacks read `ProjectStackRef` so `infra/main.go` never needs `NEON_ORG_ID`.
+`neon.Platform` defines account defaults once. `neon.Project` provisions the root cluster in `infra/shared`. Environment stacks read `ProjectStackRef` so `infra/env/main.go` never needs `NEON_ORG_ID`.
 
 ### Interfaces and Contracts
 

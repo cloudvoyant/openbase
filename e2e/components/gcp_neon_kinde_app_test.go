@@ -57,7 +57,7 @@ func TestGCPNeonKindeApp(t *testing.T) {
 		)
 	})
 
-	t.Run("given separate openbase.Platform (platform), openbase.Project (infra/shared), and openbase.Environment (infra) GCP programs", func(t *testing.T) {
+	t.Run("given separate openbase.Platform (infra/platform), openbase.Project (infra/shared), and openbase.Environment (infra/env) GCP programs", func(t *testing.T) {
 		for _, stack := range []string{"platform", "shared", "dev", "prod", "stage", "preview-pr-12"} {
 			h.InitStack(t, stack)
 		}
@@ -275,7 +275,7 @@ func queryFreshCheckoutOutput(t *testing.T, fixtureName, backendURL, stack, key 
 		"PULUMI_CONFIG_PASSPHRASE=",
 		"PULUMI_SKIP_UPDATE_CHECK=true",
 	}
-	infraDir := filepath.Join(freshDir, "infra")
+	infraDir := filepath.Join(freshDir, "infra", "env")
 	runCommandEnv(t, infraDir, freshEnv, "pulumi", "login", backendURL)
 	return strings.TrimSpace(runCommandEnv(t, infraDir, freshEnv, "pulumi", "stack", "output", key, "--stack", stack))
 }

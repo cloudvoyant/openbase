@@ -223,12 +223,12 @@ for manifest in "$OUTPUTS_ROOT"/*/run-manifest.json; do
       export PULUMI_SKIP_UPDATE_CHECK="true"
       eval "$(jq -r '(.env // {}) | to_entries[] | "export \(.key)=\(.value | @sh)"' "$manifest")"
       STACK_DIR="$WORKSPACE_DIR"
-      if [ "$stack" = "platform" ] && [ -f "$WORKSPACE_DIR/platform/Pulumi.yaml" ]; then
-        STACK_DIR="$WORKSPACE_DIR/platform"
+      if [ "$stack" = "platform" ] && [ -f "$WORKSPACE_DIR/infra/platform/Pulumi.yaml" ]; then
+        STACK_DIR="$WORKSPACE_DIR/infra/platform"
       elif [ "$stack" = "shared" ] && [ -f "$WORKSPACE_DIR/infra/shared/Pulumi.yaml" ]; then
         STACK_DIR="$WORKSPACE_DIR/infra/shared"
-      elif [ -f "$WORKSPACE_DIR/infra/Pulumi.yaml" ]; then
-        STACK_DIR="$WORKSPACE_DIR/infra"
+      elif [ -f "$WORKSPACE_DIR/infra/env/Pulumi.yaml" ]; then
+        STACK_DIR="$WORKSPACE_DIR/infra/env"
       fi
       cd "$STACK_DIR"
       pulumi login "$BACKEND_URL" >/dev/null

@@ -4,10 +4,10 @@ Top-level `e2e/` organizes OpenBase end-to-end suites by target, and `e2e/compon
 
 | File (`e2e/components`) | Target Name | Behavior |
 | --- | --- | --- |
-| `core_test.go` | `core` | Offline standalone consumer preview and apply (`infra/main.go`) for `core.Stateful` and `core.Stateless`, fail-fast invalid-environment and `InvalidBranchSource` rejection, and artifact capture |
-| `gcp_neon_kinde_app_test.go` | `gcp`, `neon`, `gcp_neon_kinde_app` | Separate `openbase.Platform` (`platform/main.go`), `openbase.Project` (`infra/shared/main.go`), and `openbase.Environment` (`infra/main.go`) across `platform`, `shared`, `dev`, `prod`, `stage<-prod`, and `preview-pr-12<-dev`, verifying GCS `Protect` and `SoftDeletePolicy`, `OPENBASE_TEST_FAIL_INFRA` preservation, fresh-checkout state query, `overlayfs.Store` isolation, keyless GCS v4 signed URLs, `pgx` Neon CoW SQL, Kinde Email and OTP login/logout, and `404` cleanup |
-| `vercel_neon_kinde_app_test.go` | `vercel`, `kinde`, `vercel_neon_kinde_app` | Separate `openbase.Platform` (`platform/main.go`), `openbase.Project` (`infra/shared/main.go`), and `openbase.Environment` (`infra/main.go`) across `platform`, `shared`, `dev`, `prod`, `stage<-prod`, and `preview-pr-11<-dev`, verifying `stage` CustomEnvironment Blob propagation, `x-vercel-protection-bypass`, `BlobOverlayClient` prefix isolation, Neon CoW, Kinde unregistered redirect rejection and headless Chrome OTP login/logout, and `404` cleanup |
-| `links_test.go` | `links` | Separate `openbase.Platform` (`platform/main.go`), `openbase.Project` (`infra/shared/main.go` with `shared-assets` bucket in `openbaseManifest`), and `openbase.Environment` (`infra/main.go`) verifying cross-cloud `vercel.WebApp` -> `gcp.FederatedIdentity` keyless GCP OIDC -> internal `gcp.CloudRunService` (`403` vs `200`), raw Pulumi `secretmanager.Secret` + `SecretIamMember` wired alongside OpenBase components, `gcp.Bucket` overlay, remote `shared-assets` bucket access, and `404` preview teardown |
+| `core_test.go` | `core` | Offline standalone consumer preview and apply (`infra/env/main.go`) for `core.Stateful` and `core.Stateless`, fail-fast invalid-environment and `InvalidBranchSource` rejection, and artifact capture |
+| `gcp_neon_kinde_app_test.go` | `gcp`, `neon`, `gcp_neon_kinde_app` | Separate `openbase.Platform` (`infra/platform/main.go`), `openbase.Project` (`infra/shared/main.go`), and `openbase.Environment` (`infra/env/main.go`) across `platform`, `shared`, `dev`, `prod`, `stage<-prod`, and `preview-pr-12<-dev`, verifying GCS `Protect` and `SoftDeletePolicy`, `OPENBASE_TEST_FAIL_INFRA` preservation, fresh-checkout state query, `overlayfs.Store` isolation, keyless GCS v4 signed URLs, `pgx` Neon CoW SQL, Kinde Email and OTP login/logout, and `404` cleanup |
+| `vercel_neon_kinde_app_test.go` | `vercel`, `kinde`, `vercel_neon_kinde_app` | Separate `openbase.Platform` (`infra/platform/main.go`), `openbase.Project` (`infra/shared/main.go`), and `openbase.Environment` (`infra/env/main.go`) across `platform`, `shared`, `dev`, `prod`, `stage<-prod`, and `preview-pr-11<-dev`, verifying `stage` CustomEnvironment Blob propagation, `x-vercel-protection-bypass`, `BlobOverlayClient` prefix isolation, Neon CoW, Kinde unregistered redirect rejection and headless Chrome OTP login/logout, and `404` cleanup |
+| `links_test.go` | `links` | Separate `openbase.Platform` (`infra/platform/main.go`), `openbase.Project` (`infra/shared/main.go` with `shared-assets` bucket in `openbaseManifest`), and `openbase.Environment` (`infra/env/main.go`) verifying cross-cloud `vercel.WebApp` -> `gcp.FederatedIdentity` keyless GCP OIDC -> internal `gcp.CloudRunService` (`403` vs `200`), raw Pulumi `secretmanager.Secret` + `SecretIamMember` wired alongside OpenBase components, `gcp.Bucket` overlay, remote `shared-assets` bucket access, and `404` preview teardown |
 
 ## Running suites and retaining live apps
 
@@ -30,7 +30,7 @@ mise run e2e -- gcp_neon_kinde_app --no-cleanup
 cd ../outputs/components/TestVercelNeonKindeApp/workspace
 pm infra output --shared
 pm infra output --env stage
-cd infra && pulumi stack ls && pulumi stack output --stack preview-pr-11
+cd infra/env && pulumi stack ls && pulumi stack output --stack preview-pr-11
 
 # Tear down all retained or interrupted E2E stacks (or pass a specific target)
 mise run e2e:cleanup

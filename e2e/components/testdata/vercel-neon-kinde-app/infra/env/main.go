@@ -63,7 +63,7 @@ func main() {
 			TeamID:            teamID,
 			TeamSlug:          teamSlug,
 			BaseDomain:        baseDomain,
-			SourceDir:         "../apps/web",
+			SourceDir:         "../../apps/web",
 			Links:             []core.Resource{uploads},
 			Env: map[string]pulumi.StringInput{
 				"OPENBASE_ENVIRONMENT":           pulumi.String(env.OpenBaseMeta().Environment.String()),

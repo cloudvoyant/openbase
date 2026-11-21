@@ -38,7 +38,7 @@ flowchart TD
         PrevSeed["Preview ProjectEnvironmentVariables (PreviewEnv / PreviewSecrets)"]
     end
 
-    subgraph Env["App infra/ Stacks"]
+    subgraph Env["App infra/env Stacks"]
         Web["vercel.WebApp"]
         BlobEnv["vercel.BlobStore"]
     end

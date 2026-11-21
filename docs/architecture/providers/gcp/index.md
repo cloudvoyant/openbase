@@ -37,7 +37,7 @@ flowchart TD
         AR["artifactregistry.Repository (DOCKER)"]
     end
 
-    subgraph Env["App infra/ Stacks"]
+    subgraph Env["App infra/env Stacks"]
         Broker["gcp.FederatedIdentity / WIFBroker (IdentityBroker)"]
         CR["gcp.CloudRunService"]
         Bkt["gcp.Bucket"]
@@ -62,7 +62,7 @@ flowchart TD
 sequenceDiagram
     participant Plat as "gcp.Platform (org)"
     participant Proj as "gcp.Project (infra/shared)"
-    participant Svc as "gcp.CloudRunService (infra/)"
+    participant Svc as "gcp.CloudRunService (infra/env)"
     participant GCP as "Google Cloud APIs"
 
     Plat->>GCP: 1. Enable APIs + create WIF pool + optional CloudLoadBalancer

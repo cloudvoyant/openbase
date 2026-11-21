@@ -2,17 +2,17 @@
 
 OpenBase organizes cloud infrastructure into three scopes in the root `github.com/cloudvoyant/openbase/libs/components` package:
 
-1. `openbase.Platform` runs once per organization in a dedicated platform repository (`platform/main.go` on stack `platform`) to enable GCP APIs, create one Workload Identity Pool and wildcard HTTPS Load Balancer, export Vercel team and Neon organization defaults, and connect `NonProd` and `Prod` Kinde tenants.
+1. `openbase.Platform` runs once per organization in a dedicated platform repository (`infra/platform/main.go` on stack `platform`) to enable GCP APIs, create one Workload Identity Pool and wildcard HTTPS Load Balancer, export Vercel team and Neon organization defaults, and connect `NonProd` and `Prod` Kinde tenants.
 2. `openbase.Project` runs once per application repository in `infra/shared/main.go` (`shared` stack via `pm infra apply --shared`) to provision shared assets such as `gcp.Project`, `vercel.Project`, `neon.Project`, `kinde.Project`, or shared `gcp.Bucket` stores.
-3. `openbase.Environment` runs per `dev`, `stage`, `prod`, and `preview-<slug>` stack in `infra/main.go` (`pm infra apply --env ...`) to provision isolated compute, copy-on-write Neon branches, storage overlays, and OIDC bindings.
+3. `openbase.Environment` runs per `dev`, `stage`, `prod`, and `preview-<slug>` stack in `infra/env/main.go` (`pm infra apply --env ...`) to provision isolated compute, copy-on-write Neon branches, storage overlays, and OIDC bindings.
 
 ## Stack topology
 
 ```mermaid
 flowchart TD
-    OrgProg["Platform Repo (platform/main.go)"] --> OrgStack["Stack: acme/platform/platform (openbase.Platform)"]
+    OrgProg["Platform Repo (infra/platform/main.go)"] --> OrgStack["Stack: acme/platform/platform (openbase.Platform)"]
     ProjProg["App Shared Program (infra/shared/main.go)"] --> ProjStack["Stack: acme/storefront-shared/shared (openbase.Project)"]
-    EnvProg["App Environment Program (infra/main.go)"] --> Dev["Stack: dev (openbase.Environment)"]
+    EnvProg["App Environment Program (infra/env/main.go)"] --> Dev["Stack: dev (openbase.Environment)"]
     EnvProg --> Stage["Stack: stage (BranchFrom: prod)"]
     EnvProg --> Prod["Stack: prod"]
     EnvProg --> Preview["Stack: preview-<slug> (BranchFrom: dev)"]
@@ -91,7 +91,7 @@ func main() {
 
 ## 3. Shared repository project (`infra/shared/main.go`)
 
-Set `workspace.infra.directory: infra` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Register any combination of shared project resources with `openbase.NewProject` and `openbase.Add` (inheriting organization settings and Kinde tenant connections from `PlatformStackRef`):
+Set `workspace.infra.directory: infra/env` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Register any combination of shared project resources with `openbase.NewProject` and `openbase.Add` (inheriting organization settings and Kinde tenant connections from `PlatformStackRef`):
 
 ```go
 package main
@@ -138,7 +138,7 @@ func main() {
 }
 ```
 
-## 4. Per-environment stack (`infra/main.go`)
+## 4. Per-environment stack (`infra/env/main.go`)
 
 `openbase.NewEnvironment` resolves `<org>/<project>-shared/shared` automatically and sets default stateful branching (`stage` from `prod`, `preview-*` from `dev`). `Links` grants IAM and OIDC access, while callers wire their own `Env` and `Secrets` keys directly from typed resource outputs:
 
@@ -192,7 +192,7 @@ func main() {
 			TeamID:     "team_123",
 			TeamSlug:   "acme",
 			BaseDomain: "vercel.acme.io",
-			SourceDir:  "../apps/web",
+			SourceDir:  "../../apps/web",
 			Links:      []core.Resource{uploads},
 			Env: map[string]pulumi.StringInput{
 				"BLOB_BASE_URL":        uploads.BlobBaseURL,
@@ -264,7 +264,7 @@ if err != nil {
 }
 _, err = openbase.Add(env, vercel.WebApp{
 	Name:      "web",
-	SourceDir: "../apps/web",
+	SourceDir: "../../apps/web",
 	Links:     []core.Resource{ordersAPI, sharedAssets},
 	Brokers:   []core.IdentityBroker{fed},
 	Env: map[string]pulumi.StringInput{
@@ -278,7 +278,7 @@ _, err = openbase.Add(env, vercel.WebApp{
 
 ## 6. Mixing raw Pulumi resources and multiple cloud accounts
 
-OpenBase scopes wrap standard `*pulumi.Context` programs rather than replacing them. In any `infra/main.go` (or `infra/shared/main.go`), you can declare native Pulumi SDK resources directly alongside `openbase.Add` and wire outputs in both directions:
+OpenBase scopes wrap standard `*pulumi.Context` programs rather than replacing them. In any `infra/env/main.go` (or `infra/shared/main.go`), you can declare native Pulumi SDK resources directly alongside `openbase.Add` and wire outputs in both directions:
 
 ```go
 env, err := openbase.NewEnvironment(ctx, openbase.Environment{Project: "storefront"})
@@ -328,7 +328,7 @@ _, err = secretmanager.NewSecretIamMember(ctx, "raw-partner-key-accessor", &secr
 When an organization spans multiple Google Cloud projects or multiple cloud accounts (for example separate GCP or AWS provider credentials), register distinct named specs with `openbase.AddPlatform` and `openbase.Add`, passing explicit `pulumi.Provider(...)` options:
 
 ```go
-// platform/main.go: multiple GCP projects or accounts
+// infra/platform/main.go: multiple GCP projects or accounts
 plat, err := openbase.NewPlatform(ctx, openbase.Platform{Org: "acme"})
 analyticsGCP, err := gcpprov.NewProvider(ctx, "gcp-analytics", &gcpprov.ProviderArgs{
 	Project: pulumi.String("acme-analytics"),
@@ -348,7 +348,7 @@ _, err = openbase.Add(proj, gcp.Project{
 	PlatformResource: "gcp-analytics",
 }, pulumi.Provider(analyticsGCP))
 
-// infra/main.go: target multiple GCP projects or accounts in one environment
+// infra/env/main.go: target multiple GCP projects or accounts in one environment
 _, err = openbase.Add(env, gcp.Bucket{
 	Name:       "analytics-events",
 	GCPProject: pulumi.String("acme-analytics"),

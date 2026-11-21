@@ -38,7 +38,7 @@ flowchart TD
         NonProdApp --> NonProdConn
     end
 
-    subgraph Env["App infra/ Stacks"]
+    subgraph Env["App infra/env Stacks"]
         EnvOidc["kinde.OidcApp (dev/preview -> NonProd, stage/prod -> Prod)"]
     end
 
@@ -58,7 +58,7 @@ sequenceDiagram
     participant Shared as "kinde.Project (infra/shared)"
     participant NonProdT as "Kinde NonProd Tenant"
     participant ProdT as "Kinde Prod Tenant"
-    participant Env as "kinde.OidcApp (infra/)"
+    participant Env as "kinde.OidcApp (infra/env)"
 
     Shared->>NonProdT: 1. Create Application + localhost/dev/preview wildcard callbacks
     Shared->>NonProdT: 2. Attach email:password ApplicationConnection

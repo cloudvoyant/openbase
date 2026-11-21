@@ -140,7 +140,7 @@ func deployHybridPreview(
 		VercelProjectName: "openbase-e2e-" + appProject,
 		TeamID:            teamID,
 		TeamSlug:          teamSlug,
-		SourceDir:         "../site",
+		SourceDir:         "../../site",
 		Links:             []core.Resource{orders, uploads, sharedAssets},
 		Brokers:           []core.IdentityBroker{fed},
 		Env: map[string]pulumi.StringInput{

@@ -2,7 +2,7 @@
 
 ## Overview
 
-OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi component library across Google Cloud Platform, Vercel, Neon, and Kinde. It separates infrastructure into three scopes: organization `Platform` foundations, repository `Project` assets in `infra/shared`, and per-stack `Environment` deployments in `infra/`. It does not generate multi-language SDKs, run SQL migrations inside Pulumi state, or target AWS, Azure, or Kubernetes.
+OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi component library across Google Cloud Platform, Vercel, Neon, and Kinde. It separates infrastructure into three scopes: organization `Platform` foundations in `infra/platform`, repository `Project` assets in `infra/shared`, and per-stack `Environment` deployments in `infra/env`. It does not generate multi-language SDKs, run SQL migrations inside Pulumi state, or target AWS, Azure, or Kubernetes.
 
 ## Requirement
 
@@ -26,7 +26,7 @@ OpenBase (`github.com/cloudvoyant/openbase/libs/components`) is a Go Pulumi comp
 
 ```mermaid
 flowchart TD
-    subgraph Tier1["Tier 1: Organization Platform (once per org)"]
+    subgraph Tier1["Tier 1: Organization Platform (infra/platform once per org)"]
         OrgScope["openbase.Platform"] --> GCPPlat["gcp.Platform + CloudLoadBalancer"]
         OrgScope --> VerPlat["vercel.Platform"]
         OrgScope --> NeonPlat["neon.Platform"]
@@ -40,7 +40,7 @@ flowchart TD
         ProjScope --> KindeProj["kinde.Project"]
     end
 
-    subgraph Tier3["Tier 3: Environment Stack (infra/ per dev, stage, prod, preview-*)"]
+    subgraph Tier3["Tier 3: Environment Stack (infra/env per dev, stage, prod, preview-*)"]
         EnvScope["openbase.Environment + openbase.Add"] --> CR["gcp.CloudRunService"]
         EnvScope --> Bkt["gcp.Bucket"]
         EnvScope --> Web["vercel.WebApp"]
@@ -62,9 +62,9 @@ flowchart TD
 
 ```mermaid
 sequenceDiagram
-    participant Org as "Org Repo (openbase.Platform)"
+    participant Org as "Org infra/platform (openbase.Platform)"
     participant Shared as "App infra/shared (openbase.Project)"
-    participant Env as "App infra/ (openbase.Environment on preview-pr-42)"
+    participant Env as "App infra/env (openbase.Environment on preview-pr-42)"
     participant State as "Shared Pulumi State Backend"
     participant Cloud as "GCP / Vercel / Neon / Kinde"
 
@@ -83,9 +83,9 @@ An organization deploys `openbase.Platform` once into its shared Pulumi backend 
 
 | Scope | Go Interface | Scope Fields | Canonical Name | Allowed Stacks |
 | :--- | :--- | :--- | :--- | :--- |
-| Organization Platform | `core.PlatformResource` | `Name`, `Org` | `<org>-<name>` | Central org stack |
+| Organization Platform | `core.PlatformResource` | `Name`, `Org` | `<org>-<name>` | `platform` (`infra/platform`) |
 | Shared Resource | `core.StatelessResource` / `core.StatefulResource` | `Name`, `Project`, `Repo`, `Environment: "shared"` | `<project>-<name>` | `shared` (`infra/shared`) |
-| Environment Resource | `core.StatelessResource` / `core.StatefulResource` | `Name`, `Project`, `Repo`, `Environment`, `BranchFrom`, `Links` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` |
+| Environment Resource | `core.StatelessResource` / `core.StatefulResource` | `Name`, `Project`, `Repo`, `Environment`, `BranchFrom`, `Links` | `<project>-<env>-<name>` | `dev`, `stage`, `prod`, `preview-<slug>` (`infra/env`) |
 
 ## Implementation
 
