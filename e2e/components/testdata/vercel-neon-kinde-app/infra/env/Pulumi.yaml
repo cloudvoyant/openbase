@@ -1,0 +1,3 @@
+name: openbase-vercel-neon-kinde-app
+runtime: go
+description: Per-environment stacks (dev, stage, prod, preview-*) for openbase-vercel-neon-kinde-app

@@ -1,0 +1,3 @@
+name: openbase-vercel-blob-store-fixture-shared
+runtime: go
+description: Shared Vercel project + BlobStore fixture for vercel.BlobStore lifecycle testing
