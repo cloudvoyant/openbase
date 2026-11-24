@@ -13,6 +13,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/cloudvoyant/openbase/libs/goutils/pulumix"
+	"github.com/cloudvoyant/openbase/libs/testutils/liveenv"
 )
 
 // Public API -----------------------------------------------------------------
@@ -99,66 +102,25 @@ func queryGCPProjectNumberWithRetry(t *testing.T, gcpProject string) string {
 // RequireLiveGCP checks OPENBASE_TEST_GCP/OPENBASE_TEST_LIVE and returns (gcpProject, backendOverride).
 func RequireLiveGCP(t *testing.T) (string, string) {
 	t.Helper()
-	if !isLiveEnabled("OPENBASE_TEST_GCP") {
-		t.Skip("set OPENBASE_TEST_GCP=1 or OPENBASE_TEST_LIVE=1 to run against live GCP")
-	}
-	project := os.Getenv("OPENBASE_TEST_GCP_PROJECT")
-	if project == "" {
-		project = os.Getenv("PREMISE_TEST_GCP_PROJECT")
-	}
-	if project == "" {
-		t.Fatal("set OPENBASE_TEST_GCP_PROJECT (or PREMISE_TEST_GCP_PROJECT) for live GCP E2E")
-	}
-	return project, optionalBackendEnv()
+	return liveenv.RequireGCP(t)
 }
 
 // RequireLiveNeon checks OPENBASE_TEST_NEON/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveNeon(t *testing.T) string {
 	t.Helper()
-	if !isLiveEnabled("OPENBASE_TEST_NEON") {
-		t.Skip("set OPENBASE_TEST_NEON=1 or OPENBASE_TEST_LIVE=1 to run against live Neon")
-	}
-	requireEnvVars(t, "NEON_API_KEY")
-	return optionalBackendEnv()
+	return liveenv.RequireNeon(t)
 }
 
 // RequireLiveKinde checks OPENBASE_TEST_KINDE/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveKinde(t *testing.T) string {
 	t.Helper()
-	if !isLiveEnabled("OPENBASE_TEST_KINDE") {
-		t.Skip("set OPENBASE_TEST_KINDE=1 or OPENBASE_TEST_LIVE=1 to run against live Kinde")
-	}
-	backfillNonProdKindeEnv(t)
-	requireEnvVars(
-		t,
-		"KINDE_NONPROD_TENANT_DOMAIN", "KINDE_NONPROD_M2M_CLIENT_ID", "KINDE_NONPROD_M2M_CLIENT_SECRET",
-		"KINDE_PROD_TENANT_DOMAIN", "KINDE_PROD_M2M_CLIENT_ID", "KINDE_PROD_M2M_CLIENT_SECRET",
-	)
-	return optionalBackendEnv()
-}
-
-func backfillNonProdKindeEnv(t *testing.T) {
-	t.Helper()
-	pairs := [][2]string{
-		{"KINDE_NONPROD_TENANT_DOMAIN", "KINDE_DEV_TENANT_DOMAIN"},
-		{"KINDE_NONPROD_M2M_CLIENT_ID", "KINDE_DEV_M2M_CLIENT_ID"},
-		{"KINDE_NONPROD_M2M_CLIENT_SECRET", "KINDE_DEV_M2M_CLIENT_SECRET"},
-	}
-	for _, p := range pairs {
-		if os.Getenv(p[0]) == "" && os.Getenv(p[1]) != "" {
-			t.Setenv(p[0], os.Getenv(p[1]))
-		}
-	}
+	return liveenv.RequireKinde(t)
 }
 
 // RequireLiveVercel checks OPENBASE_TEST_VERCEL/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveVercel(t *testing.T) string {
 	t.Helper()
-	if !isLiveEnabled("OPENBASE_TEST_VERCEL") {
-		t.Skip("set OPENBASE_TEST_VERCEL=1 or OPENBASE_TEST_LIVE=1 to run against live Vercel")
-	}
-	requireEnvVars(t, "VERCEL_TOKEN")
-	return optionalBackendEnv()
+	return liveenv.RequireVercel(t)
 }
 
 // NewLiveHarness materializes fixtureName + Pulumi state under e2e/outputs/components/<Test>, logs in, and registers cleanup.
@@ -530,29 +492,8 @@ func hasArg(args []string, target string) bool {
 	return slices.Contains(args, target)
 }
 
-func isLiveEnabled(flag string) bool {
-	return os.Getenv("OPENBASE_TEST_LIVE") == "1" || os.Getenv(flag) == "1"
-}
-
 func isKeepEnabled() bool {
 	return os.Getenv("OPENBASE_E2E_KEEP") == "1" || os.Getenv("OPENBASE_TEST_KEEP") == "1"
-}
-
-func optionalBackendEnv() string {
-	return strings.TrimRight(os.Getenv("PULUMI_BACKEND_URL"), "/")
-}
-
-func requireEnvVars(t *testing.T, keys ...string) {
-	t.Helper()
-	var missing []string
-	for _, k := range keys {
-		if os.Getenv(k) == "" {
-			missing = append(missing, k)
-		}
-	}
-	if len(missing) > 0 {
-		t.Fatalf("missing required live E2E environment variables: %s", strings.Join(missing, ", "))
-	}
 }
 
 func (h *LiveStackHarness) env(callEnv []string) []string {
@@ -622,22 +563,12 @@ func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) bo
 	return true
 }
 
-func (h *LiveStackHarness) runDestroyWithRetry(t *testing.T, ctx context.Context, stack, workDir string, baseEnv []string) bool {
+func (h *LiveStackHarness) runDestroyWithRetry(t *testing.T, ctx context.Context, stack, workDir string, _ []string) bool {
 	t.Helper()
-	var lastOut []byte
-	var lastErr error
-	for attempt := range 3 {
-		if attempt > 0 {
-			time.Sleep(time.Duration(attempt*2) * time.Second)
-		}
-		destroy := exec.CommandContext(ctx, "pulumi", "destroy", "--stack", stack, "--yes", "--non-interactive", "--skip-preview")
-		destroy.Dir = workDir
-		destroy.Env = baseEnv
-		lastOut, lastErr = destroy.CombinedOutput()
-		if lastErr == nil {
-			return true
-		}
+	out, err := pulumix.DestroyWithRetry(ctx, repositoryRoot(t), workDir, h.env(nil), stack, 3)
+	if err != nil {
+		t.Errorf("cleanup destroy stack %s: %v\n%s", stack, err, h.redact(out))
+		return false
 	}
-	t.Errorf("cleanup destroy stack %s: %v\n%s", stack, lastErr, h.redact(string(lastOut)))
-	return false
+	return true
 }

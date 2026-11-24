@@ -27,20 +27,20 @@ func main() {
 		}
 		if _, err := gcp.NewProject(ctx, "gcp", &gcp.ProjectArgs{
 			ProjectName: appProject,
-			Account:     gcp.LookupAccount(plat),
+			Account:     gcp.LookupAccount(plat, "gcp"),
 			BaseDomain:  baseDomain,
 		}); err != nil {
 			return err
 		}
 		if _, err := neon.NewProject(ctx, "neon", &neon.ProjectArgs{
 			ProjectName: appProject,
-			Account:     neon.LookupAccount(plat),
+			Account:     neon.LookupAccount(plat, "neon"),
 		}); err != nil {
 			return err
 		}
 		_, err = kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{
 			ProjectName:                appProject,
-			Account:                    kinde.LookupAccount(plat),
+			Account:                    kinde.LookupAccount(plat, "kinde"),
 			AppName:                    os.Getenv("OPENBASE_TEST_KINDE_APP_NAME"),
 			BaseDomain:                 baseDomain,
 			StageDomain:                cb.StageHost,

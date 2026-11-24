@@ -40,7 +40,7 @@ func TestNeonDatabase(t *testing.T) {
 					return err
 				}
 				_, err = neon.NewProject(ctx, "neon", &neon.ProjectArgs{
-					Account: neon.LookupAccount(plat),
+					Account: neon.LookupAccount(plat, "neon"),
 				})
 				return err
 			}, pulumi.WithMocks("storefront-shared", "shared", sharedMocks))
@@ -51,7 +51,7 @@ func TestNeonDatabase(t *testing.T) {
 					return err
 				}
 				db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-					Project: neon.LookupProject(shared),
+					Project: neon.LookupProject(shared, "neon"),
 				})
 				if err != nil {
 					return err

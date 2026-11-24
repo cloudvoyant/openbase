@@ -121,19 +121,19 @@ func deploySharedVercelProject(ctx *pulumi.Context) error {
 		return err
 	}
 	authProj, err := kinde.NewProject(ctx, "auth", &kinde.ProjectArgs{
-		Account:        kinde.LookupAccount(plat),
+		Account:        kinde.LookupAccount(plat, "kinde"),
 		VercelTeamSlug: "cloudvoyant",
 	})
 	if err != nil {
 		return err
 	}
 	if _, err := neon.NewProject(ctx, "db", &neon.ProjectArgs{
-		Account: neon.LookupAccount(plat),
+		Account: neon.LookupAccount(plat, "neon"),
 	}); err != nil {
 		return err
 	}
 	_, err = vercel.NewProject(ctx, "web", &vercel.ProjectArgs{
-		Account:         vercel.LookupAccount(plat),
+		Account:         vercel.LookupAccount(plat, "vercel"),
 		EnableBlobStore: true,
 		PreviewEnv: map[string]pulumi.StringInput{
 			"KINDE_ISSUER_URL": authProj.NonProdIssuerURL,
@@ -155,9 +155,9 @@ func deployPreviewVercelEnv(
 	if err != nil {
 		return err
 	}
-	vProj := vercel.LookupProject(shared)
+	vProj := vercel.LookupProject(shared, "web")
 	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-		Project: neon.LookupProject(shared),
+		Project: neon.LookupProject(shared, "db"),
 	})
 	if err != nil {
 		return err
@@ -170,7 +170,7 @@ func deployPreviewVercelEnv(
 		return err
 	}
 	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-		Project: kinde.LookupProject(shared),
+		Project: kinde.LookupProject(shared, "auth"),
 	})
 	if err != nil {
 		return err
@@ -236,14 +236,14 @@ func deploySharedCloudRunProject(ctx *pulumi.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := gcp.NewProject(ctx, "gcp", &gcp.ProjectArgs{Account: gcp.LookupAccount(plat)}); err != nil {
+	if _, err := gcp.NewProject(ctx, "gcp", &gcp.ProjectArgs{Account: gcp.LookupAccount(plat, "gcp")}); err != nil {
 		return err
 	}
-	if _, err := neon.NewProject(ctx, "neon", &neon.ProjectArgs{Account: neon.LookupAccount(plat)}); err != nil {
+	if _, err := neon.NewProject(ctx, "neon", &neon.ProjectArgs{Account: neon.LookupAccount(plat, "neon")}); err != nil {
 		return err
 	}
 	_, err = kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{
-		Account:                  kinde.LookupAccount(plat),
+		Account:                  kinde.LookupAccount(plat, "kinde"),
 		StageDomain:              cb.StageHost,
 		ProdDomain:               cb.ProdHost,
 		ExtraNonProdRedirectURIs: cb.ExtraNonProdRedirects,
@@ -263,8 +263,8 @@ func deployStageCloudRunEnv(ctx *pulumi.Context, dbBranchFrom *string, issuerCh 
 	if err != nil {
 		return err
 	}
-	gcpAcc := gcp.LookupAccount(plat)
-	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{Project: neon.LookupProject(shared)})
+	gcpAcc := gcp.LookupAccount(plat, "gcp")
+	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{Project: neon.LookupProject(shared, "neon")})
 	if err != nil {
 		return err
 	}
@@ -280,7 +280,7 @@ func deployStageCloudRunEnv(ctx *pulumi.Context, dbBranchFrom *string, issuerCh 
 		return err
 	}
 	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-		Project: kinde.LookupProject(shared),
+		Project: kinde.LookupProject(shared, "kinde"),
 		SiteURL: pulumi.String(siteURL),
 	})
 	if err != nil {
@@ -288,7 +288,7 @@ func deployStageCloudRunEnv(ctx *pulumi.Context, dbBranchFrom *string, issuerCh 
 	}
 	_, err = gcp.NewCloudRunService(ctx, "web", &gcp.CloudRunServiceArgs{
 		Account:          gcpAcc,
-		Project:          gcp.LookupProject(shared),
+		Project:          gcp.LookupProject(shared, "gcp"),
 		GCPProjectNumber: pulumi.String("785485436615"),
 		Image:            pulumi.String("us-docker.pkg.dev/cloudrun/container/hello"),
 		Links:            []core.Resource{bkt},
@@ -325,14 +325,14 @@ func runHybridRemoteBucketWIFSpec(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		gcpAcc := gcp.LookupAccount(platRef)
+		gcpAcc := gcp.LookupAccount(platRef, "gcp")
 		sharedAssets := sharedRef.Resource(
 			"shared-assets",
 			core.WithRemoteKind("gcp-bucket"),
 		)
 		sharedAssets.Attr("bucketName").ApplyT(func(v string) string { bktNameCh <- v; return v })
 		_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-			Project:   vercel.LookupProject(sharedRef),
+			Project:   vercel.LookupProject(sharedRef, "web"),
 			SourceDir: ".",
 			Links:     []core.Resource{sharedAssets},
 			Brokers:   []core.IdentityBroker{gcpAcc.WIFBroker("vercel")},
@@ -378,15 +378,17 @@ func runStackGuardrailSpec(t *testing.T) {
 func sampleKindeAccountArgs() *kinde.AccountArgs {
 	return &kinde.AccountArgs{
 		Org: "cloudvoyant",
-		NonProd: kinde.EnvironmentCredentials{
-			Domain:       "nonprod-test.kinde.com",
-			ClientID:     pulumi.String("nonprod-cid"),
-			ClientSecret: pulumi.String("nonprod-sec"),
-		},
-		Prod: kinde.EnvironmentCredentials{
-			Domain:       "prod-test.kinde.com",
-			ClientID:     pulumi.String("prod-cid"),
-			ClientSecret: pulumi.String("prod-sec"),
+		Environments: map[string]kinde.EnvironmentCredentials{
+			"non-prod": {
+				Domain:       "nonprod-test.kinde.com",
+				ClientID:     pulumi.String("nonprod-cid"),
+				ClientSecret: pulumi.String("nonprod-sec"),
+			},
+			"prod": {
+				Domain:       "prod-test.kinde.com",
+				ClientID:     pulumi.String("prod-cid"),
+				ClientSecret: pulumi.String("prod-sec"),
+			},
 		},
 	}
 }
@@ -577,7 +579,7 @@ func runMultiGCPAndRawPulumiSpec(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		ctx.Export("ambigProj", gcp.LookupAccount(plat).GCPProject)
+		ctx.Export("ambigProj", gcp.LookupAccount(plat, "").GCPProject)
 		return nil
 	}, pulumi.WithMocks("orders-shared", "shared", newScopeMocks(true)))
 	errShared := pulumi.RunErr(func(ctx *pulumi.Context) error {

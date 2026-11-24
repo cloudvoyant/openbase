@@ -32,6 +32,7 @@ type ProjectArgs struct {
 	APIBaseURL              string
 	PostgresVersion         int
 	HistoryRetentionSeconds int
+	ImportProjectID         string
 }
 
 // Project is the provisioned Neon Project cluster handle consumed by per-environment neon.Database branches.
@@ -105,15 +106,16 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	})
 }
 
-// LookupProject resolves a shared neon.Project from an infra/shared ScopeRef (by unique kind or explicit name).
-func LookupProject(shared *core.ScopeRef, name ...string) *ProjectRef {
+// LookupProject resolves a shared neon.Project by alias name from an infra/shared ScopeRef.
+func LookupProject(shared *core.ScopeRef, name string) *ProjectRef {
 	if shared == nil {
 		return nil
 	}
+	alias := []string{name}
 	return &ProjectRef{
-		ProjectID:       shared.ManifestAttr("neon-project", name, "neonProjectId"),
-		DefaultBranchID: shared.ManifestAttr("neon-project", name, "neonDefaultBranchId"),
-		RegionID:        shared.ManifestAttr("neon-project", name, "regionId"),
+		ProjectID:       shared.ManifestAttr("neon-project", alias, "neonProjectId"),
+		DefaultBranchID: shared.ManifestAttr("neon-project", alias, "neonDefaultBranchId"),
+		RegionID:        shared.ManifestAttr("neon-project", alias, "regionId"),
 	}
 }
 
@@ -166,7 +168,11 @@ func createNeonProject(
 		StorePassword:           pulumi.Bool(true),
 		OrgId:                   nonEmptyNeonPtrOutput(orgOut),
 	}
-	return neonprov.NewProject(ctx, name+"-project", projArgs, pulumi.Parent(parent))
+	projOpts := []pulumi.ResourceOption{pulumi.Parent(parent)}
+	if args.ImportProjectID != "" {
+		projOpts = append(projOpts, pulumi.Import(pulumi.ID(args.ImportProjectID)))
+	}
+	return neonprov.NewProject(ctx, name+"-project", projArgs, projOpts...)
 }
 
 func populateProjectAPISettings(args *ProjectArgs, res *Project) {

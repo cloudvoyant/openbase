@@ -45,7 +45,7 @@ func main() {
 		}
 		db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
 			ProjectName: appProject,
-			Project:     neon.LookupProject(shared),
+			Project:     neon.LookupProject(shared, "neon"),
 			APIKey:      pulumi.String(os.Getenv("NEON_API_KEY")),
 		})
 		if err != nil {
@@ -62,7 +62,7 @@ func main() {
 		}
 		auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
 			ProjectName: appProject,
-			Project:     kinde.LookupProject(shared),
+			Project:     kinde.LookupProject(shared, "kinde"),
 			SiteURL:     pulumi.String(siteURL),
 		})
 		if err != nil {
@@ -70,10 +70,11 @@ func main() {
 		}
 		_, err = gcp.NewCloudRunService(ctx, "web", &gcp.CloudRunServiceArgs{
 			ProjectName:      appProject,
-			Project:          gcp.LookupProject(shared),
+			Project:          gcp.LookupProject(shared, "gcp"),
 			GCPProject:       pulumi.String(gcpProject),
 			GCPProjectNumber: pulumi.String(projectNum),
 			BaseDomain:       baseDomain,
+			Revision:         revision,
 			Image:            pulumi.String("mirror.gcr.io/library/python:3.12-slim"),
 			Command:          []string{"python3", "-c", string(serverPy)},
 			Links:            []core.Resource{uploads},

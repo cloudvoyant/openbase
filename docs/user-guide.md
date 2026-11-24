@@ -77,15 +77,17 @@ func main() {
 		}
 		_, err = kinde.NewAccount(ctx, "kinde", &kinde.AccountArgs{
 			Org: "acme",
-			NonProd: kinde.EnvironmentCredentials{
-				Domain:       "acme-nonprod.kinde.com",
-				ClientID:     cfg.Require("kindeNonProdClientId"),
-				ClientSecret: cfg.RequireSecret("kindeNonProdClientSecret"),
-			},
-			Prod: kinde.EnvironmentCredentials{
-				Domain:       "acme.kinde.com",
-				ClientID:     cfg.Require("kindeProdClientId"),
-				ClientSecret: cfg.RequireSecret("kindeProdClientSecret"),
+			Environments: map[string]kinde.EnvironmentCredentials{
+				"non-prod": {
+					Domain:       "acme-nonprod.kinde.com",
+					ClientID:     cfg.Require("kindeNonProdClientId"),
+					ClientSecret: cfg.RequireSecret("kindeNonProdClientSecret"),
+				},
+				"prod": {
+					Domain:       "acme.kinde.com",
+					ClientID:     cfg.Require("kindeProdClientId"),
+					ClientSecret: cfg.RequireSecret("kindeProdClientSecret"),
+				},
 			},
 		})
 		return err
@@ -115,7 +117,7 @@ func main() {
 			return err
 		}
 		authProj, err := kinde.NewProject(ctx, "auth", &kinde.ProjectArgs{
-			Account:        kinde.LookupAccount(plat),
+			Account:        kinde.LookupAccount(plat, "kinde"),
 			VercelTeamSlug: "acme",
 			BaseDomain:     "vercel.acme.io",
 		})
@@ -123,12 +125,12 @@ func main() {
 			return err
 		}
 		if _, err := neon.NewProject(ctx, "db", &neon.ProjectArgs{
-			Account: neon.LookupAccount(plat),
+			Account: neon.LookupAccount(plat, "neon"),
 		}); err != nil {
 			return err
 		}
 		_, err = vercel.NewProject(ctx, "web", &vercel.ProjectArgs{
-			Account:         vercel.LookupAccount(plat),
+			Account:         vercel.LookupAccount(plat, "vercel"),
 			EnableBlobStore: true,
 			PreviewEnv: map[string]pulumi.StringInput{
 				"KINDE_ISSUER_URL": authProj.NonProdIssuerURL,
@@ -167,9 +169,9 @@ func main() {
 		if err != nil {
 			return err
 		}
-		webProj := vercel.LookupProject(shared)
+		webProj := vercel.LookupProject(shared, "web")
 		db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-			Project: neon.LookupProject(shared),
+			Project: neon.LookupProject(shared, "db"),
 			APIKey:  cfg.RequireSecret("neonApiKey"),
 		})
 		if err != nil {
@@ -184,7 +186,7 @@ func main() {
 			return err
 		}
 		auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-			Project: kinde.LookupProject(shared),
+			Project: kinde.LookupProject(shared, "auth"),
 		})
 		if err != nil {
 			return err
@@ -227,8 +229,8 @@ shared, err := openbase.LookupShared(ctx)
 if err != nil {
 	return err
 }
-gcpAcc := gcp.LookupAccount(plat)
-webProj := vercel.LookupProject(shared)
+gcpAcc := gcp.LookupAccount(plat, "gcp")
+webProj := vercel.LookupProject(shared, "web")
 sharedAssets := shared.Resource(
 	"shared-assets",
 	core.WithRemoteKind("gcp-bucket"),
@@ -244,7 +246,7 @@ if err != nil {
 }
 ordersAPI, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
 	Account:    gcpAcc,
-	Project:    gcp.LookupProject(shared),
+	Project:    gcp.LookupProject(shared, "gcp"),
 	Visibility: gcp.VisibilityInternal,
 	Image:      pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
 	Links:      []core.Resource{sharedAssets},
@@ -295,7 +297,7 @@ if err != nil {
 
 api, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
 	Account: gcpAcc,
-	Project: gcp.LookupProject(shared),
+	Project: gcp.LookupProject(shared, "gcp"),
 	Image:   pulumi.String("us-central1-docker.pkg.dev/acme-cloud/storefront-gcp/orders:latest"),
 	Env: map[string]pulumi.StringInput{
 		"RAW_SECRET_VERSION": rawSecretVer.Name,

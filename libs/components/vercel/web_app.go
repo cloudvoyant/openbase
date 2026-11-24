@@ -48,6 +48,7 @@ type WebAppArgs struct {
 	StageDomain              string
 	PreviewAlias             string
 	ExtraDomains             []string
+	Revision                 string
 }
 
 // WebApp is the provisioned Vercel WebApp handle with scoped env vars, Deployment, and Aliases.
@@ -231,8 +232,12 @@ func resolveWebAppLinks(
 		return webAppEnvVars{}, err
 	}
 	vars := webAppEnvVars{
-		plain:   make(map[string]pulumi.StringOutput, len(spec.Env)),
+		plain:   make(map[string]pulumi.StringOutput, len(spec.Env)+2),
 		secrets: make(map[string]pulumi.StringOutput, len(spec.Secrets)),
+	}
+	vars.plain["OB_ENVIRONMENT"] = pulumi.String(meta.Environment.String()).ToStringOutput()
+	if spec.Revision != "" {
+		vars.plain["OB_REVISION"] = pulumi.String(spec.Revision).ToStringOutput()
 	}
 	for k, v := range spec.Env {
 		vars.plain[k] = v.ToStringOutput()

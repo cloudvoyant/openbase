@@ -71,12 +71,12 @@ Each `New<Resource>` constructor builds a `core.LinkDescriptor` containing `Attr
 ```go
 // infra/shared/main.go
 plat, err := openbase.LookupPlatform(ctx)
-_, err = neon.NewProject(ctx, "db", &neon.ProjectArgs{Account: neon.LookupAccount(plat)})
+_, err = neon.NewProject(ctx, "db", &neon.ProjectArgs{Account: neon.LookupAccount(plat, "neon")})
 
 // infra/env/main.go
 shared, err := openbase.LookupShared(ctx)
 db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-	Project: neon.LookupProject(shared),
+	Project: neon.LookupProject(shared, "db"),
 	APIKey:  cfg.RequireSecret("neonApiKey"),
 })
 ```

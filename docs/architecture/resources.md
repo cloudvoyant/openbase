@@ -53,7 +53,7 @@ classDiagram
 
 - `account.go` defines `AccountResource`, `AccountInfo`, `AccountMeta`, `InitAccount`, `GCPAccountLabels`, and the `core.NewCustomAccount` escape hatch.
 - `environment.go` parses `shared`, `dev`, `stage`, `prod`, and `preview-<slug>` stacks and validates `BranchFrom` parents.
-- `resource.go` defines `Resource`, `StatelessResource`, `StatefulResource`, `ResolveProject`, `RequireSharedStack`, and custom escape-hatch constructors (`core.NewStateless` and `core.NewStateful`).
+- `resource.go` defines `Resource`, `StatelessResource`, `StatefulResource`, `ResolveProject`, `RequireSharedStack`, and custom escape-hatch constructors (`core.NewCustomStateless` and `core.NewCustomStateful`).
 - `links.go` defines `Subject`, `PrincipalGrant`, `IdentityBroker`, `LinkGrantContext`, and `ResolveLinks`.
 - `scope.go` defines `ScopeRef`, `ManifestAttr`, `ErrAmbiguousResource`, `RemoteResource`, `ResolveStackReference`, `DefaultBranchFrom`, `DefaultBranchStackRef`, `RecordStackExports`, and `BuildManifestMap`.
 - `naming.go` and `domain.go` omit `env` when `Environment` is `shared` and enforce cloud length bounds with deterministic SHA-256 truncation suffixes.
@@ -101,7 +101,7 @@ When `env == EnvShared`, `CanonicalName` returns `<project>-<name>` instead of `
 
 ### Escape hatches
 
-Teams can wrap any raw Pulumi resource in `core.NewCustomAccount`, `core.NewStateless`, or `core.NewStateful`. Each escape hatch publishes its `LinkDescriptor` to `openbaseManifest` and implements `AccountResource` or `Resource`, so custom resources plug directly into `Links` alongside built-in OpenBase components.
+Teams can wrap any raw Pulumi resource in `core.NewCustomAccount`, `core.NewCustomStateless`, or `core.NewCustomStateful`. Each escape hatch publishes its `LinkDescriptor` to `openbaseManifest` and implements `AccountResource` or `Resource`, so custom resources plug directly into `Links` alongside built-in OpenBase components.
 
 ## References
 

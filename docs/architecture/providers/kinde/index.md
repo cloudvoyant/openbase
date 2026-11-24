@@ -73,15 +73,17 @@ sequenceDiagram
 ```go
 // Tier 1: Organization (infra/platform/main.go)
 acc, err := kinde.NewAccount(ctx, "kinde", &kinde.AccountArgs{
-	Org:     "cloudvoyant",
-	NonProd: nonProdEnvCreds,
-	Prod:    prodEnvCreds,
+	Org: "cloudvoyant",
+	Environments: map[string]kinde.EnvironmentCredentials{
+		"non-prod": nonProdEnvCreds,
+		"prod":     prodEnvCreds,
+	},
 })
 
 // Shared Project Resource in infra/shared/main.go
 plat, err := openbase.LookupPlatform(ctx)
 proj, err := kinde.NewProject(ctx, "auth", &kinde.ProjectArgs{
-	Account:        kinde.LookupAccount(plat),
+	Account:        kinde.LookupAccount(plat, "kinde"),
 	VercelTeamSlug: "cloudvoyant",
 	BaseDomain:     "vercel.cloudvoyant.io",
 })

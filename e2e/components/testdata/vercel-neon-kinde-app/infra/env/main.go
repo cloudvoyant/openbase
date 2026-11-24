@@ -41,10 +41,10 @@ func registerVercelEnvResources(
 	tier core.Environment,
 	appProject, vProjName, teamID, teamSlug, baseDomain, blobRW string,
 ) error {
-	vProj := vercel.LookupProject(shared)
+	vProj := vercel.LookupProject(shared, "vercel")
 	db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
 		ProjectName: appProject,
-		Project:     neon.LookupProject(shared),
+		Project:     neon.LookupProject(shared, "neon"),
 		APIKey:      optionalString(os.Getenv("NEON_API_KEY")),
 	})
 	if err != nil {
@@ -61,7 +61,7 @@ func registerVercelEnvResources(
 	}
 	auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
 		ProjectName:       appProject,
-		Project:           kinde.LookupProject(shared),
+		Project:           kinde.LookupProject(shared, "kinde"),
 		VercelProjectName: vProjName,
 		VercelTeamSlug:    teamSlug,
 		BaseDomain:        baseDomain,

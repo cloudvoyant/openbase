@@ -12,7 +12,7 @@
 
 ### Repository layout
 
-- Place cross-stack lookup helpers (`LookupPlatform` and `LookupShared`) in the root `libs/components` package, shared lifecycle contracts in `libs/components/core`, and provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`. See [docs/architecture/index.md](./docs/architecture/index.md).
+- Place cross-stack lookup helpers (`LookupPlatform` and `LookupShared`) in the root `libs/components` package, shared lifecycle contracts in `libs/components/core`, provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`, general Go helpers in `libs/goutils/{misex,pulumix}`, and test-only verification helpers in `libs/testutils/{fixtures,liveenv,kindeclient,vercelclient,neonclient}`. See [docs/architecture/index.md](./docs/architecture/index.md).
 - Keep top-level `e2e/` organized by target suite, with component end-to-end suites and consumer fixtures under [e2e/components](./e2e/README.md).
 
 ### File layout
@@ -23,7 +23,7 @@
 
 ### Go
 
-- Follow standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...) (*<Resource>, error)`) and typed lookups (`<provider>.LookupAccount(plat, name...)` and `<provider>.LookupProject(shared, name...)`) across organization accounts (`<provider>.NewAccount` in `infra/platform/main.go` on a dedicated `platform` stack), shared project resources (`<provider>.NewProject` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming), and environment resources (concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
+- Follow standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...) (*<Resource>, error)`) and explicit-alias typed lookups (`<provider>.LookupAccount(plat, name)` and `<provider>.LookupProject(shared, name)`) across organization accounts (`<provider>.NewAccount` in `infra/platform/main.go` on a dedicated `platform` stack), shared project resources (`<provider>.NewProject` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming), and environment resources (concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
 - [Proposed] Document every exported function, type, and struct field in handwritten Go packages with a short comment explaining its purpose and cloud-provider mapping.
 - [Proposed] Keep every handwritten function at or below cyclomatic complexity `10` as enforced by [.golangci.yml](./.golangci.yml).
 

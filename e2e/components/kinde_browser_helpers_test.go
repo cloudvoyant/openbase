@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+
+	"github.com/cloudvoyant/openbase/libs/testutils/liveenv"
 )
 
 // Public API -----------------------------------------------------------------
@@ -22,14 +24,7 @@ import (
 // RequireLiveKindeUser verifies either AgentMail OTP credentials (AGENTMAIL_API_KEY + E2E_P1_EMAIL) or KINDE_E2E_USERNAME/PASSWORD.
 func RequireLiveKindeUser(t *testing.T) (string, string) {
 	t.Helper()
-	email := firstNonEmpty(os.Getenv("OPENBASE_E2E_EMAIL"), os.Getenv("E2E_P1_EMAIL"), os.Getenv("KINDE_E2E_USERNAME"))
-	if email == "" {
-		t.Fatal("missing E2E login email: set E2E_P1_EMAIL (with AGENTMAIL_API_KEY) or KINDE_E2E_USERNAME")
-	}
-	if os.Getenv("AGENTMAIL_API_KEY") == "" && os.Getenv("KINDE_E2E_PASSWORD") == "" {
-		t.Fatal("missing E2E login credential: set AGENTMAIL_API_KEY (for email OTP) or KINDE_E2E_PASSWORD")
-	}
-	return email, os.Getenv("KINDE_E2E_PASSWORD")
+	return liveenv.RequireKindeUser(t)
 }
 
 // Private helpers ------------------------------------------------------------

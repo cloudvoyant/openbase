@@ -20,7 +20,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		gcpAcc := gcp.LookupAccount(plat)
+		gcpAcc := gcp.LookupAccount(plat, "gcp")
 		if _, err := gcp.NewProject(ctx, "gcp", &gcp.ProjectArgs{
 			ProjectName: appProject,
 			Account:     gcpAcc,
@@ -29,7 +29,7 @@ func main() {
 		}
 		if _, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
 			ProjectName:          appProject,
-			Account:              vercel.LookupAccount(plat),
+			Account:              vercel.LookupAccount(plat, "vercel"),
 			VercelProjectName:    "openbase-e2e-" + appProject,
 			SkipStageEnvironment: true,
 		}); err != nil {

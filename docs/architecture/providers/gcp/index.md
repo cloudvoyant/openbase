@@ -90,7 +90,7 @@ acc, err := gcp.NewAccount(ctx, "gcp", &gcp.AccountArgs{
 // Shared Project Resource in infra/shared/main.go
 plat, err := openbase.LookupPlatform(ctx)
 proj, err := gcp.NewProject(ctx, "gcp", &gcp.ProjectArgs{
-	Account: gcp.LookupAccount(plat),
+	Account: gcp.LookupAccount(plat, "gcp"),
 })
 ```
 

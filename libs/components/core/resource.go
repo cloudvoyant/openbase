@@ -253,8 +253,8 @@ func ChildOptions(parent pulumi.Resource, meta ResourceMeta, extra ...pulumi.Res
 	return append(opts, extra...)
 }
 
-// StatelessArgs configures an escape-hatch StatelessResource component wrapping custom Pulumi resources.
-type StatelessArgs struct {
+// CustomStatelessArgs configures an escape-hatch StatelessResource component wrapping custom Pulumi resources.
+type CustomStatelessArgs struct {
 	ProjectName string
 	Repo        string
 	Environment string
@@ -264,18 +264,18 @@ type StatelessArgs struct {
 	GrantAccess func(LinkGrantContext) error
 }
 
-// Stateless is the provisioned handle returned by NewStateless.
-type Stateless struct {
+// CustomStateless is the provisioned handle returned by NewCustomStateless.
+type CustomStateless struct {
 	pulumi.ResourceState
 	StatelessMeta
 }
 
-// NewStateless registers an escape-hatch StatelessResource with canonical tags and access Links.
-func NewStateless(ctx *pulumi.Context, name string, args *StatelessArgs, opts ...pulumi.ResourceOption) (*Stateless, error) {
+// NewCustomStateless registers an escape-hatch StatelessResource with canonical tags and access Links.
+func NewCustomStateless(ctx *pulumi.Context, name string, args *CustomStatelessArgs, opts ...pulumi.ResourceOption) (*CustomStateless, error) {
 	if args == nil {
-		args = &StatelessArgs{}
+		args = &CustomStatelessArgs{}
 	}
-	res := &Stateless{}
+	res := &CustomStateless{}
 	meta, err := InitStateless(ctx, "openbase:core:StatelessResource", "custom-stateless", res, &res.StatelessMeta, StatelessSpec{
 		Name:        name,
 		Project:     args.ProjectName,
@@ -295,8 +295,8 @@ func NewStateless(ctx *pulumi.Context, name string, args *StatelessArgs, opts ..
 	return res, ctx.RegisterResourceOutputs(res, pulumi.Map{"canonicalName": pulumi.String(meta.CanonicalName)})
 }
 
-// StatefulArgs configures an escape-hatch StatefulResource component wrapping custom Pulumi resources.
-type StatefulArgs struct {
+// CustomStatefulArgs configures an escape-hatch StatefulResource component wrapping custom Pulumi resources.
+type CustomStatefulArgs struct {
 	ProjectName string
 	Repo        string
 	Environment string
@@ -308,18 +308,18 @@ type StatefulArgs struct {
 	GrantAccess func(LinkGrantContext) error
 }
 
-// Stateful is the provisioned handle returned by NewStateful.
-type Stateful struct {
+// CustomStateful is the provisioned handle returned by NewCustomStateful.
+type CustomStateful struct {
 	pulumi.ResourceState
 	StatefulMeta
 }
 
-// NewStateful registers an escape-hatch StatefulResource with BranchFrom, tags, and access Links.
-func NewStateful(ctx *pulumi.Context, name string, args *StatefulArgs, opts ...pulumi.ResourceOption) (*Stateful, error) {
+// NewCustomStateful registers an escape-hatch StatefulResource with BranchFrom, tags, and access Links.
+func NewCustomStateful(ctx *pulumi.Context, name string, args *CustomStatefulArgs, opts ...pulumi.ResourceOption) (*CustomStateful, error) {
 	if args == nil {
-		args = &StatefulArgs{}
+		args = &CustomStatefulArgs{}
 	}
-	res := &Stateful{}
+	res := &CustomStateful{}
 	meta, err := InitStateful(ctx, "openbase:core:StatefulResource", "custom-stateful", res, &res.StatefulMeta, StatefulSpec{
 		Name:        name,
 		Project:     args.ProjectName,

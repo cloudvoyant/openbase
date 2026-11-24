@@ -75,6 +75,7 @@ type CloudRunServiceArgs struct {
 	Domains                  []string
 	StartupProbe             *ProbeConfig
 	LivenessProbe            *ProbeConfig
+	Revision                 string
 	ExtraLabels              map[string]string
 }
 
@@ -311,7 +312,11 @@ func resolveEnvsAndSecrets(
 	}, spec.Links); err != nil {
 		return nil, nil, err
 	}
-	plain := make(map[string]pulumi.StringOutput, len(spec.Env))
+	plain := make(map[string]pulumi.StringOutput, len(spec.Env)+2)
+	plain["OB_ENVIRONMENT"] = pulumi.String(meta.Environment.String()).ToStringOutput()
+	if spec.Revision != "" {
+		plain["OB_REVISION"] = pulumi.String(spec.Revision).ToStringOutput()
+	}
 	for k, v := range spec.Env {
 		plain[k] = v.ToStringOutput()
 	}

@@ -3,48 +3,59 @@ package e2e_test
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Public API -----------------------------------------------------------------
 
 func TestCoreLifecycle(t *testing.T) {
-	t.Run("given a standalone Pulumi program declaring linked core.Stateful and core.Stateless specs", func(t *testing.T) {
+	t.Run("given a Pulumi program declaring linked core.CustomStateful and core.CustomStateless specs", func(t *testing.T) {
 		// Arrange.
 		h := NewLiveHarness(t, "core-lifecycle", "openbase-core-lifecycle-fixture", "")
 		h.InitStack(t, "preview-pr-42")
 		h.InitStack(t, "dev")
 
-		t.Run("when previewing with an invalid environment name, then it rejects during preview without creating state", func(t *testing.T) {
-			// Arrange.
-			env := []string{"OPENBASE_TEST_ENV_OVERRIDE=staging"}
+		t.Run("when previewing a branch", func(t *testing.T) {
+			t.Run("then an invalid environment override rejects during preview without creating state", func(t *testing.T) {
+				// Arrange / Act.
+				failOut := h.PulumiFail(t, []string{"OPENBASE_TEST_ENV_OVERRIDE=staging"}, "preview", "--stack", "preview-pr-42")
 
-			// Act.
-			failOut := h.PulumiFail(t, env, "preview", "--stack", "preview-pr-42")
+				// Assert.
+				require.Contains(t, failOut, "invalid environment")
+			})
 
-			// Assert.
-			if !strings.Contains(failOut, "invalid environment") {
-				t.Fatalf("expected invalid environment error, got:\n%s", failOut)
-			}
+			t.Run("then a valid preview branch plans without errors", func(t *testing.T) {
+				// Arrange / Act.
+				planOut := h.Pulumi(t, nil, "preview", "--stack", "preview-pr-42")
+				planFile := h.WriteArtifact(t, "preview-branch-plan.txt", planOut)
+
+				// Assert.
+				assertNonEmptyFile(t, planFile)
+			})
 		})
 
-		t.Run("when previewing a persistent stack branched from an ephemeral preview stack, then it rejects InvalidBranchSource", func(t *testing.T) {
-			// Arrange.
-			env := []string{"OPENBASE_TEST_BRANCH_FROM=preview-pr-42"}
+		t.Run("when previewing on main", func(t *testing.T) {
+			t.Run("then branching a persistent stack from an ephemeral preview stack rejects with ErrInvalidBranchSource", func(t *testing.T) {
+				// Arrange / Act.
+				failOut := h.PulumiFail(t, []string{"OPENBASE_TEST_BRANCH_FROM=preview-pr-42"}, "preview", "--stack", "dev")
 
-			// Act.
-			failOut := h.PulumiFail(t, env, "preview", "--stack", "dev")
+				// Assert.
+				require.Contains(t, failOut, "invalid branchFrom")
+			})
 
-			// Assert.
-			if !strings.Contains(failOut, "invalid branchFrom") {
-				t.Fatalf("expected invalid branchFrom error, got:\n%s", failOut)
-			}
+			t.Run("then a persistent dev stack with no BranchFrom plans cleanly", func(t *testing.T) {
+				// Arrange / Act.
+				planOut := h.Pulumi(t, []string{"OPENBASE_TEST_BRANCH_FROM=prod"}, "preview", "--stack", "dev")
+
+				// Assert.
+				require.Contains(t, planOut, "openbase:core:StatefulResource")
+			})
 		})
 
-		t.Run("when applying preview-pr-42 branched from dev", func(t *testing.T) {
+		t.Run("when applying a branch", func(t *testing.T) {
 			// Arrange / Act.
-			planOut := h.Pulumi(t, nil, "preview", "--stack", "preview-pr-42")
 			h.Pulumi(t, nil, "up", "--stack", "preview-pr-42", "--yes", "--non-interactive", "--skip-preview")
 			outputs := map[string]string{
 				"ledgerCanonicalName":  h.Output(t, "preview-pr-42", "ledgerCanonicalName"),
@@ -52,22 +63,29 @@ func TestCoreLifecycle(t *testing.T) {
 				"workerCanonicalName":  h.Output(t, "preview-pr-42", "workerCanonicalName"),
 				"workerLinkedEndpoint": h.Output(t, "preview-pr-42", "workerLinkedEndpoint"),
 			}
-			planFile := h.WriteArtifact(t, "preview-plan.txt", planOut)
-			snapshotFile := h.WriteJSONArtifact(t, "stack-outputs.json", outputs)
+			snapshotFile := h.WriteJSONArtifact(t, "branch-stack-outputs.json", outputs)
 
 			// Assert.
 			t.Run("then it exports canonical names, branch metadata, and linked environment outputs", func(t *testing.T) {
-				assertEqualStr(t, "ledgerCanonicalName", outputs["ledgerCanonicalName"], "storefront-preview-pr-42-ledger")
-				assertEqualStr(t, "ledgerBranchSource", outputs["ledgerBranchSource"], "dev")
-				assertEqualStr(t, "workerCanonicalName", outputs["workerCanonicalName"], "storefront-preview-pr-42-worker")
-				assertEqualStr(t, "workerLinkedEndpoint", outputs["workerLinkedEndpoint"], "https://ledger.storefront.internal")
+				require.Equal(t, "storefront-preview-pr-42-ledger", outputs["ledgerCanonicalName"])
+				require.Equal(t, "dev", outputs["ledgerBranchSource"])
+				require.Equal(t, "storefront-preview-pr-42-worker", outputs["workerCanonicalName"])
+				require.Equal(t, "https://ledger.storefront.internal", outputs["workerLinkedEndpoint"])
 			})
 
 			t.Run("then it writes the CLI transcript and stack output snapshot under e2e/outputs/components", func(t *testing.T) {
 				assertNonEmptyFile(t, filepath.Join(h.OutputDir, "commands.log"))
-				assertNonEmptyFile(t, planFile)
 				assertNonEmptyFile(t, snapshotFile)
 			})
+		})
+
+		t.Run("when applying on main, then it provisions the persistent dev stack with canonical names", func(t *testing.T) {
+			// Arrange / Act.
+			h.Pulumi(t, []string{"OPENBASE_TEST_BRANCH_FROM=prod"}, "up", "--stack", "dev", "--yes", "--non-interactive", "--skip-preview")
+
+			// Assert.
+			require.Equal(t, "storefront-dev-ledger", h.Output(t, "dev", "ledgerCanonicalName"))
+			require.Equal(t, "storefront-dev-worker", h.Output(t, "dev", "workerCanonicalName"))
 		})
 	})
 }
@@ -77,7 +95,6 @@ func TestCoreLifecycle(t *testing.T) {
 func assertNonEmptyFile(t *testing.T, path string) {
 	t.Helper()
 	info, err := os.Stat(path)
-	if err != nil || info.Size() == 0 {
-		t.Fatalf("expected non-empty artifact file at %s (err=%v)", path, err)
-	}
+	require.NoError(t, err)
+	require.Positive(t, info.Size())
 }

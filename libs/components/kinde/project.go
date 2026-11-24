@@ -28,6 +28,8 @@ type ProjectArgs struct {
 	ProjectName                string
 	Repo                       string
 	Account                    AccountInput
+	NonProdEnvironment         string
+	ProdEnvironment            string
 	AppName                    string
 	NonProd                    EnvironmentCredentials
 	Prod                       EnvironmentCredentials
@@ -122,23 +124,24 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	return res, registerProjectOidcOutputs(ctx, res)
 }
 
-// LookupProject resolves a shared kinde.Project from an infra/shared ScopeRef (by unique kind or explicit name).
-func LookupProject(shared *core.ScopeRef, name ...string) *ProjectRef {
+// LookupProject resolves a shared kinde.Project by alias name from an infra/shared ScopeRef.
+func LookupProject(shared *core.ScopeRef, name string) *ProjectRef {
 	if shared == nil {
 		return nil
 	}
+	alias := []string{name}
 	return &ProjectRef{
-		NonProdIssuerURL:    shared.ManifestAttr("kinde-project", name, "nonProdIssuerUrl"),
-		NonProdAppID:        shared.ManifestAttr("kinde-project", name, "nonProdAppId"),
-		NonProdClientID:     shared.ManifestAttr("kinde-project", name, "nonProdClientId"),
-		NonProdClientSecret: pulumi.ToSecret(shared.ManifestAttr("kinde-project", name, "nonProdClientSecret")).(pulumi.StringOutput),
-		ProdIssuerURL:       shared.ManifestAttr("kinde-project", name, "prodIssuerUrl"),
-		ProdAppID:           shared.ManifestAttr("kinde-project", name, "prodAppId"),
-		ProdClientID:        shared.ManifestAttr("kinde-project", name, "prodClientId"),
-		ProdClientSecret:    pulumi.ToSecret(shared.ManifestAttr("kinde-project", name, "prodClientSecret")).(pulumi.StringOutput),
-		VercelProjectName:   shared.ManifestAttr("kinde-project", name, "vercelProjectName", "vercelProjectName"),
-		VercelTeamSlug:      shared.ManifestAttr("kinde-project", name, "teamSlug", "teamSlug"),
-		BaseDomain:          shared.ManifestAttr("kinde-project", name, "baseDomain", "baseDomain"),
+		NonProdIssuerURL:    shared.ManifestAttr("kinde-project", alias, "nonProdIssuerUrl"),
+		NonProdAppID:        shared.ManifestAttr("kinde-project", alias, "nonProdAppId"),
+		NonProdClientID:     shared.ManifestAttr("kinde-project", alias, "nonProdClientId"),
+		NonProdClientSecret: pulumi.ToSecret(shared.ManifestAttr("kinde-project", alias, "nonProdClientSecret")).(pulumi.StringOutput),
+		ProdIssuerURL:       shared.ManifestAttr("kinde-project", alias, "prodIssuerUrl"),
+		ProdAppID:           shared.ManifestAttr("kinde-project", alias, "prodAppId"),
+		ProdClientID:        shared.ManifestAttr("kinde-project", alias, "prodClientId"),
+		ProdClientSecret:    pulumi.ToSecret(shared.ManifestAttr("kinde-project", alias, "prodClientSecret")).(pulumi.StringOutput),
+		VercelProjectName:   shared.ManifestAttr("kinde-project", alias, "vercelProjectName", "vercelProjectName"),
+		VercelTeamSlug:      shared.ManifestAttr("kinde-project", alias, "teamSlug", "teamSlug"),
+		BaseDomain:          shared.ManifestAttr("kinde-project", alias, "baseDomain", "baseDomain"),
 	}
 }
 
@@ -229,14 +232,29 @@ func resolveProjectEnvProviders(
 	if hasEnvCreds(spec.NonProd) && hasEnvCreds(spec.Prod) {
 		return createExplicitEnvProviders(ctx, name, spec, res)
 	}
+	nonProdKey := defaultKindeStr(spec.NonProdEnvironment, DefaultNonProdEnvironment)
+	prodKey := defaultKindeStr(spec.ProdEnvironment, DefaultProdEnvironment)
 	acc := spec.Account.kindeAccountValues()
 	if acc.local != nil {
-		res.NonProdIssuerURL = acc.local.NonProdIssuerURL
-		res.ProdIssuerURL = acc.local.ProdIssuerURL
-		res.EmailPasswordConn = acc.local.EmailPasswordConn
-		return acc.local.NonProdProvider, acc.local.ProdProvider, nil
+		return resolveLocalAccountProviders(acc.local, nonProdKey, prodKey, res)
 	}
-	return createAccountRefProviders(ctx, name, acc, res)
+	return createAccountRefProviders(ctx, name, acc.ref, nonProdKey, prodKey, res)
+}
+
+func resolveLocalAccountProviders(
+	local *Account,
+	nonProdKey, prodKey string,
+	res *Project,
+) (*kindeprov.Provider, *kindeprov.Provider, error) {
+	nonProdProv, okNP := local.Providers[nonProdKey]
+	prodProv, okP := local.Providers[prodKey]
+	if !okNP || !okP {
+		return nil, nil, ErrEnvironmentCredentialsRequired
+	}
+	res.NonProdIssuerURL = local.IssuerURLs[nonProdKey]
+	res.ProdIssuerURL = local.IssuerURLs[prodKey]
+	res.EmailPasswordConn = local.EmailPasswordConn
+	return nonProdProv, prodProv, nil
 }
 
 func createExplicitEnvProviders(
@@ -263,29 +281,32 @@ func createExplicitEnvProviders(
 func createAccountRefProviders(
 	ctx *pulumi.Context,
 	name string,
-	acc kindeAccountData,
+	ref *AccountRef,
+	nonProdKey, prodKey string,
 	res *Project,
 ) (*kindeprov.Provider, *kindeprov.Provider, error) {
+	npEnv := ref.Environment(nonProdKey)
+	pEnv := ref.Environment(prodKey)
 	nonProdProv, err := kindeprov.NewProvider(ctx, name+"-nonprod-prov", &kindeprov.ProviderArgs{
-		Domain:       acc.nonProdIssuer,
-		Audience:     pulumi.Sprintf("%s/api", acc.nonProdIssuer),
-		ClientId:     acc.nonProdClientID,
-		ClientSecret: pulumi.ToSecret(acc.nonProdSecret).(pulumi.StringOutput),
+		Domain:       npEnv.IssuerURL,
+		Audience:     pulumi.Sprintf("%s/api", npEnv.IssuerURL),
+		ClientId:     npEnv.M2MClientID,
+		ClientSecret: pulumi.ToSecret(npEnv.M2MClientSecret).(pulumi.StringOutput),
 	}, pulumi.Parent(res))
 	if err != nil {
 		return nil, nil, err
 	}
 	prodProv, err := kindeprov.NewProvider(ctx, name+"-prod-prov", &kindeprov.ProviderArgs{
-		Domain:       acc.prodIssuer,
-		Audience:     pulumi.Sprintf("%s/api", acc.prodIssuer),
-		ClientId:     acc.prodClientID,
-		ClientSecret: pulumi.ToSecret(acc.prodSecret).(pulumi.StringOutput),
+		Domain:       pEnv.IssuerURL,
+		Audience:     pulumi.Sprintf("%s/api", pEnv.IssuerURL),
+		ClientId:     pEnv.M2MClientID,
+		ClientSecret: pulumi.ToSecret(pEnv.M2MClientSecret).(pulumi.StringOutput),
 	}, pulumi.Parent(res))
 	if err != nil {
 		return nil, nil, err
 	}
-	res.NonProdIssuerURL = acc.nonProdIssuer
-	res.ProdIssuerURL = acc.prodIssuer
+	res.NonProdIssuerURL = npEnv.IssuerURL
+	res.ProdIssuerURL = pEnv.IssuerURL
 	return nonProdProv, prodProv, nil
 }
 

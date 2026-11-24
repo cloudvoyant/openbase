@@ -46,7 +46,7 @@ func TestAccountAndProject(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				gcpAcc := gcp.LookupAccount(plat)
+				gcpAcc := gcp.LookupAccount(plat, "gcp")
 				appA, err := gcp.NewProject(ctx, "gcp-a", &gcp.ProjectArgs{
 					ProjectName: "storefront",
 					Account:     gcpAcc,

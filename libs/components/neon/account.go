@@ -73,14 +73,15 @@ func NewAccount(ctx *pulumi.Context, name string, args *AccountArgs, opts ...pul
 	return res, registerNeonAccountOutputs(ctx, res)
 }
 
-// LookupAccount resolves a neon.Account from an infra/platform ScopeRef (by unique kind or explicit name).
-func LookupAccount(plat *core.ScopeRef, name ...string) *AccountRef {
+// LookupAccount resolves a neon.Account by alias name from an infra/platform ScopeRef.
+func LookupAccount(plat *core.ScopeRef, name string) *AccountRef {
 	if plat == nil {
 		return nil
 	}
+	alias := []string{name}
 	return &AccountRef{
-		OrgID:           plat.ManifestAttr("neon-account", name, "neonOrgId"),
-		DefaultRegionID: plat.ManifestAttr("neon-account", name, "neonDefaultRegionId"),
+		OrgID:           plat.ManifestAttr("neon-account", alias, "neonOrgId"),
+		DefaultRegionID: plat.ManifestAttr("neon-account", alias, "neonDefaultRegionId"),
 	}
 }
 

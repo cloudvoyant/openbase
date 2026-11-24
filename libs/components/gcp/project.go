@@ -22,13 +22,14 @@ type ProjectInput interface {
 
 // ProjectArgs configures an application's shared Docker Artifact Registry repository in Premise's infra/shared stack.
 type ProjectArgs struct {
-	ProjectName string
-	Repo        string
-	Account     AccountInput
-	GCPProject  pulumi.StringPtrInput
-	Location    string
-	BaseDomain  string
-	ExtraLabels map[string]string
+	ProjectName        string
+	Repo               string
+	Account            AccountInput
+	GCPProject         pulumi.StringPtrInput
+	Location           string
+	BaseDomain         string
+	ImportRepositoryID string
+	ExtraLabels        map[string]string
 }
 
 // Project is the provisioned handle for an application's shared Docker Artifact Registry repository.
@@ -92,15 +93,16 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	})
 }
 
-// LookupProject resolves a shared gcp.Project from an infra/shared ScopeRef (by unique kind or explicit name).
-func LookupProject(shared *core.ScopeRef, name ...string) *ProjectRef {
+// LookupProject resolves a shared gcp.Project by alias name from an infra/shared ScopeRef.
+func LookupProject(shared *core.ScopeRef, name string) *ProjectRef {
 	if shared == nil {
 		return nil
 	}
+	alias := []string{name}
 	return &ProjectRef{
-		BaseDomain:    shared.ManifestAttr("gcp-project", name, "baseDomain"),
-		RepositoryID:  shared.ManifestAttr("gcp-project", name, "repositoryId"),
-		RepositoryURL: shared.ManifestAttr("gcp-project", name, "repositoryUrl"),
+		BaseDomain:    shared.ManifestAttr("gcp-project", alias, "baseDomain"),
+		RepositoryID:  shared.ManifestAttr("gcp-project", alias, "repositoryId"),
+		RepositoryURL: shared.ManifestAttr("gcp-project", alias, "repositoryUrl"),
 	}
 }
 
@@ -135,13 +137,17 @@ func provisionGCPProject(ctx *pulumi.Context, name string, meta core.ResourceMet
 	location := defaultStr(spec.Location, "us-central1")
 	baseDomain, gcpProj, deps := resolveProjectAccountInputs(spec)
 	res.BaseDomain = baseDomain
+	repoOpts := []pulumi.ResourceOption{pulumi.Parent(res), pulumi.DependsOn(deps)}
+	if spec.ImportRepositoryID != "" {
+		repoOpts = append(repoOpts, pulumi.Import(pulumi.ID(spec.ImportRepositoryID)))
+	}
 	repo, err := artifactregistry.NewRepository(ctx, name+"-ar", &artifactregistry.RepositoryArgs{
 		Project:      gcpProj,
 		Location:     pulumi.String(location),
 		RepositoryId: pulumi.String(core.BoundedName(meta.CanonicalName, 63)),
 		Format:       pulumi.String("DOCKER"),
 		Labels:       core.GCPLabels(meta, spec.ExtraLabels),
-	}, pulumi.Parent(res), pulumi.DependsOn(deps))
+	}, repoOpts...)
 	if err != nil {
 		return err
 	}

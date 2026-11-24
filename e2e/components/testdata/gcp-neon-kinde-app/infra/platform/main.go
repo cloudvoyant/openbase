@@ -33,15 +33,17 @@ func main() {
 		}
 		_, err := kinde.NewAccount(ctx, "kinde", &kinde.AccountArgs{
 			Org: "cloudvoyant",
-			NonProd: kinde.EnvironmentCredentials{
-				Domain:       os.Getenv("KINDE_NONPROD_TENANT_DOMAIN"),
-				ClientID:     pulumi.String(os.Getenv("KINDE_NONPROD_M2M_CLIENT_ID")),
-				ClientSecret: pulumi.String(os.Getenv("KINDE_NONPROD_M2M_CLIENT_SECRET")),
-			},
-			Prod: kinde.EnvironmentCredentials{
-				Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
-				ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
-				ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
+			Environments: map[string]kinde.EnvironmentCredentials{
+				"non-prod": {
+					Domain:       os.Getenv("KINDE_NONPROD_TENANT_DOMAIN"),
+					ClientID:     pulumi.String(os.Getenv("KINDE_NONPROD_M2M_CLIENT_ID")),
+					ClientSecret: pulumi.String(os.Getenv("KINDE_NONPROD_M2M_CLIENT_SECRET")),
+				},
+				"prod": {
+					Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
+					ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
+					ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
+				},
 			},
 		})
 		return err

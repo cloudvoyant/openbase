@@ -40,7 +40,7 @@ func TestKindeOidcApp(t *testing.T) {
 					return err
 				}
 				_, err = kinde.NewProject(ctx, "project-oidc", &kinde.ProjectArgs{
-					Account:        kinde.LookupAccount(plat),
+					Account:        kinde.LookupAccount(plat, "kinde"),
 					VercelTeamSlug: "cloudvoyant",
 				})
 				return err
@@ -52,7 +52,7 @@ func TestKindeOidcApp(t *testing.T) {
 					return err
 				}
 				prevApp, err := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{
-					Project: kinde.LookupProject(shared),
+					Project: kinde.LookupProject(shared, "project-oidc"),
 				})
 				if err != nil {
 					return err
@@ -69,7 +69,7 @@ func TestKindeOidcApp(t *testing.T) {
 					return err
 				}
 				stageApp, err := kinde.NewOidcApp(ctx, "oidc", &kinde.OidcAppArgs{
-					Project: kinde.LookupProject(shared),
+					Project: kinde.LookupProject(shared, "project-oidc"),
 				})
 				if err != nil {
 					return err
@@ -129,15 +129,17 @@ func TestKindeOidcApp(t *testing.T) {
 
 func sampleKindeAccountArgs() *kinde.AccountArgs {
 	return &kinde.AccountArgs{
-		NonProd: kinde.EnvironmentCredentials{
-			Domain:       "nonprod-test.kinde.com",
-			ClientID:     pulumi.String("nonprod-m2m-id"),
-			ClientSecret: pulumi.String("nonprod-m2m-secret"),
-		},
-		Prod: kinde.EnvironmentCredentials{
-			Domain:       "https://prod-test.kinde.com/",
-			ClientID:     pulumi.String("prod-m2m-id"),
-			ClientSecret: pulumi.String("prod-m2m-secret"),
+		Environments: map[string]kinde.EnvironmentCredentials{
+			"non-prod": {
+				Domain:       "nonprod-test.kinde.com",
+				ClientID:     pulumi.String("nonprod-m2m-id"),
+				ClientSecret: pulumi.String("nonprod-m2m-secret"),
+			},
+			"prod": {
+				Domain:       "https://prod-test.kinde.com/",
+				ClientID:     pulumi.String("prod-m2m-id"),
+				ClientSecret: pulumi.String("prod-m2m-secret"),
+			},
 		},
 	}
 }

@@ -33,15 +33,17 @@ func main() {
 		}
 		_, err := kinde.NewAccount(ctx, "kinde", &kinde.AccountArgs{
 			Org: teamSlug,
-			NonProd: kinde.EnvironmentCredentials{
-				Domain:       envOrDefault("KINDE_NONPROD_TENANT_DOMAIN", "KINDE_DEV_TENANT_DOMAIN", ""),
-				ClientID:     pulumi.String(envOrDefault("KINDE_NONPROD_M2M_CLIENT_ID", "KINDE_DEV_M2M_CLIENT_ID", "")),
-				ClientSecret: pulumi.String(envOrDefault("KINDE_NONPROD_M2M_CLIENT_SECRET", "KINDE_DEV_M2M_CLIENT_SECRET", "")),
-			},
-			Prod: kinde.EnvironmentCredentials{
-				Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
-				ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
-				ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
+			Environments: map[string]kinde.EnvironmentCredentials{
+				"non-prod": {
+					Domain:       envOrDefault("KINDE_NONPROD_TENANT_DOMAIN", "KINDE_DEV_TENANT_DOMAIN", ""),
+					ClientID:     pulumi.String(envOrDefault("KINDE_NONPROD_M2M_CLIENT_ID", "KINDE_DEV_M2M_CLIENT_ID", "")),
+					ClientSecret: pulumi.String(envOrDefault("KINDE_NONPROD_M2M_CLIENT_SECRET", "KINDE_DEV_M2M_CLIENT_SECRET", "")),
+				},
+				"prod": {
+					Domain:       os.Getenv("KINDE_PROD_TENANT_DOMAIN"),
+					ClientID:     pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_ID")),
+					ClientSecret: pulumi.String(os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")),
+				},
 			},
 		})
 		return err

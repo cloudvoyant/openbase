@@ -95,15 +95,16 @@ func NewAccount(ctx *pulumi.Context, name string, args *AccountArgs, opts ...pul
 	})
 }
 
-// LookupAccount resolves a vercel.Account from an infra/platform ScopeRef (by unique kind or explicit name).
-func LookupAccount(plat *core.ScopeRef, name ...string) *AccountRef {
+// LookupAccount resolves a vercel.Account by alias name from an infra/platform ScopeRef.
+func LookupAccount(plat *core.ScopeRef, name string) *AccountRef {
 	if plat == nil {
 		return nil
 	}
+	alias := []string{name}
 	return &AccountRef{
-		TeamID:     plat.ManifestAttr("vercel-account", name, "teamId"),
-		TeamSlug:   plat.ManifestAttr("vercel-account", name, "teamSlug"),
-		BaseDomain: plat.ManifestAttr("vercel-account", name, "baseDomain", "vercelBaseDomain"),
+		TeamID:     plat.ManifestAttr("vercel-account", alias, "teamId"),
+		TeamSlug:   plat.ManifestAttr("vercel-account", alias, "teamSlug"),
+		BaseDomain: plat.ManifestAttr("vercel-account", alias, "baseDomain", "vercelBaseDomain"),
 	}
 }
 

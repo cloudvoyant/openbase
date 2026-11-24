@@ -75,7 +75,7 @@ acc, err := neon.NewAccount(ctx, "neon", &neon.AccountArgs{
 // Shared Project Resource in infra/shared/main.go
 plat, err := openbase.LookupPlatform(ctx)
 proj, err := neon.NewProject(ctx, "db", &neon.ProjectArgs{
-	Account:                 neon.LookupAccount(plat),
+	Account:                 neon.LookupAccount(plat, "neon"),
 	PostgresVersion:         17,
 	HistoryRetentionSeconds: 86400,
 })

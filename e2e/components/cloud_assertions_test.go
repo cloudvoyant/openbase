@@ -1,7 +1,6 @@
 package e2e_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,10 +16,13 @@ import (
 
 	"cloud.google.com/go/storage"
 	"github.com/jackc/pgx/v5"
+	"github.com/stretchr/testify/require"
 
 	"github.com/cloudvoyant/openbase/libs/components/gcp/overlayfs"
-	"github.com/cloudvoyant/openbase/libs/components/kinde"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
+	"github.com/cloudvoyant/openbase/libs/testutils/kindeclient"
+	"github.com/cloudvoyant/openbase/libs/testutils/neonclient"
+	"github.com/cloudvoyant/openbase/libs/testutils/vercelclient"
 )
 
 // Private helpers ------------------------------------------------------------
@@ -44,23 +46,14 @@ type overlayFSReport struct {
 	DeltaAbsentInDev bool   `json:"deltaAbsentInDev"`
 }
 
-type kindeAppItem struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-}
-
 func assertContains(t *testing.T, haystack, needle string) {
 	t.Helper()
-	if !strings.Contains(haystack, needle) {
-		t.Fatalf("expected %q to contain %q", haystack, needle)
-	}
+	require.Contains(t, haystack, needle)
 }
 
 func assertEqualStr(t *testing.T, label, got, want string) {
 	t.Helper()
-	if got != want {
-		t.Fatalf("%s = %q, want %q", label, got, want)
-	}
+	require.Equal(t, want, got, label)
 }
 
 func describeGCSBucket(t *testing.T, bucketName string) gcsBucketMetadata {
@@ -236,33 +229,7 @@ func assertServiceAccountAbsent(t *testing.T, gcpProject, email string) {
 
 func detectNeonOrgID(t *testing.T) string {
 	t.Helper()
-	if existing := os.Getenv("NEON_ORG_ID"); existing != "" {
-		return existing
-	}
-	req, err := http.NewRequest(http.MethodGet, "https://console.neon.tech/api/v2/users/me/organizations", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+os.Getenv("NEON_API_KEY"))
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		return ""
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return ""
-	}
-	var parsed struct {
-		Organizations []struct {
-			ID string `json:"id"`
-		} `json:"organizations"`
-	}
-	raw, _ := io.ReadAll(resp.Body)
-	_ = json.Unmarshal(raw, &parsed)
-	if len(parsed.Organizations) > 0 {
-		return parsed.Organizations[0].ID
-	}
-	return ""
+	return neonclient.DetectOrgID(t)
 }
 
 func querySingleText(t *testing.T, connURL, sqlQuery string) string {
@@ -307,15 +274,7 @@ func prepareKindeSandboxApp(t *testing.T, tenant, vProj, appProject, teamSlug st
 
 func prepareKindeSandboxByPrefix(t *testing.T, tenant, prefix, fallbackName string, redirects, logouts []string) (string, string) {
 	t.Helper()
-	issuer, tok := kindeMgmtToken(t, tenant)
-	apps := listKindeAppsByPrefix(t, issuer, tok, prefix)
-	if len(apps) == 0 {
-		return "", fallbackName
-	}
-	id, name := apps[0].ID, apps[0].Name
-	putKindeURLs(t, issuer, tok, id, "auth_redirect_urls", redirects)
-	putKindeURLs(t, issuer, tok, id, "auth_logout_urls", logouts)
-	return id, name
+	return kindeclient.PrepareSandboxApp(t, tenant, prefix, fallbackName, redirects, logouts)
 }
 
 func expectedInitialKindeURLs(tenant, vProj, teamSlug string) ([]string, []string) {
@@ -353,22 +312,6 @@ func expectedInitialKindeURLs(tenant, vProj, teamSlug string) ([]string, []strin
 	return redirects, logouts
 }
 
-func putKindeURLs(t *testing.T, issuer, tok, appID, endpoint string, urls []string) {
-	t.Helper()
-	body, _ := json.Marshal(map[string][]string{"urls": urls})
-	req, err := http.NewRequest(http.MethodPut, fmt.Sprintf("%s/api/v1/applications/%s/%s", issuer, appID, endpoint), bytes.NewReader(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = resp.Body.Close()
-}
-
 func countOpenBaseKindeApps(t *testing.T, tenant string) int {
 	t.Helper()
 	return countKindeAppsByPrefix(t, tenant, "openbase-e2e-ob")
@@ -376,78 +319,7 @@ func countOpenBaseKindeApps(t *testing.T, tenant string) int {
 
 func countKindeAppsByPrefix(t *testing.T, tenant, prefix string) int {
 	t.Helper()
-	issuer, tok := kindeMgmtToken(t, tenant)
-	return len(listKindeAppsByPrefix(t, issuer, tok, prefix))
-}
-
-func listKindeAppsByPrefix(t *testing.T, issuer, tok, prefix string) []kindeAppItem {
-	t.Helper()
-	req, err := http.NewRequest(http.MethodGet, issuer+"/api/v1/applications", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	raw, _ := io.ReadAll(resp.Body)
-	var parsed struct {
-		Applications []kindeAppItem `json:"applications"`
-	}
-	_ = json.Unmarshal(raw, &parsed)
-	var out []kindeAppItem
-	for _, a := range parsed.Applications {
-		if strings.HasPrefix(a.Name, prefix) {
-			out = append(out, a)
-		}
-	}
-	return out
-}
-
-func kindeMgmtToken(t *testing.T, tenant string) (string, string) {
-	t.Helper()
-	issuer, clientID, clientSecret := kindeMgmtEnv(tenant)
-	form := url.Values{
-		"grant_type":    {"client_credentials"},
-		"client_id":     {clientID},
-		"client_secret": {clientSecret},
-		"audience":      {issuer + "/api"},
-	}
-	tokResp, err := (&http.Client{Timeout: 15 * time.Second}).PostForm(issuer+"/oauth2/token", form)
-	if err != nil {
-		t.Fatalf("Kinde token request: %v", err)
-	}
-	defer func() { _ = tokResp.Body.Close() }()
-	rawTok, _ := io.ReadAll(tokResp.Body)
-	return issuer, extractJSONField(string(rawTok), "access_token")
-}
-
-func kindeMgmtEnv(tenant string) (string, string, string) {
-	if tenant == "prod" {
-		return kinde.NormalizeIssuerURL(os.Getenv("KINDE_PROD_TENANT_DOMAIN")),
-			os.Getenv("KINDE_PROD_M2M_CLIENT_ID"),
-			os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")
-	}
-	dom := firstNonEmpty(os.Getenv("KINDE_NONPROD_TENANT_DOMAIN"), os.Getenv("KINDE_DEV_TENANT_DOMAIN"))
-	cid := firstNonEmpty(os.Getenv("KINDE_NONPROD_M2M_CLIENT_ID"), os.Getenv("KINDE_DEV_M2M_CLIENT_ID"))
-	csec := firstNonEmpty(os.Getenv("KINDE_NONPROD_M2M_CLIENT_SECRET"), os.Getenv("KINDE_DEV_M2M_CLIENT_SECRET"))
-	return kinde.NormalizeIssuerURL(dom), cid, csec
-}
-
-func extractJSONField(rawJSON, key string) string {
-	marker := `"` + key + `":"`
-	idx := strings.Index(rawJSON, marker)
-	if idx < 0 {
-		return ""
-	}
-	rest := rawJSON[idx+len(marker):]
-	end := strings.IndexByte(rest, '"')
-	if end < 0 {
-		return ""
-	}
-	return rest[:end]
+	return kindeclient.CountByPrefix(t, tenant, prefix)
 }
 
 func assertLoginRedirect(t *testing.T, redirectURI string, status int, loc string) {
@@ -504,17 +376,7 @@ func assertVercelBlobCleanup(t *testing.T, teamID, projectID, storeID string) {
 
 func detectVercelTeam(t *testing.T) (string, string) {
 	t.Helper()
-	raw := vercelGET(t, "https://api.vercel.com/v2/teams", http.StatusOK)
-	var parsed struct {
-		Teams []struct {
-			ID   string `json:"id"`
-			Slug string `json:"slug"`
-		} `json:"teams"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil || len(parsed.Teams) == 0 {
-		t.Fatalf("failed to resolve Vercel team: %v", err)
-	}
-	return parsed.Teams[0].ID, parsed.Teams[0].Slug
+	return vercelclient.DetectTeam(t)
 }
 
 func fetchProjectBlobRWToken(t *testing.T, teamID, projectID string) string {

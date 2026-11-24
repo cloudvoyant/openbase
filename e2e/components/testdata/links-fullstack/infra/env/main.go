@@ -95,7 +95,7 @@ func deployHybridPreview(
 	if err != nil {
 		return err
 	}
-	gcpAcc := gcp.LookupAccount(plat)
+	gcpAcc := gcp.LookupAccount(plat, "gcp")
 	sharedAssets := shared.Resource("shared-assets", core.WithRemoteKind("gcp-bucket"))
 
 	rawSecret, rawSecretVer, err := createRawPartnerSecret(ctx, appProject, gcpProject)
@@ -105,7 +105,7 @@ func deployHybridPreview(
 	orders, err := gcp.NewCloudRunService(ctx, "orders", &gcp.CloudRunServiceArgs{
 		ProjectName: appProject,
 		Account:     gcpAcc,
-		Project:     gcp.LookupProject(shared),
+		Project:     gcp.LookupProject(shared, "gcp"),
 		Links:       []core.Resource{uploads, sharedAssets},
 		Env: map[string]pulumi.StringInput{
 			"STORAGE_BUCKET":          uploads.BucketName,
@@ -136,7 +136,7 @@ func deployHybridFrontend(
 	sharedAssets *core.RemoteResource,
 	orders *gcp.CloudRunService,
 ) error {
-	webProj := vercel.LookupProject(shared)
+	webProj := vercel.LookupProject(shared, "vercel")
 	fed, err := gcp.NewFederatedIdentity(ctx, "web-wif", &gcp.FederatedIdentityArgs{
 		ProjectName:    appProject,
 		Account:        gcpAcc,

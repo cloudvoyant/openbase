@@ -28,17 +28,19 @@ type AccountInput interface {
 
 // AccountArgs configures account-level GCP prerequisites (APIs, Workload Identity Pool, linked OIDC issuers, KMS, and wildcard Load Balancer).
 type AccountArgs struct {
-	Org                string
-	GCPProject         pulumi.StringPtrInput
-	GCPProjectNumber   string
-	Location           string
-	PoolSuffix         string
-	Links              []core.OIDCProviderSource
-	BaseDomain         string
-	EnableLoadBalancer bool
-	Services           []string
-	SkipKeyRing        bool
-	ExtraLabels        map[string]string
+	Org                          string
+	GCPProject                   pulumi.StringPtrInput
+	GCPProjectNumber             string
+	Location                     string
+	PoolSuffix                   string
+	Links                        []core.OIDCProviderSource
+	BaseDomain                   string
+	EnableLoadBalancer           bool
+	Services                     []string
+	SkipKeyRing                  bool
+	ImportWorkloadIdentityPoolID string
+	ImportKeyRingID              string
+	ExtraLabels                  map[string]string
 }
 
 // Account holds account-level enabled GCP APIs, Workload Identity Pool, linked OIDC providers, KMS KeyRing, and optional LoadBalancer.
@@ -100,20 +102,21 @@ func NewAccount(ctx *pulumi.Context, name string, args *AccountArgs, opts ...pul
 	return res, registerAccountOutputs(ctx, *args, res)
 }
 
-// LookupAccount resolves a gcp.Account from an infra/platform ScopeRef (by unique kind or explicit name).
-func LookupAccount(plat *core.ScopeRef, name ...string) *AccountRef {
+// LookupAccount resolves a gcp.Account by alias name from an infra/platform ScopeRef.
+func LookupAccount(plat *core.ScopeRef, name string) *AccountRef {
 	if plat == nil {
 		return nil
 	}
+	alias := []string{name}
 	return &AccountRef{
-		GCPProject:               plat.ManifestAttr("gcp-account", name, "gcpProject"),
-		GCPProjectNumber:         plat.ManifestAttr("gcp-account", name, "gcpProjectNumber"),
-		Location:                 plat.ManifestAttr("gcp-account", name, "location"),
-		BaseDomain:               plat.ManifestAttr("gcp-account", name, "baseDomain", "gcpBaseDomain"),
-		WorkloadIdentityPoolName: plat.ManifestAttr("gcp-account", name, "workloadIdentityPoolName"),
-		KeyRingID:                plat.ManifestAttr("gcp-account", name, "keyRingId"),
+		GCPProject:               plat.ManifestAttr("gcp-account", alias, "gcpProject"),
+		GCPProjectNumber:         plat.ManifestAttr("gcp-account", alias, "gcpProjectNumber"),
+		Location:                 plat.ManifestAttr("gcp-account", alias, "location"),
+		BaseDomain:               plat.ManifestAttr("gcp-account", alias, "baseDomain", "gcpBaseDomain"),
+		WorkloadIdentityPoolName: plat.ManifestAttr("gcp-account", alias, "workloadIdentityPoolName"),
+		KeyRingID:                plat.ManifestAttr("gcp-account", alias, "keyRingId"),
 		plat:                     plat,
-		name:                     name,
+		name:                     alias,
 	}
 }
 
@@ -282,11 +285,15 @@ func createIdentityFederation(
 		rawPool = fmt.Sprintf("ob-%s-%s", orgScope, spec.PoolSuffix)
 	}
 	poolID := core.BoundedName(rawPool, 32)
+	poolOpts := []pulumi.ResourceOption{pulumi.Parent(res)}
+	if spec.ImportWorkloadIdentityPoolID != "" {
+		poolOpts = append(poolOpts, pulumi.Import(pulumi.ID(spec.ImportWorkloadIdentityPoolID)))
+	}
 	pool, err := iam.NewWorkloadIdentityPool(ctx, name+"-wif-pool", &iam.WorkloadIdentityPoolArgs{
 		Project:                spec.GCPProject,
 		WorkloadIdentityPoolId: pulumi.String(poolID),
 		DisplayName:            pulumi.String(core.BoundedName(orgScope+" OIDC Pool", 32)),
-	}, pulumi.Parent(res))
+	}, poolOpts...)
 	if err != nil {
 		return err
 	}
@@ -368,11 +375,15 @@ func createOptionalKeyRing(
 		return nil
 	}
 	ringName := core.BoundedName(info.CanonicalName+"-kr", 63)
+	krOpts := []pulumi.ResourceOption{pulumi.Parent(res)}
+	if spec.ImportKeyRingID != "" {
+		krOpts = append(krOpts, pulumi.Import(pulumi.ID(spec.ImportKeyRingID)))
+	}
 	kr, err := kms.NewKeyRing(ctx, name+"-kr", &kms.KeyRingArgs{
 		Project:  spec.GCPProject,
 		Location: pulumi.String(location),
 		Name:     pulumi.String(ringName),
-	}, pulumi.Parent(res))
+	}, krOpts...)
 	if err != nil {
 		return err
 	}

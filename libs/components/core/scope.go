@@ -362,7 +362,7 @@ func (r *ScopeRef) collectLocalDescriptorsByKind(kind string) ([]LinkDescriptor,
 func (r *ScopeRef) resolveRemoteManifestAttr(kind, explicitName, attrKey, topKey string) pulumi.StringOutput {
 	manifestOut := r.sr.GetOutput(pulumi.String(ManifestOutputKey))
 	fallbackOut := pulumi.String("").ToStringOutput()
-	if explicitName == "" && topKey != "" {
+	if topKey != "" {
 		fallbackOut = r.Output(topKey)
 	}
 	return pulumi.All(manifestOut, fallbackOut).ApplyT(func(vals []any) (string, error) {
@@ -373,11 +373,16 @@ func (r *ScopeRef) resolveRemoteManifestAttr(kind, explicitName, attrKey, topKey
 
 func extractRemoteAttrValue(manifestRoot any, kind, explicitName, attrKey, fallback string) (string, error) {
 	resources := extractManifestResourcesMap(manifestRoot)
-	if explicitName != "" {
-		entry, _ := resources[explicitName].(map[string]any)
-		return readManifestEntryAttr(entry, attrKey), nil
-	}
 	matches, names := filterManifestEntriesByKind(resources, kind)
+	if explicitName != "" {
+		if entry, ok := resources[explicitName].(map[string]any); ok {
+			return readManifestEntryAttr(entry, attrKey), nil
+		}
+		if len(matches) == 0 {
+			return fallback, nil
+		}
+		return "", nil
+	}
 	if len(matches) > 1 {
 		return "", fmt.Errorf("%w: multiple %s entries in manifest (%s); pass explicit name", ErrAmbiguousResource, kind, strings.Join(names, ", "))
 	}

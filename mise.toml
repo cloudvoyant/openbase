@@ -28,6 +28,7 @@ run = [
 run = [
   "mise run //apps/based:test",
   "mise run //libs/components:test",
+  "go test ./libs/goutils/... ./libs/testutils/...",
   "go test -c -o /dev/null ./e2e/components",
 ]
 

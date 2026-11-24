@@ -64,7 +64,7 @@ func TestVercelWebApp(t *testing.T) {
 					return err
 				}
 				app, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-					Project: vercel.LookupProject(shared),
+					Project: vercel.LookupProject(shared, "web"),
 				})
 				if err != nil {
 					return err
@@ -101,7 +101,7 @@ func TestVercelWebApp(t *testing.T) {
 				if err != nil {
 					return err
 				}
-				vProj := vercel.LookupProject(shared)
+				vProj := vercel.LookupProject(shared, "web")
 				blobs, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
 					Project:            vProj,
 					BlobReadWriteToken: pulumi.String("vercel_blob_rw_tok"),
@@ -123,9 +123,9 @@ func TestVercelWebApp(t *testing.T) {
 				return err
 			}, pulumi.WithMocks("storefront", "dev", mocks))
 
-			// Assert.
+			// Assert (OB_ENVIRONMENT auto-injected + BLOB_BASE_URL + BLOB_PREFIX; duplicate BLOB_READ_WRITE_TOKEN skipped).
 			requireVercelNoErr(t, err)
-			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 2)
+			mocks.assertCount(t, "vercel:index/projectEnvironmentVariable:ProjectEnvironmentVariable", 3)
 		})
 
 		t.Run("when deploying preview with BaseDomain and ExtraDomains, then it binds {project}-{previewId}.{baseDomain} and extra aliases without registering Production ProjectDomains", func(t *testing.T) {
@@ -166,7 +166,7 @@ func TestVercelWebApp(t *testing.T) {
 					return err
 				}
 				_, err = vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-					Project:              vercel.LookupProject(shared),
+					Project:              vercel.LookupProject(shared, "web"),
 					Env:                  map[string]pulumi.StringInput{"KINDE_ISSUER_URL": pulumi.String("https://prod.kinde.com")},
 					SkipStageEnvironment: true,
 					SourceDir:            ".",

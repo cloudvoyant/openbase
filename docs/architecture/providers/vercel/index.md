@@ -79,7 +79,7 @@ acc, err := vercel.NewAccount(ctx, "vercel", &vercel.AccountArgs{
 // Shared Project Resource in infra/shared/main.go
 plat, err := openbase.LookupPlatform(ctx)
 proj, err := vercel.NewProject(ctx, "web", &vercel.ProjectArgs{
-	Account:          vercel.LookupAccount(plat),
+	Account:          vercel.LookupAccount(plat, "vercel"),
 	ExtraProdDomains: []string{"storefront.io"},
 	EnableBlobStore:  true,
 	PreviewEnv: map[string]pulumi.StringInput{

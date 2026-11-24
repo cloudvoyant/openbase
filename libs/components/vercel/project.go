@@ -125,22 +125,23 @@ func NewProject(ctx *pulumi.Context, name string, args *ProjectArgs, opts ...pul
 	return res, registerVercelProjectOutputs(ctx, res)
 }
 
-// LookupProject resolves a shared vercel.Project from an infra/shared ScopeRef (by unique kind or explicit name).
-func LookupProject(shared *core.ScopeRef, name ...string) *ProjectRef {
+// LookupProject resolves a shared vercel.Project by alias name from an infra/shared ScopeRef.
+func LookupProject(shared *core.ScopeRef, name string) *ProjectRef {
 	if shared == nil {
 		return nil
 	}
+	alias := []string{name}
 	return &ProjectRef{
-		ProjectID:                shared.ManifestAttr("vercel-project", name, "vercelProjectId", "projectId"),
-		VercelProjectName:        shared.ManifestAttr("vercel-project", name, "vercelProjectName"),
-		TeamID:                   shared.ManifestAttr("vercel-project", name, "teamId"),
-		TeamSlug:                 shared.ManifestAttr("vercel-project", name, "teamSlug"),
-		BaseDomain:               shared.ManifestAttr("vercel-project", name, "baseDomain"),
-		DevCustomEnvironmentID:   shared.ManifestAttr("vercel-project", name, "devCustomEnvironmentId"),
-		StageCustomEnvironmentID: shared.ManifestAttr("vercel-project", name, "stageCustomEnvironmentId"),
-		ProtectionBypassSecret:   pulumi.ToSecret(shared.ManifestAttr("vercel-project", name, "protectionBypassSecret")).(pulumi.StringOutput),
-		BlobStoreID:              shared.ManifestAttr("vercel-project", name, "blobStoreId"),
-		BlobBaseURL:              shared.ManifestAttr("vercel-project", name, "blobBaseUrl"),
+		ProjectID:                shared.ManifestAttr("vercel-project", alias, "vercelProjectId", "projectId"),
+		VercelProjectName:        shared.ManifestAttr("vercel-project", alias, "vercelProjectName"),
+		TeamID:                   shared.ManifestAttr("vercel-project", alias, "teamId"),
+		TeamSlug:                 shared.ManifestAttr("vercel-project", alias, "teamSlug"),
+		BaseDomain:               shared.ManifestAttr("vercel-project", alias, "baseDomain"),
+		DevCustomEnvironmentID:   shared.ManifestAttr("vercel-project", alias, "devCustomEnvironmentId"),
+		StageCustomEnvironmentID: shared.ManifestAttr("vercel-project", alias, "stageCustomEnvironmentId"),
+		ProtectionBypassSecret:   pulumi.ToSecret(shared.ManifestAttr("vercel-project", alias, "protectionBypassSecret")).(pulumi.StringOutput),
+		BlobStoreID:              shared.ManifestAttr("vercel-project", alias, "blobStoreId"),
+		BlobBaseURL:              shared.ManifestAttr("vercel-project", alias, "blobBaseUrl"),
 	}
 }
 

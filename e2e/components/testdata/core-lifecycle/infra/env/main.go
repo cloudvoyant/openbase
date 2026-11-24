@@ -15,7 +15,7 @@ func main() {
 		if branchFrom == "" {
 			branchFrom = "dev"
 		}
-		ledger, err := core.NewStateful(ctx, "ledger", &core.StatefulArgs{
+		ledger, err := core.NewCustomStateful(ctx, "ledger", &core.CustomStatefulArgs{
 			ProjectName: "storefront",
 			Repo:        "cloudvoyant/openbase",
 			Environment: explicitEnv,
@@ -28,7 +28,7 @@ func main() {
 		if err != nil {
 			return err
 		}
-		worker, err := core.NewStateless(ctx, "worker", &core.StatelessArgs{
+		worker, err := core.NewCustomStateless(ctx, "worker", &core.CustomStatelessArgs{
 			ProjectName: "storefront",
 			Repo:        "cloudvoyant/openbase",
 			Environment: explicitEnv,

@@ -37,7 +37,7 @@ func TestVercelProjectAndAccount(t *testing.T) {
 					return err
 				}
 				proj, err := vercel.NewProject(ctx, "vercel", &vercel.ProjectArgs{
-					Account:         vercel.LookupAccount(plat),
+					Account:         vercel.LookupAccount(plat, "vercel"),
 					EnableBlobStore: true,
 				})
 				if err != nil {
