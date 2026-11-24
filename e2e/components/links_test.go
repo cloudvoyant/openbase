@@ -40,7 +40,7 @@ func TestLinks(t *testing.T) {
 		assertHybridLinksCleanup(t, teamID, sharedAssetsBucket, devBucket, vercelProjectID)
 	})
 
-	t.Run("given separate infra/platform, infra/shared, and infra/env hybrid Vercel + GCP Pulumi programs", func(t *testing.T) {
+	t.Run("given a Vercel WebApp linked to an internal GCP CloudRunService and GCS buckets", func(t *testing.T) {
 		for _, s := range []string{"platform", "shared", "dev", "preview-pr-99"} {
 			h.InitStack(t, s)
 		}

@@ -3,6 +3,7 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -88,7 +89,7 @@ func TestVercelNeonKindeApp(t *testing.T) {
 				if !hasStageTok || !hasStageBase {
 					t.Fatalf("expected stage CustomEnvironment BLOB_READ_WRITE_TOKEN=%v BLOB_BASE_URL=%v", hasStageTok, hasStageBase)
 				}
-				assertProdAndStageAppHealth(t, prodHealth, stageHealth, stageHTML, "vercel", s.prodIssuer, sha256Hex(s.prodClientSec), "seeded-in-vercel-prod")
+				assertProdAndStageAppHealth(t, prodHealth, stageHealth, stageHTML, "vercel", s.prodIssuer, fmt.Sprintf("%x", sha256.Sum256([]byte(s.prodClientSec))), "seeded-in-vercel-prod")
 			})
 
 			t.Run("when probing preview-pr-11 without and with x-vercel-protection-bypass, then unauthenticated requests are blocked while bypass serves the app", func(t *testing.T) {
@@ -100,7 +101,7 @@ func TestVercelNeonKindeApp(t *testing.T) {
 
 				// Assert.
 				assertPreviewStatusBlocked(t, s.previewURL+"/api/health", unauthStatus, unauthLoc)
-				assertPreviewVercelAppHealth(t, health, dashboardHTML, s.devIssuer, sha256Hex(s.devClientSec))
+				assertPreviewVercelAppHealth(t, health, dashboardHTML, s.devIssuer, fmt.Sprintf("%x", sha256.Sum256([]byte(s.devClientSec))))
 			})
 
 			t.Run("when mutating notes and blobs on preview-pr-11 and BlobOverlayClient, then it inherits dev state and isolates preview writes", func(t *testing.T) {

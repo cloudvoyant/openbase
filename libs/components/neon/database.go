@@ -21,23 +21,40 @@ var ErrProjectIDRequired = errors.New("neon: project or projectId is required")
 
 // DatabaseArgs configures a per-environment Neon branch, compute endpoint, role, and database.
 type DatabaseArgs struct {
-	ProjectName     string
-	Repo            string
-	Environment     string
-	Kind            string
-	BranchFrom      string
-	Backup          *bool
-	Links           []core.Resource
-	Project         ProjectInput
-	ProjectID       pulumi.StringInput
+	// ProjectName overrides ctx.Project() in canonical naming and default tags.
+	ProjectName string
+	// Repo records the source repository slug in openbase.io/* resource tags.
+	Repo string
+	// Environment overrides ctx.Stack() when resolving the deployment tier (dev, stage, prod, preview-*).
+	Environment string
+	// Kind overrides the default "neon-database" kind stored in openbaseManifest.
+	Kind string
+	// BranchFrom names the parent environment stack to branch from via Neon copy-on-write (defaults to "prod" on stage and "dev" on preview-*).
+	BranchFrom string
+	// Backup overrides tier-default deletion protection on the Neon branch.
+	Backup *bool
+	// Links lists upstream OpenBase resources linked to this database.
+	Links []core.Resource
+	// Project supplies the shared neon.Project (or neon.LookupProject(shared)) that owns this branch.
+	Project ProjectInput
+	// ProjectID sets the Neon project ID directly when Project is omitted.
+	ProjectID pulumi.StringInput
+	// DefaultBranchID sets the root Neon branch ID directly when Project is omitted.
 	DefaultBranchID pulumi.StringInput
-	ParentBranchID  pulumi.StringInput
-	BranchStackRef  string
-	APIKey          pulumi.StringInput
-	APIBaseURL      string
-	DatabaseName    string
-	RoleName        string
-	SuspendSeconds  *int
+	// ParentBranchID overrides stack-reference lookup of the parent Neon branch ID when BranchFrom is set.
+	ParentBranchID pulumi.StringInput
+	// BranchStackRef overrides the Pulumi StackReference name used to read the parent environment's branchId output.
+	BranchStackRef string
+	// APIKey supplies the Neon API key used to call reveal_password on the Neon v2 API (inherited from Project when in-memory).
+	APIKey pulumi.StringInput
+	// APIBaseURL overrides the Neon v2 API base URL (used in offline tests).
+	APIBaseURL string
+	// DatabaseName sets the PostgreSQL database name created on root branches (defaults to "openbase").
+	DatabaseName string
+	// RoleName sets the PostgreSQL role name created on root branches (defaults to "openbase_app").
+	RoleName string
+	// SuspendSeconds maps to Neon EndpointArgs.SuspendTimeoutSeconds to scale idle computes to zero (defaults to 300s on dev/preview and 0/always-on on prod/stage).
+	SuspendSeconds *int
 }
 
 // Database is the provisioned Neon PostgreSQL branch handle with pooled DATABASE_URL and direct DIRECT_URL secrets.
@@ -45,15 +62,24 @@ type Database struct {
 	pulumi.ResourceState
 	core.StatefulMeta
 
-	Branch      *neonprov.Branch
-	Endpoint    *neonprov.Endpoint
-	Role        *neonprov.Role
-	Database    *neonprov.Database
-	BranchID    pulumi.StringOutput
-	Host        pulumi.StringOutput
-	PoolerHost  pulumi.StringOutput
+	// Branch is the underlying Pulumi neon.Branch resource for this environment.
+	Branch *neonprov.Branch
+	// Endpoint is the underlying Pulumi neon.Endpoint read-write compute resource.
+	Endpoint *neonprov.Endpoint
+	// Role is the underlying Pulumi neon.Role resource (nil on child branches that inherit roles from their parent).
+	Role *neonprov.Role
+	// Database is the underlying Pulumi neon.Database resource (nil on child branches that inherit databases from their parent).
+	Database *neonprov.Database
+	// BranchID is the Neon branch ID string output exported so downstream stacks can branch from this environment.
+	BranchID pulumi.StringOutput
+	// Host is the direct unpooled PostgreSQL compute hostname.
+	Host pulumi.StringOutput
+	// PoolerHost is the PgBouncer pooled hostname (-pooler) for serverless workloads.
+	PoolerHost pulumi.StringOutput
+	// DatabaseURL is the secret pooled PostgreSQL connection URL (sslmode=require).
 	DatabaseURL pulumi.StringOutput
-	DirectURL   pulumi.StringOutput
+	// DirectURL is the secret direct unpooled PostgreSQL connection URL for schema migrations.
+	DirectURL pulumi.StringOutput
 }
 
 // NewDatabase provisions a Neon PostgreSQL branch satisfying core.StatefulResource.

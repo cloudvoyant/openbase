@@ -8,7 +8,7 @@ _.path = ["{{config_root}}/bin"]
 GOWORK = "off"
 
 [monorepo]
-config_roots = ["libs/*", "libs/internal/*", "e2e/components"]
+config_roots = ["apps/*", "libs/*", "libs/internal/*", "e2e/components"]
 
 [tools]
 go = "1.25.14"
@@ -20,11 +20,13 @@ run = "go mod download all"
 
 [tasks.build]
 run = [
+  "mise run //apps/based:build",
   "mise run //libs/components:build",
 ]
 
 [tasks.test]
 run = [
+  "mise run //apps/based:test",
   "mise run //libs/components:test",
   "go test -c -o /dev/null ./e2e/components",
 ]

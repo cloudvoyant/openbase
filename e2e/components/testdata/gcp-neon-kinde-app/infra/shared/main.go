@@ -13,12 +13,11 @@ import (
 
 func main() {
 	pulumi.Run(func(ctx *pulumi.Context) error {
-		appProject := envOrDefault("OPENBASE_APP_PROJECT", "OPENBASE_TEST_APP_PROJECT", "obgapp")
-		projectNum := envOrDefault("OPENBASE_GCP_PROJECT_NUMBER", "OPENBASE_TEST_GCP_PROJECT_NUMBER", "785485436615")
+		appProject := os.Getenv("OPENBASE_TEST_APP_PROJECT")
+		projectNum := os.Getenv("OPENBASE_TEST_GCP_PROJECT_NUMBER")
 		baseDomain := os.Getenv("OPENBASE_BASE_DOMAIN")
-		platformRef := envOrDefault("OPENBASE_PLATFORM_STACK_REF", "", "organization/platform/platform")
 
-		plat, err := openbase.LookupPlatform(ctx, platformRef)
+		plat, err := openbase.LookupPlatform(ctx, "organization/platform/platform")
 		if err != nil {
 			return err
 		}
@@ -42,7 +41,7 @@ func main() {
 		_, err = kinde.NewProject(ctx, "kinde", &kinde.ProjectArgs{
 			ProjectName:                appProject,
 			Account:                    kinde.LookupAccount(plat),
-			AppName:                    envOrDefault("OPENBASE_KINDE_APP_NAME", "OPENBASE_TEST_KINDE_APP_NAME", "openbase-e2e-"+appProject),
+			AppName:                    os.Getenv("OPENBASE_TEST_KINDE_APP_NAME"),
 			BaseDomain:                 baseDomain,
 			StageDomain:                cb.StageHost,
 			ProdDomain:                 cb.ProdHost,
@@ -50,22 +49,10 @@ func main() {
 			ExtraNonProdLogoutURIs:     cb.ExtraNonProdLogouts,
 			ExtraProdRedirectURIs:      cb.ExtraProdRedirect,
 			ExtraProdLogoutURIs:        cb.ExtraProdLogout,
-			ImportNonProdAppID:         envOrDefault("OPENBASE_IMPORT_NONPROD_APP_ID", "OPENBASE_TEST_IMPORT_NONPROD_APP_ID", ""),
-			ImportProdAppID:            envOrDefault("OPENBASE_IMPORT_PROD_APP_ID", "OPENBASE_TEST_IMPORT_PROD_APP_ID", ""),
-			RetainApplicationsOnDelete: os.Getenv("OPENBASE_RETAIN_KINDE_APPS") == "1" || os.Getenv("OPENBASE_TEST_RETAIN_KINDE_APPS") == "1",
+			ImportNonProdAppID:         os.Getenv("OPENBASE_TEST_IMPORT_NONPROD_APP_ID"),
+			ImportProdAppID:            os.Getenv("OPENBASE_TEST_IMPORT_PROD_APP_ID"),
+			RetainApplicationsOnDelete: os.Getenv("OPENBASE_TEST_RETAIN_KINDE_APPS") == "1",
 		})
 		return err
 	})
-}
-
-func envOrDefault(primaryKey, secondaryKey, fallback string) string {
-	if v := os.Getenv(primaryKey); v != "" {
-		return v
-	}
-	if secondaryKey != "" {
-		if v := os.Getenv(secondaryKey); v != "" {
-			return v
-		}
-	}
-	return fallback
 }

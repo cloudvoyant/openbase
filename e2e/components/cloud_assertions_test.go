@@ -3,8 +3,6 @@ package e2e_test
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,11 +61,6 @@ func assertEqualStr(t *testing.T, label, got, want string) {
 	if got != want {
 		t.Fatalf("%s = %q, want %q", label, got, want)
 	}
-}
-
-func sha256Hex(s string) string {
-	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:])
 }
 
 func describeGCSBucket(t *testing.T, bucketName string) gcsBucketMetadata {

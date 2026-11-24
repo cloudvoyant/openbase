@@ -29,9 +29,10 @@ flowchart LR
     Store -->|"2. Fallback Read on 404 (objectViewer)"| Fallback[("Dev Bucket (BranchFrom: dev)")]
 ```
 
-- `gcp.Bucket` creates `storage.Bucket`, resolves the parent bucket name when `BranchFrom` is set, and registers a `LinkDescriptor` with `GrantAccess`.
-- `GrantAccess` binds `roles/storage.objectAdmin` on the primary bucket and `roles/storage.objectViewer` on the fallback bucket to the linked workload service account.
-- `overlayfs.Store` wraps `*storage.Client` in application Go code to implement copy-on-write object lookup.
+- `gcp.Bucket` creates one isolated `storage.Bucket` per environment (`dev`, `stage`, `prod`, or `preview-<slug>`).
+- On `preview-<slug>` stacks, `NewBucket` defaults `BranchFrom` to `"dev"` (via `core.DefaultBranchFrom`), opens a Pulumi `StackReference` to the parent stack (`core.DefaultBranchStackRef`), and reads its exported `bucketName` into `FallbackBucketName` without copying any objects.
+- `LinkDescriptor.GrantAccess` binds `roles/storage.objectAdmin` on the primary bucket and `roles/storage.objectViewer` on the fallback bucket to each linked workload service account.
+- `overlayfs.Store` wraps `*storage.Client` in application Go code to implement copy-on-write object lookup across `PrimaryBucket` and `FallbackBucket`.
 
 ### Data and Control Flow
 
@@ -72,6 +73,13 @@ store, err := overlayfs.NewStore(gcsClient, primaryBucket, fallbackBucket)
 | `dev` / `preview-<slug>` | `false` | `true` | `false` | `0s` |
 
 ## Implementation
+
+### Zero-copy preview branching
+
+GCS has no native bucket-level copy-on-write snapshot. Instead, `gcp.NewBucket` models branching in two layers:
+
+1. **Provisioning time (`pulumi up`)**: On `preview-<slug>` stacks (or whenever `BranchFrom` is set), `NewBucket` creates an empty preview bucket with `ForceDestroy: true`, looks up the parent stack's `bucketName` output via `StackReference` into `FallbackBucketName`, and grants linked workloads read-only `roles/storage.objectViewer` on that parent bucket.
+2. **Runtime (`overlayfs.Store`)**: Application code initializes `overlayfs.NewStore(gcsClient, primaryBucket, fallbackBucket)`. Reads check the preview bucket first and fall back to the parent bucket on `storage.ErrObjectNotExist`, while writes and deletes apply only to the preview bucket.
 
 ### Global bucket naming
 

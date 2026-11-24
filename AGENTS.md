@@ -24,6 +24,7 @@
 ### Go
 
 - Follow standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...) (*<Resource>, error)`) and typed lookups (`<provider>.LookupAccount(plat, name...)` and `<provider>.LookupProject(shared, name...)`) across organization accounts (`<provider>.NewAccount` in `infra/platform/main.go` on a dedicated `platform` stack), shared project resources (`<provider>.NewProject` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming), and environment resources (concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
+- [Proposed] Document every exported function, type, and struct field in handwritten Go packages with a short comment explaining its purpose and cloud-provider mapping.
 - [Proposed] Keep every handwritten function at or below cyclomatic complexity `10` as enforced by [.golangci.yml](./.golangci.yml).
 
 ### Pulumi

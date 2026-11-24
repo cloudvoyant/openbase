@@ -1,6 +1,7 @@
 package e2e_test
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -86,7 +87,7 @@ func TestGCPNeonKindeApp(t *testing.T) {
 				h.WriteJSONArtifact(t, "prod-stage-health.json", map[string]any{"prod": prodHealth, "stage": stageHealth})
 
 				// Assert.
-				assertProdAndStageAppHealth(t, prodHealth, stageHealth, stageHTML, "gcp-cloud-run", state.prodIssuer, sha256Hex(state.prodClientSec), "seeded-in-gcp-prod")
+				assertProdAndStageAppHealth(t, prodHealth, stageHealth, stageHTML, "gcp-cloud-run", state.prodIssuer, fmt.Sprintf("%x", sha256.Sum256([]byte(state.prodClientSec))), "seeded-in-gcp-prod")
 				assertEqualStr(t, "stage<-prod pgx row", pgxNote, "seeded-in-gcp-prod")
 			})
 
@@ -102,7 +103,7 @@ func TestGCPNeonKindeApp(t *testing.T) {
 				h.WriteJSONArtifact(t, "preview-health.json", health)
 
 				// Assert.
-				assertPreviewGCPAppHealth(t, health, dashboardHTML, state.devIssuer, sha256Hex(state.devClientSec), state.devBucket)
+				assertPreviewGCPAppHealth(t, health, dashboardHTML, state.devIssuer, fmt.Sprintf("%x", sha256.Sum256([]byte(state.devClientSec))), state.devBucket)
 				if signedCode != http.StatusOK || signedBody != "signed-v4-ok" {
 					t.Fatalf("expected keyless v4 signed URL 200 'signed-v4-ok', got %d %q", signedCode, signedBody)
 				}
