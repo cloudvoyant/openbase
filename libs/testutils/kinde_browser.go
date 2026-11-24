@@ -1,4 +1,4 @@
-package e2e_test
+package testutils
 
 import (
 	"context"
@@ -15,44 +15,22 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
-
-	"github.com/cloudvoyant/openbase/libs/testutils"
 )
 
 // Public API -----------------------------------------------------------------
 
-// RequireLiveKindeUser verifies either AgentMail OTP credentials (AGENTMAIL_API_KEY + E2E_P1_EMAIL) or KINDE_E2E_USERNAME/PASSWORD.
-func RequireLiveKindeUser(t *testing.T) (string, string) {
-	t.Helper()
-	return testutils.RequireKindeUser(t)
-}
-
-// Private helpers ------------------------------------------------------------
-
-var otpSixDigitsRe = regexp.MustCompile(`\b(\d{6})\b`)
-
-type browserAuthReport struct {
+// BrowserAuthReport captures the verified Kinde browser login and logout round-trip result.
+type BrowserAuthReport struct {
 	LoginLandingURL string `json:"loginLandingUrl"`
 	Authenticated   bool   `json:"authenticated"`
 	SignedInEmail   string `json:"signedInEmail"`
 	LoggedOutAgain  bool   `json:"loggedOutAgain"`
 }
 
-type pageProbeState struct {
-	Found bool   `json:"found"`
-	Loc   string `json:"loc"`
-	Text  string `json:"text"`
-}
-
-type agentMailMessageSummary struct {
-	MessageID string   `json:"message_id"`
-	Timestamp string   `json:"timestamp"`
-	To        []string `json:"to"`
-}
-
-func verifyKindeBrowserLogin(t *testing.T, h *LiveStackHarness, baseURL, bypassSecret string) browserAuthReport {
+// VerifyKindeBrowserLogin drives headless Chrome through Kinde sign-in and sign-out on baseURL.
+func VerifyKindeBrowserLogin(t *testing.T, h *LiveStackHarness, baseURL, bypassSecret string) BrowserAuthReport {
 	t.Helper()
-	email, password := RequireLiveKindeUser(t)
+	email, password := RequireKindeUser(t)
 	agentMailKey := os.Getenv("AGENTMAIL_API_KEY")
 	h.RegisterSecret(password, agentMailKey)
 
@@ -75,12 +53,28 @@ func verifyKindeBrowserLogin(t *testing.T, h *LiveStackHarness, baseURL, bypassS
 	if !loggedOut {
 		t.Fatalf("expected /api/auth/logout to clear session and return to %s/", baseURL)
 	}
-	return browserAuthReport{
+	return BrowserAuthReport{
 		LoginLandingURL: landingURL,
 		Authenticated:   health.Auth.Authenticated,
 		SignedInEmail:   health.Auth.User.Email,
 		LoggedOutAgain:  loggedOut,
 	}
+}
+
+// Private helpers ------------------------------------------------------------
+
+var otpSixDigitsRe = regexp.MustCompile(`\b(\d{6})\b`)
+
+type pageProbeState struct {
+	Found bool   `json:"found"`
+	Loc   string `json:"loc"`
+	Text  string `json:"text"`
+}
+
+type agentMailMessageSummary struct {
+	MessageID string   `json:"message_id"`
+	Timestamp string   `json:"timestamp"`
+	To        []string `json:"to"`
 }
 
 func newHeadlessChromeCtx(t *testing.T, timeout time.Duration) (context.Context, func()) {
@@ -334,7 +328,16 @@ func waitForAppCallbackLanding(t *testing.T, ctx context.Context, baseURL string
 	return ""
 }
 
-func readBrowserHealthJSON(t *testing.T, ctx context.Context, baseURL string) fullStackHealthResponse {
+type browserHealthResponse struct {
+	Auth struct {
+		Authenticated bool `json:"authenticated"`
+		User          struct {
+			Email string `json:"email"`
+		} `json:"user"`
+	} `json:"auth"`
+}
+
+func readBrowserHealthJSON(t *testing.T, ctx context.Context, baseURL string) browserHealthResponse {
 	t.Helper()
 	if err := chromedp.Do(ctx, chromedp.Navigate(baseURL+"/api/health")); err != nil {
 		t.Fatalf("navigate to /api/health in browser: %v", err)
@@ -343,7 +346,7 @@ func readBrowserHealthJSON(t *testing.T, ctx context.Context, baseURL string) fu
 	if err != nil {
 		t.Fatalf("read /api/health in browser: %v", err)
 	}
-	var out fullStackHealthResponse
+	var out browserHealthResponse
 	if err := json.Unmarshal([]byte(strings.TrimSpace(raw)), &out); err != nil {
 		t.Fatalf("unmarshal browser /api/health (%q): %v", raw, err)
 	}

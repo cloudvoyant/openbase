@@ -43,9 +43,9 @@ flowchart TD
         Bkt["gcp.Bucket"]
     end
 
-    Org -->|"gcp.LookupAccount(plat)"| App
-    Org -->|"gcp.LookupAccount(plat)"| Broker
-    AR -->|"gcp.LookupProject(shared)"| CR
+    Org -->|"gcp.LookupAccount(plat, \"gcp\")"| App
+    Org -->|"gcp.LookupAccount(plat, \"gcp\")"| Broker
+    AR -->|"gcp.LookupProject(shared, \"gcp\")"| CR
     Broker -->|"Principals[gcp]"| CR
     Broker -->|"Principals[gcp]"| Bkt
     LB -->|"<service>.gcp.<org>.io"| CR
@@ -54,7 +54,7 @@ flowchart TD
 - `gcp.Account` enables `run`, `artifactregistry`, `iam`, `iamcredentials`, `sts`, `storage`, `secretmanager`, and `cloudkms` APIs, creates the OIDC pool and providers, and exports `workloadIdentityPoolName`, `<id>OidcProviderName`, `keyRingId`, and `gcpBaseDomain`.
 - `gcp.Project` creates `<project>-<name>` in Artifact Registry (omitting `shared` from the repository ID) and exports `repositoryId`, `repositoryUrl`, and `baseDomain`.
 - `gcp.FederatedIdentity` and `gcp.WIFBroker` implement `core.IdentityBroker`, minting a federated GCP service account and `roles/iam.workloadIdentityUser` binding when non-GCP workloads (such as `vercel.WebApp`) link GCP resources.
-- [gcp.CloudRunService](./cloud-run-service.md) and [gcp.Bucket](./bucket.md) consume `Account: gcp.LookupAccount(plat)` and `Project: gcp.LookupProject(shared)` on `dev`, `stage`, `prod`, and `preview-<slug>`.
+- [gcp.CloudRunService](./cloud-run-service.md) and [gcp.Bucket](./bucket.md) consume `Account: gcp.LookupAccount(plat, "gcp")` and `Project: gcp.LookupProject(shared, "gcp")` on `dev`, `stage`, `prod`, and `preview-<slug>`.
 
 ### Data and Control Flow
 
@@ -72,7 +72,7 @@ sequenceDiagram
     Svc->>GCP: 5. Bind artifactregistry.reader + deploy Cloud Run v2
 ```
 
-`gcp.Account` establishes account identity and edge routing once per GCP account. `gcp.Project` creates the application image registry without forwarding WIF pools. Environment stacks read `gcp.LookupProject(shared)` for image pull access and `gcp.LookupAccount(plat)` when crossing cloud boundaries.
+`gcp.Account` establishes account identity and edge routing once per GCP account. `gcp.Project` creates the application image registry without forwarding WIF pools. Environment stacks read `gcp.LookupProject(shared, "gcp")` for image pull access and `gcp.LookupAccount(plat, "gcp")` when crossing cloud boundaries.
 
 ### Interfaces and Contracts
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-`kinde.OidcApp` (`core.StatelessResource`) routes per-environment stacks (`dev`, `stage`, `prod`, and `preview-<slug>`) to the matching `NonProd` or `Prod` Kinde environment credentials from `kinde.LookupProject(shared)` and computes environment-specific OIDC callback and post-logout URLs. It creates zero duplicate Kinde applications per branch.
+`kinde.OidcApp` (`core.StatelessResource`) routes per-environment stacks (`dev`, `stage`, `prod`, and `preview-<slug>`) to the matching `NonProd` or `Prod` Kinde environment credentials from `kinde.LookupProject(shared, "auth")` and computes environment-specific OIDC callback and post-logout URLs. It creates zero duplicate Kinde applications per branch.
 
 ## Requirement
 
@@ -55,7 +55,7 @@ sequenceDiagram
 
 ```go
 auth, err := kinde.NewOidcApp(ctx, "auth", &kinde.OidcAppArgs{
-	Project:      kinde.LookupProject(shared),
+	Project:      kinde.LookupProject(shared, "auth"),
 	BaseDomain:   "vercel.cloudvoyant.io",
 	CallbackPath: "/api/auth/kinde_callback",
 })

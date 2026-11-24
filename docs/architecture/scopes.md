@@ -57,7 +57,7 @@ sequenceDiagram
     participant Broker as "core.IdentityBroker (gcp.WIFBroker)"
 
     Shared->>State: 1. PublishLink exports flat outputs + openbaseManifest.resources
-    Env->>State: 2. openbase.LookupShared(ctx) + <pkg>.LookupProject(shared)
+    Env->>State: 2. openbase.LookupShared(ctx) + <pkg>.LookupProject(shared, name)
     Env->>Env: 3. NewDatabase / NewBucket / NewOidcApp / NewWebApp
     Env->>Broker: 4. ResolvePrincipal(consumerMeta, Subject)
     Broker-->>Env: 5. Return federated IAM member
@@ -91,8 +91,8 @@ db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
 
 ### SaaS single-account vs cloud IaaS multi-account
 
-1. **SaaS accounts** (`vercel`, `neon`, `kinde`) register one `NewAccount` in `infra/platform` that isolates environments internally (`kinde.AccountArgs` holds `NonProd` and `Prod` `EnvironmentCredentials`). Downstream stacks call `kinde.LookupAccount(plat)` without a name.
-2. **Cloud IaaS accounts** (`gcp`, future `aws`) register one or more `NewAccount` entries (`"gcp-nonprod"`, `"gcp-prod"`, or `"gcp-analytics"`) paired with explicit `pulumi.Provider(p)` options. Calling `gcp.LookupAccount(plat, "gcp-prod")` selects `openbaseManifest.resources["gcp-prod"]`, while calling `gcp.LookupAccount(plat)` without a name when multiple `gcp-account` entries exist fails with `core.ErrAmbiguousResource`.
+1. **SaaS accounts** (`vercel`, `neon`, `kinde`) register one `NewAccount` in `infra/platform` that isolates environments internally (`kinde.AccountArgs.Environments` maps arbitrary environment names to `EnvironmentCredentials`). Downstream stacks select it explicitly via `kinde.LookupAccount(plat, "kinde")`.
+2. **Cloud IaaS accounts** (`gcp`, future `aws`) register one or more `NewAccount` entries (`"gcp-nonprod"`, `"gcp-prod"`, or `"gcp-analytics"`) paired with explicit `pulumi.Provider(p)` options. Calling `gcp.LookupAccount(plat, "gcp-prod")` selects `openbaseManifest.resources["gcp-prod"]` directly, while an empty alias when multiple `gcp-account` entries exist fails with `core.ErrAmbiguousResource`.
 3. **Raw Pulumi interoperability**: Components register directly on `*pulumi.Context` and return concrete typed structs (for example `svc.ServiceAccountEmail`, `svc.Service`, `bucket.BucketName`). Callers construct native Pulumi resources before or after OpenBase constructors and pass outputs in either direction within the same stack.
 
 ## References

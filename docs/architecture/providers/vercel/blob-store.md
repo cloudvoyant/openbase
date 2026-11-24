@@ -56,7 +56,7 @@ sequenceDiagram
 
 ```go
 blobs, err := vercel.NewBlobStore(ctx, "uploads", &vercel.BlobStoreArgs{
-	Project:            vercel.LookupProject(shared),
+	Project:            vercel.LookupProject(shared, "web"),
 	BlobReadWriteToken: rwToken,
 })
 

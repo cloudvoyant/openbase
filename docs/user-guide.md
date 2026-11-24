@@ -97,7 +97,7 @@ func main() {
 
 ## 3. Shared repository project (`infra/shared/main.go`)
 
-Set `workspace.infra.directory: infra/env` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Call `openbase.LookupPlatform(ctx)` once and pass `<provider>.LookupAccount(plat)` into each `<provider>.NewProject` constructor:
+Set `workspace.infra.directory: infra/env` and `workspace.infra.shared_directory: infra/shared` in `premise.yaml`. Call `openbase.LookupPlatform(ctx)` once and pass `<provider>.LookupAccount(plat, "<alias>")` into each `<provider>.NewProject` constructor:
 
 ```go
 package main
@@ -147,7 +147,7 @@ func main() {
 
 ## 4. Per-environment stack (`infra/env/main.go`)
 
-`openbase.LookupShared(ctx)` resolves `<org>/<project>-shared/shared`, and `<provider>.LookupProject(shared)` returns typed shared project handles. Stateful constructors set default branching (`stage` from `prod`, `preview-*` from `dev`), `Links` grants IAM and OIDC access, and callers wire their own `Env` and `Secrets` keys directly from typed resource outputs:
+`openbase.LookupShared(ctx)` resolves `<org>/<project>-shared/shared`, and `<provider>.LookupProject(shared, "<alias>")` returns typed shared project handles. Stateful constructors set default branching (`stage` from `prod`, `preview-*` from `dev`), `Links` grants IAM and OIDC access, and callers wire their own `Env` and `Secrets` keys directly from typed resource outputs:
 
 ```go
 package main

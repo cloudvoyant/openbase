@@ -1,4 +1,4 @@
-package e2e_test
+package testutils
 
 import (
 	"context"
@@ -14,8 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/cloudvoyant/openbase/libs/goutils"
-	"github.com/cloudvoyant/openbase/libs/testutils"
 )
 
 // Public API -----------------------------------------------------------------
@@ -60,75 +61,12 @@ type LiveStackHarness struct {
 	secrets         []string
 }
 
-var (
-	gcpProjectNumberMu    sync.Mutex
-	gcpProjectNumberCache = map[string]string{}
-)
-
-// ResolveGCPProjectNumber looks up and caches the numeric GCP project number, billing quota to gcpProject with retry.
-func ResolveGCPProjectNumber(t *testing.T, gcpProject string) string {
-	t.Helper()
-	if envNum := strings.TrimSpace(os.Getenv("OPENBASE_TEST_GCP_PROJECT_NUMBER")); envNum != "" {
-		return envNum
-	}
-	gcpProjectNumberMu.Lock()
-	defer gcpProjectNumberMu.Unlock()
-	if cached := gcpProjectNumberCache[gcpProject]; cached != "" {
-		return cached
-	}
-	num := queryGCPProjectNumberWithRetry(t, gcpProject)
-	gcpProjectNumberCache[gcpProject] = num
-	return num
-}
-
-func queryGCPProjectNumberWithRetry(t *testing.T, gcpProject string) string {
-	t.Helper()
-	var lastOut []byte
-	var lastErr error
-	for attempt := 0; attempt < 5; attempt++ {
-		cmd := exec.Command("gcloud", "projects", "describe", gcpProject, "--billing-project="+gcpProject, "--format=value(projectNumber)")
-		lastOut, lastErr = cmd.CombinedOutput()
-		if lastErr == nil {
-			if num := strings.TrimSpace(string(lastOut)); num != "" {
-				return num
-			}
-		}
-		time.Sleep(time.Duration(attempt+1) * 5 * time.Second)
-	}
-	t.Fatalf("gcloud projects describe %s: %v\n%s", gcpProject, lastErr, string(lastOut))
-	return ""
-}
-
-// RequireLiveGCP checks OPENBASE_TEST_GCP/OPENBASE_TEST_LIVE and returns (gcpProject, backendOverride).
-func RequireLiveGCP(t *testing.T) (string, string) {
-	t.Helper()
-	return testutils.RequireGCP(t)
-}
-
-// RequireLiveNeon checks OPENBASE_TEST_NEON/OPENBASE_TEST_LIVE and returns backendOverride.
-func RequireLiveNeon(t *testing.T) string {
-	t.Helper()
-	return testutils.RequireNeon(t)
-}
-
-// RequireLiveKinde checks OPENBASE_TEST_KINDE/OPENBASE_TEST_LIVE and returns backendOverride.
-func RequireLiveKinde(t *testing.T) string {
-	t.Helper()
-	return testutils.RequireKinde(t)
-}
-
-// RequireLiveVercel checks OPENBASE_TEST_VERCEL/OPENBASE_TEST_LIVE and returns backendOverride.
-func RequireLiveVercel(t *testing.T) string {
-	t.Helper()
-	return testutils.RequireVercel(t)
-}
-
 // NewLiveHarness materializes fixtureName + Pulumi state under e2e/outputs/components/<Test>, logs in, and registers cleanup.
 func NewLiveHarness(t *testing.T, fixtureName, pulumiProject, baseBackend string, extraEnv ...string) *LiveStackHarness {
 	t.Helper()
 	suiteTest, _, _ := strings.Cut(t.Name(), "/")
 	outDir := prepareArtifactDir(t, suiteTest)
-	dir := copyFixtureTo(t, fixtureName, filepath.Join(outDir, "workspace"))
+	dir := CopyFixtureTo(t, fixtureName, filepath.Join(outDir, "workspace"))
 	pulumiHome := filepath.Join(outDir, "pulumi-home")
 	if err := os.MkdirAll(pulumiHome, 0o755); err != nil {
 		t.Fatal(err)
@@ -227,7 +165,10 @@ func (h *LiveStackHarness) Pulumi(t *testing.T, callEnv []string, args ...string
 	t.Helper()
 	h.seedEnvSliceSecrets(callEnv)
 	workDir := h.dirForStack(stackFromArgs(args))
-	out := runCommandEnv(t, workDir, h.env(callEnv), "pulumi", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+	out, err := goutils.RunCommand(ctx, workDir, CommandEnvOverrides(RepoRoot(t), workDir, h.env(callEnv)), "pulumi", args...)
+	require.NoError(t, err)
 	if hasArg(args, "--show-secrets") {
 		h.maybeRegisterSecretOutput(args, strings.TrimSpace(out))
 	}
@@ -240,7 +181,10 @@ func (h *LiveStackHarness) PulumiFail(t *testing.T, callEnv []string, args ...st
 	t.Helper()
 	h.seedEnvSliceSecrets(callEnv)
 	workDir := h.dirForStack(stackFromArgs(args))
-	out := commandFailureEnv(t, workDir, h.env(callEnv), "pulumi", args...)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	out, err := goutils.RunCommandCombined(ctx, workDir, CommandEnvOverrides(RepoRoot(t), workDir, h.env(callEnv)), "pulumi", args...)
+	require.Error(t, err, "pulumi %v unexpectedly succeeded:\n%s", args, out)
 	h.appendTranscript(t.Name(), args, 1, out)
 	return out
 }
@@ -290,7 +234,7 @@ func prepareBackendPath(t *testing.T, outDir, baseBackend string) string {
 
 func prepareArtifactDir(t *testing.T, suiteTest string) string {
 	t.Helper()
-	outDir := filepath.Join(repositoryRoot(t), "e2e", "outputs", "components", suiteTest)
+	outDir := filepath.Join(RepoRoot(t), "e2e", "outputs", "components", suiteTest)
 	assertNoUncleanManifest(t, outDir)
 	if err := os.RemoveAll(outDir); err != nil {
 		t.Fatalf("clean artifact dir: %v", err)
@@ -565,7 +509,7 @@ func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) bo
 
 func (h *LiveStackHarness) runDestroyWithRetry(t *testing.T, ctx context.Context, stack, workDir string, _ []string) bool {
 	t.Helper()
-	out, err := goutils.DestroyPulumiStackWithRetry(ctx, workDir, testutils.CommandEnvOverrides(repositoryRoot(t), workDir, h.env(nil)), stack, 3)
+	out, err := goutils.DestroyPulumiStackWithRetry(ctx, workDir, CommandEnvOverrides(RepoRoot(t), workDir, h.env(nil)), stack, 3)
 	if err != nil {
 		t.Errorf("cleanup destroy stack %s: %v\n%s", stack, err, h.redact(out))
 		return false

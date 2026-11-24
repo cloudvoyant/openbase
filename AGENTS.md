@@ -24,16 +24,14 @@
 ### Go
 
 - Follow standard Pulumi Go constructors (`New<Resource>(ctx, name, &<Resource>Args{...}, opts...) (*<Resource>, error)`) and explicit-alias typed lookups (`<provider>.LookupAccount(plat, name)` and `<provider>.LookupProject(shared, name)`) across organization accounts (`<provider>.NewAccount` in `infra/platform/main.go` on a dedicated `platform` stack), shared project resources (`<provider>.NewProject` in `infra/shared/main.go` on `shared`, omitting `env` from canonical naming), and environment resources (concrete products in `infra/env/main.go` across `dev`, `stage`, `prod`, and `preview-<slug>`).
-- [Proposed] Document every exported function, type, and struct field in handwritten Go packages with a short comment explaining its purpose and cloud-provider mapping.
-- [Proposed] Keep every handwritten function at or below cyclomatic complexity `10` as enforced by [.golangci.yml](./.golangci.yml).
+- Document every exported function, type, and struct field in handwritten Go packages with a short comment explaining its purpose and cloud-provider mapping.
 
 ### Pulumi
 
 - Embed `pulumi.ResourceState` directly on concrete component structs alongside `core.AccountMeta`, `core.StatelessMeta`, or `core.StatefulMeta`.
-- [Proposed] Gate `BranchFrom` on preview or child stacks so persistent root stacks do not reference themselves as a branch parent.
 
 ## Testing
 
 - Co-locate fast offline `pulumi.WithMocks` integration and unit tests (`*_test.go`) beside each component package and keep standalone consumer E2E suites in `e2e/components`.
 - Make sure that every component module passes live against cloud sandboxes with `mise run e2e:live` (`//e2e/components:e2e:live`) before release. Skipped live suites do not count as passing validation.
-- [Proposed] Follow `difflab-bdd` across all Go test suites: mirror behavior flowcharts with `given <context>` -> `when <action>` -> `then <outcome>` subtests (collapsing single-outcome branches to `when <action>, then <outcome>`), hoist shared setup to enclosing `given` converged-state scopes, keep `// Arrange.`, `// Act.`, and `// Assert.` explicit, never test fixtures or harnesses themselves, and emit secret-redacted transcripts and JSON snapshots under `e2e/outputs/components/`.
+- Structure Go tests with nested `given`/`when`/`then` subtests, explicit `Arrange`/`Act`/`Assert` sections, shared setup hoisted to enclosing `given` scopes, and redacted output artifacts under `e2e/outputs/components/`.

@@ -59,7 +59,7 @@ When `preview-pr-42` runs `pulumi up`, it branches instantaneously from `dev` wi
 
 ```go
 db, err := neon.NewDatabase(ctx, "db", &neon.DatabaseArgs{
-	Project: neon.LookupProject(shared),
+	Project: neon.LookupProject(shared, "db"),
 	APIKey:  cfg.RequireSecret("neonApiKey"),
 })
 ```

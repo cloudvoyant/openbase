@@ -25,7 +25,7 @@
 
 ```mermaid
 flowchart TD
-    Proj["gcp.LookupProject(shared)"] -->|"repositoryId"| ARIAM["RepositoryIamMember (reader)"]
+    Proj["gcp.LookupProject(shared, \"gcp\")"] -->|"repositoryId"| ARIAM["RepositoryIamMember (reader)"]
     Links["Links (Bucket, internal CloudRunService)"] -->|"ResolveLinks"| IAMGrants["Linked Resource GrantAccess IAM"]
     Secrets["Explicit Secrets Map"] --> SM["Secret + SecretVersion + SecretIamMember"]
     SA["serviceaccount.Account (6-30 chars)"] --> SelfSign["serviceAccount.IAMMember (tokenCreator)"]
@@ -67,8 +67,8 @@ During `NewCloudRunService`, the component resolves `Links`, writes secrets to S
 
 ```go
 api, err := gcp.NewCloudRunService(ctx, "web", &gcp.CloudRunServiceArgs{
-	Account: gcp.LookupAccount(plat),
-	Project: gcp.LookupProject(shared),
+	Account: gcp.LookupAccount(plat, "gcp"),
+	Project: gcp.LookupProject(shared, "gcp"),
 	Links:   []core.Resource{uploads},
 	Env: map[string]pulumi.StringInput{
 		"STORAGE_BUCKET":   uploads.BucketName,

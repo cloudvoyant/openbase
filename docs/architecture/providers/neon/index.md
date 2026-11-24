@@ -36,8 +36,8 @@ flowchart TD
         DB["neon.Database (dev, prod, stage<-prod, preview<-dev)"]
     end
 
-    Org -->|"neon.LookupAccount(plat)"| App
-    Cluster -->|"neon.LookupProject(shared)"| DB
+    Org -->|"neon.LookupAccount(plat, \"neon\")"| App
+    Cluster -->|"neon.LookupProject(shared, \"db\")"| DB
 ```
 
 - `neon.Account` centralizes Neon account `OrgID`, `DefaultRegionID`, and optional CI API keys.
@@ -60,7 +60,7 @@ sequenceDiagram
     DB->>Neon: 5. Create environment branch + compute endpoint
 ```
 
-`neon.Account` defines account defaults once. `neon.Project` provisions the root cluster in `infra/shared`. Environment stacks read `neon.LookupProject(shared)` so `infra/env/main.go` never needs `NEON_ORG_ID`.
+`neon.Account` defines account defaults once. `neon.Project` provisions the root cluster in `infra/shared`. Environment stacks read `neon.LookupProject(shared, "db")` so `infra/env/main.go` never needs `NEON_ORG_ID`.
 
 ### Interfaces and Contracts
 

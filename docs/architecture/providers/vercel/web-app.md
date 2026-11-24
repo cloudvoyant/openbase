@@ -25,7 +25,7 @@
 
 ```mermaid
 flowchart TD
-    Proj["vercel.LookupProject(shared)"] --> Vars["ProjectEnvironmentVariable (prod / CustomEnvironment)"]
+    Proj["vercel.LookupProject(shared, \"web\")"] --> Vars["ProjectEnvironmentVariable (prod / CustomEnvironment)"]
     Sub["core.Subject (provider: vercel, project_id, owner)"] --> Brokers["Brokers ([]core.IdentityBroker)"]
     Brokers -->|"Principals"| Links["core.ResolveLinks (IAM Grants)"]
     CallerEnv["Explicit Env + Secrets Maps"] --> Vars
@@ -64,7 +64,7 @@ When a `vercel.WebApp` links an internal `gcp.CloudRunService` or private `gcp.B
 
 ```go
 web, err := vercel.NewWebApp(ctx, "web", &vercel.WebAppArgs{
-	Project: vercel.LookupProject(shared),
+	Project: vercel.LookupProject(shared, "web"),
 	Links:   []core.Resource{api, blobs},
 	Brokers: []core.IdentityBroker{fed},
 	Env: map[string]pulumi.StringInput{

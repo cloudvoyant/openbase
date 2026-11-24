@@ -43,15 +43,15 @@ flowchart TD
         BlobEnv["vercel.BlobStore"]
     end
 
-    Org -->|"vercel.LookupAccount(plat)"| App
-    VProj -->|"vercel.LookupProject(shared)"| Web
+    Org -->|"vercel.LookupAccount(plat, \"vercel\")"| App
+    VProj -->|"vercel.LookupProject(shared, \"web\")"| Web
     StageCE --> Web
     BlobRoot --> BlobEnv
 ```
 
 - `vercel.Account` exports team and wildcard domain defaults for all repositories in the organization.
 - `vercel.Project` creates the Vercel Project, `staging` Custom Environment, `prod` and `staging` domains, bypass token, optional shared Blob store, and optional `"preview"`-targeted environment variables.
-- [vercel.WebApp](./web-app.md) and [vercel.BlobStore](./blob-store.md) consume `Project: vercel.LookupProject(shared)` on `dev`, `stage`, `prod`, and `preview-<slug>`.
+- [vercel.WebApp](./web-app.md) and [vercel.BlobStore](./blob-store.md) consume `Project: vercel.LookupProject(shared, "web")` on `dev`, `stage`, `prod`, and `preview-<slug>`.
 
 ### Data and Control Flow
 

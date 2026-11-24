@@ -27,7 +27,7 @@ func TestGCPBucket(t *testing.T) {
 	t.Run("given no infra exists", func(t *testing.T) {
 		var bucketName string
 
-		t.Run("when planning, then preview plans a private GCS bucket without creating cloud state", func(t *testing.T) {
+		t.Run("when planning, then preview plans a private GCS bucket", func(t *testing.T) {
 			// Arrange / Act.
 			planOut := h.Pulumi(t, nil, "preview", "--stack", "dev")
 			h.WriteArtifact(t, "fresh-plan.txt", planOut)

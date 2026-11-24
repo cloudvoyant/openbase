@@ -42,9 +42,9 @@ flowchart TD
         EnvOidc["kinde.OidcApp (dev/preview -> NonProd, stage/prod -> Prod)"]
     end
 
-    Org -->|"kinde.LookupAccount(plat)"| App
-    NonProdApp -->|"kinde.LookupProject(shared)"| EnvOidc
-    ProdApp -->|"kinde.LookupProject(shared)"| EnvOidc
+    Org -->|"kinde.LookupAccount(plat, \"kinde\")"| App
+    NonProdApp -->|"kinde.LookupProject(shared, \"auth\")"| EnvOidc
+    ProdApp -->|"kinde.LookupProject(shared, \"auth\")"| EnvOidc
 ```
 
 - `kinde.Account` configures both Kinde environment providers and caches `emailPasswordConn`.
