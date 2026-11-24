@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/cloudvoyant/openbase/libs/goutils/pulumix"
-	"github.com/cloudvoyant/openbase/libs/testutils/liveenv"
+	"github.com/cloudvoyant/openbase/libs/goutils"
+	"github.com/cloudvoyant/openbase/libs/testutils"
 )
 
 // Public API -----------------------------------------------------------------
@@ -102,25 +102,25 @@ func queryGCPProjectNumberWithRetry(t *testing.T, gcpProject string) string {
 // RequireLiveGCP checks OPENBASE_TEST_GCP/OPENBASE_TEST_LIVE and returns (gcpProject, backendOverride).
 func RequireLiveGCP(t *testing.T) (string, string) {
 	t.Helper()
-	return liveenv.RequireGCP(t)
+	return testutils.RequireGCP(t)
 }
 
 // RequireLiveNeon checks OPENBASE_TEST_NEON/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveNeon(t *testing.T) string {
 	t.Helper()
-	return liveenv.RequireNeon(t)
+	return testutils.RequireNeon(t)
 }
 
 // RequireLiveKinde checks OPENBASE_TEST_KINDE/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveKinde(t *testing.T) string {
 	t.Helper()
-	return liveenv.RequireKinde(t)
+	return testutils.RequireKinde(t)
 }
 
 // RequireLiveVercel checks OPENBASE_TEST_VERCEL/OPENBASE_TEST_LIVE and returns backendOverride.
 func RequireLiveVercel(t *testing.T) string {
 	t.Helper()
-	return liveenv.RequireVercel(t)
+	return testutils.RequireVercel(t)
 }
 
 // NewLiveHarness materializes fixtureName + Pulumi state under e2e/outputs/components/<Test>, logs in, and registers cleanup.
@@ -565,7 +565,7 @@ func (h *LiveStackHarness) destroyStackForCleanup(t *testing.T, stack string) bo
 
 func (h *LiveStackHarness) runDestroyWithRetry(t *testing.T, ctx context.Context, stack, workDir string, _ []string) bool {
 	t.Helper()
-	out, err := pulumix.DestroyWithRetry(ctx, repositoryRoot(t), workDir, h.env(nil), stack, 3)
+	out, err := goutils.DestroyPulumiStackWithRetry(ctx, workDir, testutils.CommandEnvOverrides(repositoryRoot(t), workDir, h.env(nil)), stack, 3)
 	if err != nil {
 		t.Errorf("cleanup destroy stack %s: %v\n%s", stack, err, h.redact(out))
 		return false

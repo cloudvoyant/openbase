@@ -19,10 +19,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/cloudvoyant/openbase/libs/components/gcp/overlayfs"
+	"github.com/cloudvoyant/openbase/libs/components/kinde"
 	"github.com/cloudvoyant/openbase/libs/components/vercel"
-	"github.com/cloudvoyant/openbase/libs/testutils/kindeclient"
-	"github.com/cloudvoyant/openbase/libs/testutils/neonclient"
-	"github.com/cloudvoyant/openbase/libs/testutils/vercelclient"
+	"github.com/cloudvoyant/openbase/libs/goutils"
+	"github.com/cloudvoyant/openbase/libs/testutils"
 )
 
 // Private helpers ------------------------------------------------------------
@@ -229,7 +229,12 @@ func assertServiceAccountAbsent(t *testing.T, gcpProject, email string) {
 
 func detectNeonOrgID(t *testing.T) string {
 	t.Helper()
-	return neonclient.DetectOrgID(t)
+	if orgID := os.Getenv("NEON_ORG_ID"); orgID != "" {
+		return orgID
+	}
+	orgID, err := goutils.DetectNeonOrgID(context.Background(), os.Getenv("NEON_API_KEY"))
+	require.NoError(t, err)
+	return orgID
 }
 
 func querySingleText(t *testing.T, connURL, sqlQuery string) string {
@@ -272,9 +277,30 @@ func prepareKindeSandboxApp(t *testing.T, tenant, vProj, appProject, teamSlug st
 	return prepareKindeSandboxByPrefix(t, tenant, "openbase-e2e-ob", "openbase-e2e-"+appProject, redirects, logouts)
 }
 
-func prepareKindeSandboxByPrefix(t *testing.T, tenant, prefix, fallbackName string, redirects, logouts []string) (string, string) {
+func prepareKindeSandboxByPrefix(t *testing.T, envName, prefix, fallbackName string, redirects, logouts []string) (string, string) {
 	t.Helper()
-	return kindeclient.PrepareSandboxApp(t, tenant, prefix, fallbackName, redirects, logouts)
+	issuer, clientID, clientSecret := kindeMgmtEnv(envName)
+	tok, err := goutils.KindeMgmtToken(context.Background(), issuer, clientID, clientSecret)
+	require.NoError(t, err)
+	apps, err := goutils.ListKindeApps(context.Background(), issuer, tok)
+	require.NoError(t, err)
+	var kept *goutils.KindeApp
+	for _, app := range apps {
+		if !strings.HasPrefix(app.Name, prefix) {
+			continue
+		}
+		if kept == nil {
+			cp := app
+			kept = &cp
+			continue
+		}
+		_ = goutils.DeleteKindeApp(context.Background(), issuer, tok, app.ID)
+	}
+	if kept == nil {
+		return "", fallbackName
+	}
+	require.NoError(t, goutils.SetKindeAppURLs(context.Background(), issuer, tok, kept.ID, redirects, logouts))
+	return kept.ID, kept.Name
 }
 
 func expectedInitialKindeURLs(tenant, vProj, teamSlug string) ([]string, []string) {
@@ -317,9 +343,32 @@ func countOpenBaseKindeApps(t *testing.T, tenant string) int {
 	return countKindeAppsByPrefix(t, tenant, "openbase-e2e-ob")
 }
 
-func countKindeAppsByPrefix(t *testing.T, tenant, prefix string) int {
+func countKindeAppsByPrefix(t *testing.T, envName, prefix string) int {
 	t.Helper()
-	return kindeclient.CountByPrefix(t, tenant, prefix)
+	issuer, clientID, clientSecret := kindeMgmtEnv(envName)
+	tok, err := goutils.KindeMgmtToken(context.Background(), issuer, clientID, clientSecret)
+	require.NoError(t, err)
+	apps, err := goutils.ListKindeApps(context.Background(), issuer, tok)
+	require.NoError(t, err)
+	count := 0
+	for _, app := range apps {
+		if strings.HasPrefix(app.Name, prefix) {
+			count++
+		}
+	}
+	return count
+}
+
+func kindeMgmtEnv(envName string) (string, string, string) {
+	if envName == "prod" {
+		return kinde.NormalizeIssuerURL(os.Getenv("KINDE_PROD_TENANT_DOMAIN")),
+			os.Getenv("KINDE_PROD_M2M_CLIENT_ID"),
+			os.Getenv("KINDE_PROD_M2M_CLIENT_SECRET")
+	}
+	dom := testutils.FirstNonEmpty(os.Getenv("KINDE_NONPROD_TENANT_DOMAIN"), os.Getenv("KINDE_DEV_TENANT_DOMAIN"))
+	cid := testutils.FirstNonEmpty(os.Getenv("KINDE_NONPROD_M2M_CLIENT_ID"), os.Getenv("KINDE_DEV_M2M_CLIENT_ID"))
+	sec := testutils.FirstNonEmpty(os.Getenv("KINDE_NONPROD_M2M_CLIENT_SECRET"), os.Getenv("KINDE_DEV_M2M_CLIENT_SECRET"))
+	return kinde.NormalizeIssuerURL(dom), cid, sec
 }
 
 func assertLoginRedirect(t *testing.T, redirectURI string, status int, loc string) {
@@ -376,7 +425,12 @@ func assertVercelBlobCleanup(t *testing.T, teamID, projectID, storeID string) {
 
 func detectVercelTeam(t *testing.T) (string, string) {
 	t.Helper()
-	return vercelclient.DetectTeam(t)
+	if id, slug := os.Getenv("VERCEL_TEAM_ID"), os.Getenv("VERCEL_TEAM_SLUG"); id != "" && slug != "" {
+		return id, slug
+	}
+	id, slug, err := goutils.DetectVercelTeam(context.Background(), os.Getenv("VERCEL_TOKEN"))
+	require.NoError(t, err)
+	return id, slug
 }
 
 func fetchProjectBlobRWToken(t *testing.T, teamID, projectID string) string {

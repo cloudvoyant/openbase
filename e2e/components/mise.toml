@@ -51,17 +51,20 @@ else
       RUN_REGEX='^TestCoreLifecycle$'
       NEEDS_LIVE="0"
       ;;
-    gcp|gcp_neon_kinde_app|gcp_app|neon)
-      RUN_REGEX='^TestGCPNeonKindeApp$'
+    gcp|gcp_bucket|gcp_cloud_run)
+      RUN_REGEX='^TestGCP(Bucket|CloudRunService)$'
       ;;
-    vercel|vercel_neon_kinde_app|vercel_app|kinde)
-      RUN_REGEX='^TestVercelNeonKindeApp$'
+    neon|neon_database)
+      RUN_REGEX='^TestNeonDatabase$'
       ;;
-    links|links_fullstack)
-      RUN_REGEX='^TestLinks$'
+    kinde|kinde_oidc_app)
+      RUN_REGEX='^TestKindeOidcApp$'
       ;;
-    apps)
-      RUN_REGEX='^Test(VercelNeonKindeApp|GCPNeonKindeApp)$'
+    vercel|vercel_webapp|vercel_blob_store)
+      RUN_REGEX='^TestVercel(WebApp|BlobStore)$'
+      ;;
+    composite|links|links_fullstack|apps|gcp_neon_kinde_app|vercel_neon_kinde_app)
+      RUN_REGEX='^TestCompositeStacks$'
       ;;
     Test*)
       RUN_REGEX="^${BASE}$"

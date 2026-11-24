@@ -16,7 +16,7 @@ import (
 
 	"github.com/chromedp/chromedp"
 
-	"github.com/cloudvoyant/openbase/libs/testutils/liveenv"
+	"github.com/cloudvoyant/openbase/libs/testutils"
 )
 
 // Public API -----------------------------------------------------------------
@@ -24,7 +24,7 @@ import (
 // RequireLiveKindeUser verifies either AgentMail OTP credentials (AGENTMAIL_API_KEY + E2E_P1_EMAIL) or KINDE_E2E_USERNAME/PASSWORD.
 func RequireLiveKindeUser(t *testing.T) (string, string) {
 	t.Helper()
-	return liveenv.RequireKindeUser(t)
+	return testutils.RequireKindeUser(t)
 }
 
 // Private helpers ------------------------------------------------------------

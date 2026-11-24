@@ -1,0 +1,3 @@
+name: openbase-vercel-webapp-fixture-shared
+runtime: go
+description: Shared Vercel project fixture for vercel.WebApp lifecycle testing

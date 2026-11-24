@@ -12,7 +12,7 @@
 
 ### Repository layout
 
-- Place cross-stack lookup helpers (`LookupPlatform` and `LookupShared`) in the root `libs/components` package, shared lifecycle contracts in `libs/components/core`, provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`, general Go helpers in `libs/goutils/{misex,pulumix}`, and test-only verification helpers in `libs/testutils/{fixtures,liveenv,kindeclient,vercelclient,neonclient}`. See [docs/architecture/index.md](./docs/architecture/index.md).
+- Place cross-stack lookup helpers (`LookupPlatform` and `LookupShared`) in the root `libs/components` package, shared lifecycle contracts in `libs/components/core`, provider packages in `libs/components/{gcp,vercel,neon,kinde,synthetic}`, flat general Go helpers in `libs/goutils`, and flat test-only helpers in `libs/testutils`. See [docs/architecture/index.md](./docs/architecture/index.md).
 - Keep top-level `e2e/` organized by target suite, with component end-to-end suites and consumer fixtures under [e2e/components](./e2e/README.md).
 
 ### File layout

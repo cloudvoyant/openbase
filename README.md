@@ -34,8 +34,8 @@ go get github.com/cloudvoyant/openbase/libs/components@latest
 | `github.com/cloudvoyant/openbase/libs/components/neon` | Org account defaults, per-app Neon Project clusters, and copy-on-write branched serverless PostgreSQL over `neondatabase/neon` | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewDatabase` |
 | `github.com/cloudvoyant/openbase/libs/components/kinde` | Kinde Business account (`Environments` map of `EnvironmentCredentials`), per-app OIDC `Application` pairs, and per-environment tier routing over `kinde-oss/kinde` | `NewAccount`, `LookupAccount`, `NewProject`, `LookupProject`, `NewOidcApp` |
 | `github.com/cloudvoyant/openbase/libs/components/synthetic` | Offline deterministic doubles for fast unit tests | `NewService`, `NewStorage` |
-| `github.com/cloudvoyant/openbase/libs/goutils` | General Go workspace helpers (`misex` command runner and `pulumix` CLI/redaction helpers) | `misex.Run`, `pulumix.Redactor`, `pulumix.DestroyWithRetry` |
-| `github.com/cloudvoyant/openbase/libs/testutils` | Test-only fixture materialization, sandbox env checks, and Kinde/Vercel/Neon verification clients | `fixtures.CopyTo`, `liveenv.Require*`, `kindeclient`, `vercelclient`, `neonclient` |
+| `github.com/cloudvoyant/openbase/libs/goutils` | Flat general Go helpers (`RunCommand`, Pulumi retry destroy, and Kinde/Vercel/Neon HTTP clients) | `RunCommand`, `DestroyPulumiStackWithRetry`, `KindeMgmtToken`, `DetectNeonOrgID`, `DetectVercelTeam` |
+| `github.com/cloudvoyant/openbase/libs/testutils` | Flat test-only fixture materialization, env overrides, and live sandbox credential checks | `CopyFixtureTo`, `CommandEnvOverrides`, `RequireGCP`, `RequireNeon`, `RequireKinde`, `RequireVercel` |
 
 ## Development
 

@@ -1,0 +1,3 @@
+name: openbase-neon-database-fixture-shared
+runtime: go
+description: Shared Neon project fixture for neon.Database lifecycle testing
