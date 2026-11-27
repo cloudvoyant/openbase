@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -40,22 +39,19 @@ type vercelIssueCertRequest struct {
 
 func ensureAliasCertOutput(
 	ctx *pulumi.Context,
-	aliasHost, teamID pulumi.StringOutput,
+	aliasHost, teamID, apiToken pulumi.StringOutput,
 	apiBaseURL string,
 ) pulumi.StringOutput {
 	if ctx.DryRun() {
 		return aliasHost
 	}
-	return pulumi.All(aliasHost, teamID).ApplyTWithContext(
+	return pulumi.All(aliasHost, teamID, apiToken).ApplyTWithContext(
 		context.Background(),
 		func(goCtx context.Context, vs []any) (string, error) {
 			host := core.NormalizeDomain(vs[0].(string))
 			tid := strings.TrimSpace(vs[1].(string))
-			if host == "" || strings.HasSuffix(host, ".vercel.app") {
-				return host, nil
-			}
-			token := resolveVercelAPIToken()
-			if token == "" {
+			token := strings.TrimSpace(vs[2].(string))
+			if host == "" || strings.HasSuffix(host, ".vercel.app") || token == "" {
 				return host, nil
 			}
 			if err := ensureVercelCert(goCtx, token, apiBaseURL, tid, host); err != nil {
@@ -64,13 +60,6 @@ func ensureAliasCertOutput(
 			return host, nil
 		},
 	).(pulumi.StringOutput)
-}
-
-func resolveVercelAPIToken() string {
-	if tok := strings.TrimSpace(os.Getenv("VERCEL_API_TOKEN")); tok != "" {
-		return tok
-	}
-	return strings.TrimSpace(os.Getenv("VERCEL_TOKEN"))
 }
 
 func ensureVercelCert(ctx context.Context, token, apiBaseURL, teamID, host string) error {

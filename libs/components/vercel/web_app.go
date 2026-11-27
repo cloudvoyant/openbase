@@ -48,7 +48,9 @@ type WebAppArgs struct {
 	StageDomain              string
 	PreviewAlias             string
 	ExtraDomains             []string
-	Revision                 string
+	// APIToken optionally supplies the Vercel API token for direct REST calls (such as HTTP-01 cert issuance); falls back to Pulumi vercel:apiToken config and provider env vars.
+	APIToken pulumi.StringInput
+	Revision string
 }
 
 // WebApp is the provisioned Vercel WebApp handle with scoped env vars, Deployment, and Aliases.
@@ -468,7 +470,8 @@ func bindWebAppAliases(
 	aliasHost pulumi.StringOutput,
 	res *WebApp,
 ) error {
-	ensuredHost := ensureAliasCertOutput(ctx, aliasHost, refs.teamID, "")
+	apiToken := resolveVercelAPIToken(ctx, spec.APIToken)
+	ensuredHost := ensureAliasCertOutput(ctx, aliasHost, refs.teamID, apiToken, "")
 	primary, err := vercelprov.NewAlias(ctx, name+"-alias", &vercelprov.AliasArgs{
 		DeploymentId: dep.ID(),
 		Alias:        ensuredHost,
@@ -479,7 +482,7 @@ func bindWebAppAliases(
 	}
 	res.Alias = primary
 	res.Aliases = append(res.Aliases, primary)
-	return attachExtraDeploymentAliases(ctx, name, meta, spec, refs, dep, res)
+	return attachExtraDeploymentAliases(ctx, name, meta, spec, refs, apiToken, dep, res)
 }
 
 func attachExtraDeploymentAliases(
@@ -488,6 +491,7 @@ func attachExtraDeploymentAliases(
 	meta core.ResourceMeta,
 	spec WebAppArgs,
 	refs webAppRefs,
+	apiToken pulumi.StringOutput,
 	dep *vercelprov.Deployment,
 	res *WebApp,
 ) error {
@@ -509,7 +513,7 @@ func attachExtraDeploymentAliases(
 			res.CustomDomains = append(res.CustomDomains, pd)
 			opts = append(opts, pulumi.DependsOn([]pulumi.Resource{pd}))
 		} else if !strings.HasSuffix(dom, ".vercel.app") {
-			aliasInput = ensureAliasCertOutput(ctx, aliasInput, refs.teamID, "")
+			aliasInput = ensureAliasCertOutput(ctx, aliasInput, refs.teamID, apiToken, "")
 		}
 		al, err := vercelprov.NewAlias(ctx, fmt.Sprintf("%s-extra-alias-%d", name, idx), &vercelprov.AliasArgs{
 			DeploymentId: dep.ID(),
