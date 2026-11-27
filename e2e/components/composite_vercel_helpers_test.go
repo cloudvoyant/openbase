@@ -400,11 +400,23 @@ func waitForAppHealth(t *testing.T, baseURL, bypassSecret string) fullStackHealt
 
 func fetchAppText(t *testing.T, targetURL, bypassSecret string) string {
 	t.Helper()
-	raw, status, err := doAppRequest(http.MethodGet, targetURL, bypassSecret, "", nil)
-	if err != nil || status != http.StatusOK {
-		t.Fatalf("GET %s failed: status=%d err=%v body=%s", targetURL, status, err, string(raw))
+	var (
+		raw    []byte
+		status int
+		err    error
+	)
+	for attempt := 0; attempt < 15; attempt++ {
+		raw, status, err = doAppRequest(http.MethodGet, targetURL, bypassSecret, "", nil)
+		if err == nil && status == http.StatusOK {
+			return string(raw)
+		}
+		if err == nil && status != http.StatusNotFound && status < 500 {
+			break
+		}
+		time.Sleep(time.Second)
 	}
-	return string(raw)
+	t.Fatalf("GET %s failed: status=%d err=%v body=%s", targetURL, status, err, string(raw))
+	return ""
 }
 
 func postAppNote(t *testing.T, baseURL, bypassSecret, noteBody string) {
