@@ -150,6 +150,7 @@ func LookupProject(shared *core.ScopeRef, name string) *ProjectRef {
 type vercelProjectData struct {
 	projectID                pulumi.StringOutput
 	vercelProjectName        pulumi.StringOutput
+	teamID                   pulumi.StringOutput
 	teamSlug                 pulumi.StringOutput
 	baseDomain               pulumi.StringOutput
 	devCustomEnvironmentID   pulumi.StringOutput
@@ -165,6 +166,7 @@ func (p *Project) vercelProjectValues() vercelProjectData {
 	out := vercelProjectData{
 		projectID:         p.ProjectID,
 		vercelProjectName: p.VercelProjectName,
+		teamID:            p.TeamID,
 		teamSlug:          p.TeamSlug,
 		baseDomain:        p.BaseDomain,
 		hasDevCustomEnv:   p.DevEnvironment != nil,
@@ -188,6 +190,7 @@ func (r *ProjectRef) vercelProjectValues() vercelProjectData {
 	return vercelProjectData{
 		projectID:                r.ProjectID,
 		vercelProjectName:        r.VercelProjectName,
+		teamID:                   r.TeamID,
 		teamSlug:                 r.TeamSlug,
 		baseDomain:               r.BaseDomain,
 		devCustomEnvironmentID:   r.DevCustomEnvironmentID,

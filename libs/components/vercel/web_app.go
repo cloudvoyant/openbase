@@ -122,6 +122,7 @@ func normalizeWebAppArgs(args *WebAppArgs) (WebAppArgs, error) {
 type webAppRefs struct {
 	projectID   pulumi.StringOutput
 	projectName pulumi.StringOutput
+	teamID      pulumi.StringOutput
 	teamSlug    pulumi.StringOutput
 	baseDomain  pulumi.StringOutput
 	devEnvID    pulumi.StringOutput
@@ -163,6 +164,7 @@ func initExplicitWebRefs(meta core.ResourceMeta, spec WebAppArgs) webAppRefs {
 	}
 	vName := defaultVercelStr(spec.VercelProjectName, "openbase-"+meta.Project)
 	refs.projectName = pulumi.String(vName).ToStringOutput()
+	refs.teamID = pulumi.String(spec.TeamID).ToStringOutput()
 	refs.teamSlug = pulumi.String(spec.TeamSlug).ToStringOutput()
 	refs.baseDomain = pulumi.String(core.NormalizeDomain(spec.BaseDomain)).ToStringOutput()
 	if spec.DevCustomEnvironmentID != nil {
@@ -194,6 +196,9 @@ func applyProjectInputWebRefs(refs *webAppRefs, spec WebAppArgs) {
 func applyProjectInputNamingRefs(refs *webAppRefs, pv vercelProjectData, spec WebAppArgs) {
 	if spec.VercelProjectName == "" && isOutSet(pv.vercelProjectName) {
 		refs.projectName = pv.vercelProjectName
+	}
+	if spec.TeamID == "" && isOutSet(pv.teamID) {
+		refs.teamID = pv.teamID
 	}
 	if spec.TeamSlug == "" && isOutSet(pv.teamSlug) {
 		refs.teamSlug = pv.teamSlug
@@ -463,9 +468,10 @@ func bindWebAppAliases(
 	aliasHost pulumi.StringOutput,
 	res *WebApp,
 ) error {
+	ensuredHost := ensureAliasCertOutput(ctx, aliasHost, refs.teamID, "")
 	primary, err := vercelprov.NewAlias(ctx, name+"-alias", &vercelprov.AliasArgs{
 		DeploymentId: dep.ID(),
-		Alias:        aliasHost,
+		Alias:        ensuredHost,
 		TeamId:       optionalVercelStr(spec.TeamID),
 	}, pulumi.Parent(res))
 	if err != nil {
@@ -488,6 +494,7 @@ func attachExtraDeploymentAliases(
 	attachProjDom, customEnvID := extraProjectDomainTarget(meta.Environment, spec, refs)
 	for idx, dom := range core.DedupeDomains(spec.ExtraDomains) {
 		opts := []pulumi.ResourceOption{pulumi.Parent(res)}
+		aliasInput := pulumi.String(dom).ToStringOutput()
 		if attachProjDom && !strings.HasSuffix(dom, ".vercel.app") {
 			pd, err := vercelprov.NewProjectDomain(ctx, fmt.Sprintf("%s-extra-domain-%d", name, idx), &vercelprov.ProjectDomainArgs{
 				ProjectId:           refs.projectID,
@@ -501,10 +508,12 @@ func attachExtraDeploymentAliases(
 			}
 			res.CustomDomains = append(res.CustomDomains, pd)
 			opts = append(opts, pulumi.DependsOn([]pulumi.Resource{pd}))
+		} else if !strings.HasSuffix(dom, ".vercel.app") {
+			aliasInput = ensureAliasCertOutput(ctx, aliasInput, refs.teamID, "")
 		}
 		al, err := vercelprov.NewAlias(ctx, fmt.Sprintf("%s-extra-alias-%d", name, idx), &vercelprov.AliasArgs{
 			DeploymentId: dep.ID(),
-			Alias:        pulumi.String(dom),
+			Alias:        aliasInput,
 			TeamId:       optionalVercelStr(spec.TeamID),
 		}, opts...)
 		if err != nil {
