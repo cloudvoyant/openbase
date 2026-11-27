@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
+	"github.com/pulumi/pulumi/sdk/v3/go/pulumi/config"
 
 	"github.com/cloudvoyant/openbase/libs/components/core"
 )
@@ -35,6 +36,17 @@ type vercelCertSummary struct {
 
 type vercelIssueCertRequest struct {
 	CNs []string `json:"cns"`
+}
+
+func resolveVercelAPIToken(ctx *pulumi.Context, explicit pulumi.StringInput) pulumi.StringOutput {
+	if explicit != nil {
+		return pulumi.ToSecret(explicit.ToStringOutput()).(pulumi.StringOutput)
+	}
+	cfg := config.New(ctx, "vercel")
+	if cfg.Get("apiToken") != "" {
+		return cfg.RequireSecret("apiToken")
+	}
+	return pulumi.String("").ToStringOutput()
 }
 
 func ensureAliasCertOutput(

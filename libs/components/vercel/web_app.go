@@ -48,7 +48,7 @@ type WebAppArgs struct {
 	StageDomain              string
 	PreviewAlias             string
 	ExtraDomains             []string
-	// APIToken optionally supplies the Vercel API token for direct REST calls (such as HTTP-01 cert issuance); falls back to Pulumi vercel:apiToken config and provider env vars.
+	// APIToken optionally supplies the Vercel API token for direct REST calls (such as HTTP-01 cert issuance); falls back to Pulumi vercel:apiToken config.
 	APIToken pulumi.StringInput
 	Revision string
 }
