@@ -130,7 +130,7 @@ func runVercelNeonKindeComposite(t *testing.T) {
 				}
 			})
 
-			t.Run("when calling /oauth2/auth with unregistered redirects vs logging in via headless Chrome, then invalid redirects fail while preview and <project>.vercel.app authenticate", func(t *testing.T) {
+			t.Run("when calling /oauth2/auth with unregistered redirects vs logging in via headless Chrome, then invalid redirects fail while preview and stable envs authenticate", func(t *testing.T) {
 				// Arrange / Act.
 				rejCode, rejLoc, rejBody := callKindeAuthorize(t, s.devIssuer, s.devClientID, "https://unregistered.example.com/callback")
 				defLoginStatus, defAuthLoc := callAppNoRedirect(t, s.defaultProjectURL+"/api/auth/login", s.bypassSecret)
@@ -140,11 +140,18 @@ func runVercelNeonKindeComposite(t *testing.T) {
 					"defaultDomainStatus": defLoginStatus,
 					"defaultKindeStatus":  defKindeStatus,
 					"browserLogin":        browserReport,
+					"devUrl":              s.devURL,
+					"stageUrl":            s.stageURL,
+					"prodUrl":             s.prodURL,
+					"previewUrl":          s.previewURL,
 				})
 
 				// Assert.
 				assertRedirectRejected(t, "https://unregistered.example.com/callback", rejCode, rejLoc, rejBody)
 				assertAppLoginAndBrowserFlow(t, s.defaultProjectURL, s.prodIssuer, defLoginStatus, defAuthLoc, defKindeStatus, defKindeLoc, browserReport)
+				assertTierLoginRedirect(t, s.devURL, s.devIssuer, s.bypassSecret)
+				assertTierLoginRedirect(t, s.stageURL, s.prodIssuer, s.bypassSecret)
+				assertTierLoginRedirect(t, s.prodURL, s.prodIssuer, s.bypassSecret)
 			})
 
 			t.Run("when destroying preview-pr-11 twice, then the preview Deployment, Alias, and Neon branch return 404 while dev, stage, and prod stay healthy", func(t *testing.T) {
@@ -355,6 +362,17 @@ func assertAppLoginAndBrowserFlow(
 	}
 }
 
+func assertTierLoginRedirect(t *testing.T, baseURL, expectedIssuer, bypassSecret string) {
+	t.Helper()
+	loginStatus, authLoc := callAppNoRedirect(t, baseURL+"/api/auth/login", bypassSecret)
+	if loginStatus != http.StatusFound {
+		t.Fatalf("expected 302 from %s/api/auth/login, got %d", baseURL, loginStatus)
+	}
+	assertContains(t, authLoc, expectedIssuer+"/oauth2/auth")
+	kindeStatus, kindeLoc := followAuthorizeRedirect(t, authLoc)
+	assertLoginRedirect(t, authLoc, kindeStatus, kindeLoc)
+}
+
 func assertVercelNeonKindeCleanup(t *testing.T, teamID, vercelProjectID, blobStoreID, neonProjectID string) {
 	t.Helper()
 	assertVercelBlobCleanup(t, teamID, vercelProjectID, blobStoreID)
@@ -400,11 +418,23 @@ func waitForAppHealth(t *testing.T, baseURL, bypassSecret string) fullStackHealt
 
 func fetchAppText(t *testing.T, targetURL, bypassSecret string) string {
 	t.Helper()
-	raw, status, err := doAppRequest(http.MethodGet, targetURL, bypassSecret, "", nil)
-	if err != nil || status != http.StatusOK {
-		t.Fatalf("GET %s failed: status=%d err=%v body=%s", targetURL, status, err, string(raw))
+	var (
+		raw    []byte
+		status int
+		err    error
+	)
+	for attempt := 0; attempt < 15; attempt++ {
+		raw, status, err = doAppRequest(http.MethodGet, targetURL, bypassSecret, "", nil)
+		if err == nil && status == http.StatusOK {
+			return string(raw)
+		}
+		if err == nil && status != http.StatusNotFound && status < 500 {
+			break
+		}
+		time.Sleep(time.Second)
 	}
-	return string(raw)
+	t.Fatalf("GET %s failed: status=%d err=%v body=%s", targetURL, status, err, string(raw))
+	return ""
 }
 
 func postAppNote(t *testing.T, baseURL, bypassSecret, noteBody string) {

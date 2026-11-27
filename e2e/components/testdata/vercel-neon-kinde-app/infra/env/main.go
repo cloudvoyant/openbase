@@ -84,6 +84,7 @@ func registerVercelEnvResources(
 		TeamID:            teamID,
 		TeamSlug:          teamSlug,
 		BaseDomain:        baseDomain,
+		APIToken:          optionalString(envOrDefault("VERCEL_API_TOKEN", "VERCEL_TOKEN", "")),
 		SourceDir:         "../../apps/web",
 		Links:             []core.Resource{uploads},
 		Env: map[string]pulumi.StringInput{

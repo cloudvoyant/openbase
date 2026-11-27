@@ -99,4 +99,36 @@ func TestVercelWebApp(t *testing.T) {
 			assertVercelStatus(t, fmt.Sprintf("https://api.vercel.com/v13/deployments/%s?teamId=%s", deploymentID, teamID), http.StatusNotFound)
 		})
 	})
+
+	customDomain := os.Getenv("OPENBASE_BASE_DOMAIN")
+	if customDomain == "" && teamSlug == "cloudvoyant" {
+		customDomain = "vercel.cloudvoyant.io"
+	}
+	if customDomain != "" {
+		t.Run("given a custom BaseDomain preview stack", func(t *testing.T) {
+			// Arrange.
+			h.InitStack(t, "preview-pr-1")
+			env := []string{"OPENBASE_BASE_DOMAIN=" + customDomain}
+
+			t.Run("when applying, then it auto-provisions an HTTP-01 TLS cert and serves HTML over HTTPS on the custom preview alias", func(t *testing.T) {
+				// Act.
+				h.Pulumi(t, env, "up", "--stack", "preview-pr-1", "--yes", "--non-interactive", "--skip-preview")
+				previewURL := h.Output(t, "preview-pr-1", "url")
+				body := fetchAppText(t, previewURL, bypassSecret)
+
+				// Assert.
+				require.Equal(t, fmt.Sprintf("https://%s-pr-1.%s", appProject, customDomain), previewURL)
+				require.Contains(t, body, "openbase vercel webapp fixture")
+			})
+
+			t.Run("when destroying, then the custom-domain preview deployment is deleted cleanly", func(t *testing.T) {
+				// Act.
+				deploymentID := h.Output(t, "preview-pr-1", "deploymentId")
+				h.Pulumi(t, env, "destroy", "--stack", "preview-pr-1", "--yes", "--non-interactive", "--skip-preview")
+
+				// Assert.
+				assertVercelStatus(t, fmt.Sprintf("https://api.vercel.com/v13/deployments/%s?teamId=%s", deploymentID, teamID), http.StatusNotFound)
+			})
+		})
+	}
 }
